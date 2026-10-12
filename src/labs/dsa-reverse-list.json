@@ -1,0 +1,40 @@
+{
+  "id": "dsa-reverse-list",
+  "title": "Reverse Linked List",
+  "minutes": 15,
+  "prompt": "<p>A student's reading history is stored as a singly linked list, oldest book first. The app wants it newest first. Given the <code>head</code> of a singly linked list, reverse it <b>in place</b> (relink the existing nodes, don't create new ones) and return the new head.</p>\n<p>Write <code>reverseList(head)</code>. The helpers <code>ListNode</code>, <code>fromArray</code> and <code>toArray</code> are at the top of the editor; keep them, the tests use them.</p>\n<ul>\n<li><code>toArray(reverseList(fromArray([1, 2, 3, 4, 5])))</code> gives <code>[5, 4, 3, 2, 1]</code></li>\n<li><code>reverseList(null)</code> returns <code>null</code></li>\n</ul>\n<p>Constraints: 0 to 5,000 nodes. Target: O(n) time, O(1) extra space.</p>",
+  "starter": "// ---- Helpers: keep these. The tests use ListNode, fromArray and toArray. ----\nclass ListNode {\n  constructor(val, next = null) {\n    this.val = val;\n    this.next = next;\n  }\n}\n\n// fromArray([1, 2, 3]) builds 1 -> 2 -> 3 and returns the head (null for []).\nfunction fromArray(values) {\n  let head = null;\n  for (let i = values.length - 1; i >= 0; i--) {\n    head = new ListNode(values[i], head);\n  }\n  return head;\n}\n\n// toArray(head) walks the list and returns [1, 2, 3]. Handy for console.log too.\nfunction toArray(head) {\n  const values = [];\n  let node = head;\n  while (node) {\n    values.push(node.val);\n    if (values.length > 10000) throw new Error('list is too long: did you accidentally create a cycle?');\n    node = node.next;\n  }\n  return values;\n}\n// ---- End of helpers ----\n\nfunction reverseList(head) {\n  // TODO: walk the list once, flipping each node's next pointer to point backwards.\n  return head;\n}",
+  "solution": "// ---- Helpers: keep these. The tests use ListNode, fromArray and toArray. ----\nclass ListNode {\n  constructor(val, next = null) {\n    this.val = val;\n    this.next = next;\n  }\n}\n\n// fromArray([1, 2, 3]) builds 1 -> 2 -> 3 and returns the head (null for []).\nfunction fromArray(values) {\n  let head = null;\n  for (let i = values.length - 1; i >= 0; i--) {\n    head = new ListNode(values[i], head);\n  }\n  return head;\n}\n\n// toArray(head) walks the list and returns [1, 2, 3]. Handy for console.log too.\nfunction toArray(head) {\n  const values = [];\n  let node = head;\n  while (node) {\n    values.push(node.val);\n    if (values.length > 10000) throw new Error('list is too long: did you accidentally create a cycle?');\n    node = node.next;\n  }\n  return values;\n}\n// ---- End of helpers ----\n\nfunction reverseList(head) {\n  let previous = null;\n  let current = head;\n  while (current !== null) {\n    const next = current.next; // 1. remember where we were going\n    current.next = previous;   // 2. flip the arrow\n    previous = current;        // 3. step both pointers forward\n    current = next;\n  }\n  return previous; // the old tail is the new head\n}",
+  "tests": [
+    {
+      "name": "reverses five nodes",
+      "code": "assertEqual(toArray(reverseList(fromArray([1, 2, 3, 4, 5]))), [5, 4, 3, 2, 1]);"
+    },
+    {
+      "name": "two nodes",
+      "code": "assertEqual(toArray(reverseList(fromArray([1, 2]))), [2, 1]);"
+    },
+    {
+      "name": "empty list returns null",
+      "code": "assertEqual(reverseList(null), null);"
+    },
+    {
+      "name": "single node",
+      "code": "const head = fromArray([7]);\nconst result = reverseList(head);\nassertEqual(toArray(result), [7]);\nassertEqual(result.next, null);"
+    },
+    {
+      "name": "relinks the same nodes (in place)",
+      "code": "const head = fromArray([1, 2, 3]);\nconst first = head, second = head.next, third = head.next.next;\nconst result = reverseList(head);\nassert(result === third, 'new head should be the old tail node itself');\nassert(third.next === second && second.next === first, 'arrows should be flipped');\nassertEqual(first.next, null, 'old head must now point to null, or you made a cycle');"
+    },
+    {
+      "name": "duplicates and negatives",
+      "code": "assertEqual(toArray(reverseList(fromArray([-1, 0, 0, 3, -1]))), [-1, 3, 0, 0, -1]);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: \"reverse a list in place\" = three pointers: <code>previous</code>, <code>current</code>, <code>next</code>.</p>",
+    "<p>At each node you need to point <code>current.next</code> backwards to <code>previous</code>. But once you overwrite it, you have lost the rest of the list. So save <code>current.next</code> in a variable <b>first</b>.</p>",
+    "<p>Shape:</p><pre><code>let previous = null, current = head;\nwhile (current !== null) {\n  const next = current.next;\n  current.next = previous;\n  previous = current;\n  current = next;\n}\nreturn previous;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n)</b>: each node is visited once. <b>Space O(1)</b>: three pointers no matter how long the list is. (A recursive version is also O(n) time but uses O(n) call-stack space.)</p>\n<p><b>Say it:</b> \"I'll walk once with previous and current. At each node: save next, flip the pointer to previous, advance both. When current is null, previous is the new head. O(n) time, O(1) space.\"</p>"
+}

@@ -1,0 +1,40 @@
+{
+  "id": "dsa-combination-sum",
+  "title": "Combination Sum",
+  "minutes": 25,
+  "prompt": "<p>Given an array of <b>distinct positive</b> numbers <code>candidates</code> and a <code>target</code>, return every <b>unique combination</b> of candidates that adds up to <code>target</code>. You may use the same candidate <b>as many times as you like</b>. Two combinations are the same if they use the same numbers the same number of times, so <code>[2,2,3]</code> and <code>[3,2,2]</code> count once.</p>\n<p>Write <code>combinationSum(candidates, target)</code>. Order does not matter, inside or between combinations.</p>\n<pre><code>combinationSum([2, 3, 6, 7], 7);   // [[2,2,3], [7]]\ncombinationSum([2, 3, 5], 8);      // [[2,2,2,2], [2,3,3], [3,5]]\ncombinationSum([2], 1);            // []</code></pre>\n<p>Constraints: up to 30 candidates, each between 2 and 40; <code>target</code> between 1 and 40.</p>",
+  "starter": "function combinationSum(candidates, target) {\n  const result = [];\n  // TODO: backtrack with (startIndex, remaining).\n  // Allow reusing the same candidate, but never go back to an earlier one.\n  return result;\n}",
+  "solution": "function combinationSum(candidates, target) {\n  const sorted = [...candidates].sort((a, b) => a - b);   // sorting lets us prune early\n  const result = [];\n  const current = [];\n\n  function explore(start, remaining) {\n    if (remaining === 0) {                 // exact hit: record a copy\n      result.push([...current]);\n      return;\n    }\n    for (let i = start; i < sorted.length; i++) {\n      if (sorted[i] > remaining) break;    // prune: this and every bigger candidate overshoot\n      current.push(sorted[i]);             // choose\n      explore(i, remaining - sorted[i]);   // explore: i, not i + 1, because reuse is allowed\n      current.pop();                       // un-choose\n    }\n  }\n\n  explore(0, target);\n  return result;\n}",
+  "tests": [
+    {
+      "name": "[2,3,6,7] target 7",
+      "code": "function norm(lists) { return lists.map((l) => [...l].sort((a, b) => a - b)).map((l) => JSON.stringify(l)).sort(); }\nassertEqual(norm(combinationSum([2,3,6,7], 7)), norm([[2,2,3],[7]]));"
+    },
+    {
+      "name": "[2,3,5] target 8",
+      "code": "function norm(lists) { return lists.map((l) => [...l].sort((a, b) => a - b)).map((l) => JSON.stringify(l)).sort(); }\nassertEqual(norm(combinationSum([2,3,5], 8)), norm([[2,2,2,2],[2,3,3],[3,5]]));"
+    },
+    {
+      "name": "no combination possible",
+      "code": "assertEqual(combinationSum([2], 1), []);\nassertEqual(combinationSum([4,6], 5), []);"
+    },
+    {
+      "name": "a candidate equal to the target",
+      "code": "function norm(lists) { return lists.map((l) => [...l].sort((a, b) => a - b)).map((l) => JSON.stringify(l)).sort(); }\nassertEqual(norm(combinationSum([5], 5)), norm([[5]]));\nassertEqual(norm(combinationSum([3], 9)), norm([[3,3,3]]));"
+    },
+    {
+      "name": "unsorted input, no duplicate combinations",
+      "code": "function norm(lists) { return lists.map((l) => [...l].sort((a, b) => a - b)).map((l) => JSON.stringify(l)).sort(); }\nconst got = combinationSum([7,3,2], 12);\nassertEqual(norm(got), norm([[2,2,2,2,2,2],[2,2,2,3,3],[3,3,3,3],[2,3,7]]));\nassertEqual(new Set(norm(got)).size, got.length, 'each combination should appear once');"
+    },
+    {
+      "name": "counts the 4 ways to make 10 from [2,3,5]",
+      "code": "const got = combinationSum([2,3,5], 10);\nassertEqual(got.length, 4);\nassert(got.every((c) => c.reduce((s, x) => s + x, 0) === 10), 'every combination must sum to 10');"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: &quot;all combinations that sum to target&quot;. You must <i>list</i> them, not just count them, so it is backtracking (if it only asked <i>how many</i>, DP would be faster).</p>",
+    "<p>Idea: carry <code>remaining = target - sum(current)</code>. At 0, record. Loop over candidates from <code>start</code>; recursing with the <b>same</b> index <code>i</code> allows reuse, and never looking left of <code>start</code> stops <code>[2,3]</code> and <code>[3,2]</code> both appearing. Sort first so you can <code>break</code> as soon as a candidate is bigger than <code>remaining</code>.</p>",
+    "<p>Code shape: <code>function explore(start, remaining) { if (remaining === 0) { result.push([...current]); return; } for (let i = start; i &lt; sorted.length; i++) { if (sorted[i] &gt; remaining) break; current.push(sorted[i]); explore(i, remaining - sorted[i]); current.pop(); } }</code></p>"
+  ],
+  "explain": "<p><b>Time</b>: exponential in the worst case, roughly O(n<sup>target / smallest candidate</sup>), but pruning (sorted + <code>break</code>) cuts most branches. <b>Space O(target / smallest candidate)</b> for the recursion depth, plus the output.</p><p><b>Say it:</b> &quot;I need to list every combination, so I&#39;ll backtrack with a start index and the remaining amount. Recursing on the same index allows reuse; never going left avoids duplicate orderings; sorting lets me stop the loop as soon as a candidate overshoots.&quot; Follow-up you may get: &quot;What if I only want the number of combinations?&quot; Answer: that is the coin change ways DP, O(n × target).</p>"
+}

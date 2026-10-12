@@ -1,0 +1,191 @@
+<template id="tpl-realtime" data-title="Realtime: polling, SSE, WebSockets" data-part="Part 2 · Scaling building blocks" data-order="90">
+  <h1>Realtime: polling, SSE, WebSockets</h1>
+  <p class="lede">After this lesson you will be able to choose between polling, long polling, Server-Sent Events and WebSockets for a feature and defend the choice, stream LLM tokens to the browser with SSE (including cancellation and the proxy gotchas), fan events out to the right connections across many servers with pub/sub, and build presence (&quot;who&#39;s online&quot;) that doesn&#39;t lie.</p>
+
+  <h2>1. The problem: HTTP only answers when asked</h2>
+  <p>PageTurn is adding two features:</p>
+  <ul>
+    <li><b>Live classroom.</b> During reading time, a teacher&#39;s screen shows all 28 students: who&#39;s online, which page each is on, and a flag when someone has been stuck on one page for 3 minutes.</li>
+    <li><b>AI reading tutor.</b> A student highlights a sentence and asks &quot;what does <i>reluctant</i> mean here?&quot;. The answer comes from an LLM, which takes 4–8 seconds to write a full paragraph but produces the first words within about half a second.</li>
+  </ul>
+  <p>Plain HTTP is <b>request/response</b>: the client asks, the server answers, done. The server has no way to say &quot;by the way, Maya just turned the page&quot; unless the client is asking at that moment. Every realtime technique is a way around that. Let&#39;s go from simplest to most capable, with numbers. Assume <b>8,000 teachers</b> have the live classroom open during the morning reading block.</p>
+
+  <h2>2. Short polling</h2>
+  <p>The client asks every few seconds: &quot;anything new?&quot;</p>
+  <pre><code class="lang-js">setInterval(async () =&gt; {
+  const res = await fetch(`/api/classes/${classId}/live?since=${lastVersion}`);
+  const data = await res.json();
+  if (data.changes.length) render(data);
+  lastVersion = data.version;
+}, 5000);</code></pre>
+  <p>The math: 8,000 teachers ÷ 5 s = <b>1,600 requests per second</b>, and most of them return &quot;nothing changed&quot;. An update waits 2.5 s on average before the teacher sees it (half the interval), up to 5 s.</p>
+  <p>Polling gives you dead-simple, stateless, cache-friendly code that works through every proxy and firewall, at the cost of wasted requests and latency of up to one interval. Choose it when updates are infrequent, a few seconds of delay is fine, and user counts are modest. It&#39;s an underrated choice: many dashboards should just poll every 10–30 seconds.</p>
+
+  <h2>3. Long polling</h2>
+  <p>The client asks, and the server <b>holds the request open</b> until there&#39;s something to send or a timeout (say 30 s) passes. Then the client immediately asks again.</p>
+  <div class="trace">
+    <p><b>Trace: long polling for Ms. Rivera&#39;s class</b></p>
+    <ol>
+      <li><b>10:00:00.</b> Browser sends <code>GET /api/classes/7/live?since=v41</code>. Server has nothing newer than v41, so it waits.</li>
+      <li><b>10:00:07.</b> Maya turns to page 47. The server wakes the waiting request and responds with v42 (Maya, page 47).</li>
+      <li><b>10:00:07.05.</b> Browser renders it and immediately sends <code>GET ...?since=v42</code>. Waiting again.</li>
+      <li><b>10:00:37.05.</b> Nothing happened for 30 s. Server responds <code>204 No Content</code>; browser asks again.</li>
+    </ol>
+  </div>
+  <p>Updates now arrive almost instantly, and quiet periods cost one request per 30 s instead of six. But each waiting client ties up a connection on the server, and between a response and the next request there&#39;s a small gap where events must be buffered (the <code>since</code> version handles that). Long polling was the standard trick before SSE and WebSockets were widely available, and it&#39;s still a fallback in libraries like Socket.IO.</p>
+
+  <h2>4. Server-Sent Events (SSE)</h2>
+  <p><b>SSE</b> is a standard way for a server to push a stream of events to the browser over one ordinary HTTP response that never ends. The response has <code>Content-Type: text/event-stream</code>, and each event is a few lines of text followed by a blank line:</p>
+  <pre><code class="lang-http">HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Cache-Control: no-cache
+
+id: 42
+event: progress
+data: {"studentId":8812,"name":"Maya","page":47}
+
+id: 43
+event: stuck
+data: {"studentId":9120,"name":"Leo","page":12,"minutes":3}
+
+: keep-alive comment, sent every 15 s so proxies don&#39;t close the idle connection
+</code></pre>
+  <p>In the browser, the built-in <code>EventSource</code> handles it:</p>
+  <pre><code class="lang-js">const es = new EventSource(`/api/classes/7/stream`);
+es.addEventListener('progress', (e) =&gt; updateStudent(JSON.parse(e.data)));
+es.addEventListener('stuck', (e) =&gt; flagStudent(JSON.parse(e.data)));
+// If the connection drops, EventSource reconnects automatically and sends
+// the header Last-Event-ID: 43 so the server can replay anything missed.</code></pre>
+  <p>SSE gives you server push over plain HTTP, automatic reconnection with resume, and easy debugging (you can <code>curl</code> it), at the cost of being <b>one-way</b> (server to client; the client still uses normal requests to send) and text-only. Choose it for notifications, live dashboards, progress bars, and streaming LLM output. One historical catch: over HTTP/1.1, browsers allow only about 6 connections per domain, so several SSE tabs could starve other requests; over HTTP/2 this mostly goes away because many streams share one connection.</p>
+
+  <h2>5. WebSockets</h2>
+  <p>A <b>WebSocket</b> starts life as an HTTP request with an <code>Upgrade: websocket</code> header. If the server agrees (status <code>101 Switching Protocols</code>), the connection stops being HTTP and becomes a persistent, <b>two-way</b> channel: either side can send a message at any time, text or binary, with only a few bytes of framing each.</p>
+  <pre><code class="lang-js">const ws = new WebSocket('wss://live.pageturn.app/classes/7');
+ws.onmessage = (e) =&gt; handle(JSON.parse(e.data));
+// The same connection carries messages the other way:
+ws.send(JSON.stringify({ type: 'nudge', studentId: 9120, text: 'Need help?' }));</code></pre>
+  <p>WebSockets give you low-latency messages in both directions on one connection, at the cost of leaving HTTP behind: no automatic reconnection or resume (you build it), HTTP caches and many middleboxes don&#39;t understand the traffic, and load balancers and deploys must handle long-lived connections. Choose them when the <i>client</i> sends frequent messages too: chat, multiplayer, collaborative editing, live cursors.</p>
+  <table class="tbl">
+    <thead><tr><th></th><th>Short polling</th><th>Long polling</th><th>SSE</th><th>WebSocket</th></tr></thead>
+    <tbody>
+      <tr><td>Direction</td><td>Client pulls</td><td>Client pulls, server delays answer</td><td>Server → client</td><td>Both ways</td></tr>
+      <tr><td>Latency</td><td>Up to the interval</td><td>Near instant</td><td>Near instant</td><td>Near instant</td></tr>
+      <tr><td>Idle cost</td><td>Requests every N s</td><td>One request per timeout</td><td>One open connection</td><td>One open connection</td></tr>
+      <tr><td>Reconnect / resume</td><td>Not needed</td><td>Manual (<code>since</code>)</td><td>Built in (<code>Last-Event-ID</code>)</td><td>You build it</td></tr>
+      <tr><td>Plain HTTP infra</td><td>Yes</td><td>Yes</td><td>Yes (disable buffering)</td><td>Needs upgrade support</td></tr>
+      <tr><td>PageTurn use</td><td>Weekly reports page</td><td>Fallback</td><td>Live classroom, AI tutor</td><td>A future class chat</td></tr>
+    </tbody>
+  </table>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;The live classroom is server-to-client only and a few events per second at most, so I&#39;d use SSE: plain HTTP, automatic reconnect with Last-Event-ID, and the teacher&#39;s actions go over normal POSTs. I&#39;d reach for WebSockets only if clients needed to send a high rate of messages, like chat or collaborative editing. And if a few seconds of delay were fine, I&#39;d just poll.&quot;</p></div>
+
+  <h2>6. Streaming LLM tokens with SSE</h2>
+  <p>An LLM generates text a few tokens at a time. If the tutor waits for the whole answer, the student stares at a spinner for 6 seconds. If it streams, the first words appear in about half a second and the rest flow in. Total time is the same; <b>perceived</b> speed is much better. The key metric is <b>time to first token</b> (TTFT).</p>
+  <p>LLM provider APIs (Anthropic&#39;s and OpenAI&#39;s among them) stream responses as SSE when you pass <code>stream: true</code>. Your backend sits in the middle: it must call the provider server-side (the API key can&#39;t go to the browser), then relay the stream.</p>
+  <div class="trace">
+    <p><b>Trace: Maya asks the tutor about &quot;reluctant&quot;</b></p>
+    <ol>
+      <li><b>0 ms.</b> Browser sends <code>POST /api/tutor/ask</code> with the sentence and question. (It&#39;s a POST with a body, so the browser uses <code>fetch</code> and reads the response body as a stream; <code>EventSource</code> only supports GET.)</li>
+      <li><b>20 ms.</b> Server checks auth and the student&#39;s rate limit, builds the prompt (book level, sentence, question), and opens a streaming request to the LLM provider.</li>
+      <li><b>~500 ms.</b> First event from the provider: a text delta, <code>&quot;Reluctant&quot;</code>. Server immediately writes <code>data: {"delta":"Reluctant"}</code> plus a blank line to Maya&#39;s response and flushes.</li>
+      <li><b>500 ms – 5 s.</b> About 120 more deltas arrive and are relayed one by one. The server also appends each to a buffer.</li>
+      <li><b>5.0 s.</b> Provider sends its final event with usage (input and output token counts). Server sends <code>event: done</code>, saves the full answer and token usage to the database (for history, cost tracking and rate-limit settlement), and ends the response.</li>
+      <li><b>Alternative at 2.1 s:</b> Maya closes the tutor. The browser aborts the fetch; the server sees the client disconnect and <b>aborts the upstream request</b> too, so you stop paying for tokens nobody will read.</li>
+    </ol>
+  </div>
+  <pre><code class="lang-js">// Express-style handler relaying an LLM stream as SSE
+app.post('/api/tutor/ask', async (req, res) =&gt; {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'X-Accel-Buffering': 'no',          // tell NGINX not to buffer the stream
+  });
+  const upstream = new AbortController();
+  req.on('close', () =&gt; upstream.abort()); // student left: stop generating
+
+  let answer = '';
+  for await (const delta of llm.streamText(buildPrompt(req.body), { signal: upstream.signal })) {
+    answer += delta;
+    res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+  }
+  await saveTutorMessage(req.user.id, answer);
+  res.write('event: done\ndata: {}\n\n');
+  res.end();
+});</code></pre>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Something between server and browser buffers the stream. It works on localhost, then in production the whole answer appears at once after 6 seconds. Culprits: a reverse proxy buffering responses (NGINX does by default; send <code>X-Accel-Buffering: no</code> or turn off <code>proxy_buffering</code>), response compression middleware that waits to fill a block, or a serverless platform that doesn&#39;t support streaming responses. Test streaming through the real production path, not just locally.</p></div>
+
+  <h2>7. Fan-out across many servers</h2>
+  <p>Long-lived connections make servers <b>stateful</b> again: Ms. Rivera&#39;s SSE connection lives on one specific server. Suppose PageTurn runs 10 realtime servers. Maya&#39;s &quot;page 47&quot; progress update is a normal <code>PUT</code> that lands on API server 3. Ms. Rivera is connected to realtime server 7. How does the event get there?</p>
+  <p>The standard answer is <b>pub/sub</b> (publish/subscribe): a message bus where publishers send to a named <b>channel</b> and every subscriber of that channel receives a copy. Redis Pub/Sub, NATS, or a managed service work well. Each realtime server subscribes to the channels for the connections it holds.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 270" width="100%" role="img" aria-label="Student progress PUT goes to an API server, which publishes to channel class:7 on Redis pub/sub; the realtime server holding the teacher's SSE connection is subscribed and pushes the event" style="font-family:inherit">
+      <defs><marker id="rt-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="10" y="30" width="120" height="50" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="70" y="52" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Maya&#39;s tablet</text>
+      <text x="70" y="70" text-anchor="middle" style="fill:var(--muted);font-size:12px">PUT page 47</text>
+      <rect x="180" y="30" width="120" height="50" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="240" y="52" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">API server 3</text>
+      <text x="240" y="70" text-anchor="middle" style="fill:var(--muted);font-size:12px">save, then publish</text>
+      <line x1="130" y1="55" x2="176" y2="55" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rt-arr)"/>
+      <rect x="360" y="110" width="150" height="56" rx="8" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="435" y="134" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Redis Pub/Sub</text>
+      <text x="435" y="152" text-anchor="middle" style="fill:var(--muted);font-size:12px">channel class:7</text>
+      <line x1="270" y1="80" x2="356" y2="124" style="stroke:var(--accent);stroke-width:1.5" marker-end="url(#rt-arr)"/>
+      <text x="270" y="112" style="fill:var(--muted);font-size:12px">PUBLISH</text>
+      <rect x="180" y="200" width="130" height="50" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="245" y="222" text-anchor="middle" style="fill:currentColor;font-size:13px">realtime-2</text>
+      <text x="245" y="240" text-anchor="middle" style="fill:var(--muted);font-size:12px">not subscribed</text>
+      <rect x="400" y="200" width="130" height="50" rx="8" style="fill:var(--surface);stroke:var(--accent)"/>
+      <text x="465" y="222" text-anchor="middle" style="fill:currentColor;font-size:13px">realtime-7</text>
+      <text x="465" y="240" text-anchor="middle" style="fill:var(--muted);font-size:12px">subscribed class:7</text>
+      <line x1="450" y1="166" x2="460" y2="196" style="stroke:var(--accent);stroke-width:1.5" marker-end="url(#rt-arr)"/>
+      <rect x="570" y="200" width="122" height="50" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="631" y="222" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Ms. Rivera</text>
+      <text x="631" y="240" text-anchor="middle" style="fill:var(--muted);font-size:12px">SSE connection</text>
+      <line x1="530" y1="225" x2="566" y2="225" style="stroke:var(--accent);stroke-width:1.5" marker-end="url(#rt-arr)"/>
+      <text x="590" y="120" style="fill:var(--muted);font-size:12px">~1–5 ms hop</text>
+      <text x="590" y="136" style="fill:var(--muted);font-size:12px">fire-and-forget</text>
+    </svg>
+    <figcaption>Fan-out with pub/sub: whichever server handles the write publishes to the class channel; only servers holding a subscriber for that class receive it.</figcaption>
+  </figure>
+  <p>Two details that matter in practice:</p>
+  <ul>
+    <li><b>Redis Pub/Sub is fire-and-forget.</b> If realtime-7 is restarting when the message is published, the message is gone. That&#39;s why the client resumes with <code>Last-Event-ID</code> or a version number and the server fills gaps from the database. If you need durable delivery, use a stream (Redis Streams, Kafka) instead.</li>
+    <li><b>Fan-out size.</b> A class channel has one or two teachers listening. A district-wide announcement to 200,000 students is a different shape: publishing one message that 50 servers each deliver to ~4,000 connections. It works, but test it, and stagger non-urgent broadcasts.</li>
+  </ul>
+  <p>Operating long-lived connections also changes deploys. A realtime server may hold tens of thousands of mostly idle connections (the real number depends on memory per connection and the runtime). When you restart it, all of them reconnect at once. Have clients reconnect after a <b>random delay</b> (jitter), drain servers gradually, and make sure the load balancer&#39;s idle timeout is longer than your keep-alive interval.</p>
+
+  <h2>8. Presence: who&#39;s online</h2>
+  <p>The teacher wants a green dot next to each student who&#39;s reading right now. The obvious approach, &quot;online when connected, offline on disconnect&quot;, fails in practice. A tablet that goes to sleep or walks out of Wi-Fi range often doesn&#39;t close its connection cleanly; the server may not notice for minutes.</p>
+  <p>The reliable pattern is <b>heartbeats with a TTL</b>:</p>
+  <div class="trace">
+    <p><b>Trace: presence with a 15 s heartbeat and 45 s TTL</b></p>
+    <ol>
+      <li>Maya&#39;s app sends a heartbeat every 15 s. The server does <code>SET presence:8812 online EX 45</code> in Redis (the key expires by itself after 45 s).</li>
+      <li><b>10:00:00, 10:00:15, 10:00:30.</b> Heartbeats arrive; the key keeps getting refreshed.</li>
+      <li><b>10:00:38.</b> Maya&#39;s tablet goes to sleep. No more heartbeats. No disconnect event arrives.</li>
+      <li><b>10:01:15.</b> 45 s after the last heartbeat, the key expires. The presence service sees it&#39;s gone and publishes <code>offline</code> on <code>class:7</code>; the teacher&#39;s dot turns grey.</li>
+      <li>The TTL is 3 heartbeats long, so one lost heartbeat (a flaky network) doesn&#39;t flicker her offline.</li>
+    </ol>
+  </div>
+  <p>The trade-off is in the numbers: a shorter heartbeat means presence is fresher but costs more requests. 200,000 students heartbeating every 15 s is about 13,000 tiny writes per second at peak, fine for Redis but worth stating. For &quot;who&#39;s in this class&quot; you&#39;d also only send presence changes to the class channel, not every heartbeat.</p>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q": "8,000 teachers poll a dashboard every 5 seconds. Roughly how many requests per second is that, and what is the average delay before an update is seen?", "o": ["160/s and 5 s", "16,000/s and 0 s", "1,600/s and about 2.5 s", "1,600/s and 5 s exactly"], "a": 2, "why": "8,000 ÷ 5 = 1,600 requests per second. An event lands at a random point in the interval, so on average it waits half of it."},
+    {"q": "Which is the best fit for streaming an LLM answer to the browser?", "o": ["SSE over a normal HTTP response", "Short polling every second", "A WebSocket per token", "Email"], "a": 0, "why": "The stream is one-way, server to client, over HTTP. SSE is what LLM provider APIs use themselves and it passes through standard HTTP infrastructure."},
+    {"q": "Streaming works locally, but in production the whole answer appears at once. What is the most likely cause?", "o": ["The LLM is not streaming", "A reverse proxy or compression layer is buffering the response", "EventSource does not support JSON", "The browser limits SSE to 6 events"], "a": 1, "why": "Proxies like NGINX buffer responses by default, and compression can wait to fill blocks. Disable buffering (X-Accel-Buffering: no) and test through the real path."},
+    {"q": "A student closes the tutor halfway through a 6-second answer. What should the server do?", "o": ["Finish generating so the answer is complete in history", "Retry the request", "Switch to long polling", "Abort the upstream LLM request when the client disconnects"], "a": 3, "why": "Nobody will read the rest, and output tokens cost money and capacity. Abort upstream on client disconnect and save what was generated if useful."},
+    {"q": "A student&#39;s progress write lands on API server 3, but the teacher&#39;s SSE connection is on realtime server 7. How does the event reach the teacher?", "o": ["The load balancer forwards it", "API server 3 publishes to a class channel in pub/sub; server 7 is subscribed and pushes it", "The teacher&#39;s browser polls server 3", "Sticky sessions route the student to server 7"], "a": 1, "why": "Pub/sub decouples who handles the write from who holds the connection. Servers subscribe to channels for the connections they hold."},
+    {"q": "Why use heartbeats with a TTL for presence instead of disconnect events?", "o": ["Disconnect events are not part of HTTP", "Heartbeats are cheaper than connections", "Sleeping or roaming devices often vanish without a clean disconnect, so only a missing heartbeat reliably signals offline", "TTLs make users appear online longer"], "a": 2, "why": "A tablet that sleeps or loses Wi-Fi may never send a close. If the presence key expires after a few missed heartbeats, the server learns the truth on its own schedule."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>HTTP is request/response; realtime techniques let the server deliver updates without being asked each time.</li>
+    <li><b>Polling</b> is simple and often enough; <b>long polling</b> cuts latency; <b>SSE</b> is one-way push over HTTP with built-in resume; <b>WebSockets</b> are two-way for chat and collaboration.</li>
+    <li>Stream LLM output with <b>SSE</b>: relay deltas, save the full answer and usage at the end, <b>abort upstream</b> on disconnect, and make sure nothing buffers.</li>
+    <li>Long-lived connections are stateful: use <b>pub/sub channels</b> to fan events out to whichever server holds the connection, and resume to cover fire-and-forget gaps.</li>
+    <li>Plan for reconnect storms on deploys: jittered reconnects and gradual draining.</li>
+    <li><b>Presence</b> = heartbeats + a TTL key, with the TTL a few heartbeats long.</li>
+  </ul>
+</template>

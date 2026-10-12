@@ -1,0 +1,200 @@
+<template id="tpl-consensus" data-title="Time, order and agreement" data-part="Part 3 · Distributed systems" data-order="110">
+  <h1>Ordering, time and agreement</h1>
+  <p class="lede">By the end of this lesson you will be able to explain why you can&#39;t order events by timestamps, what vector clocks tell you that timestamps can&#39;t, how Raft elects a leader and commits a write (told step by step, with a crash and a partition), and how quorums (R + W &gt; N) work. Most of all, you&#39;ll know when to say &quot;I&#39;d use etcd or a consensus-backed database for that&quot; instead of inventing your own.</p>
+
+  <h2>1. The running example: SeatSwift&#39;s inventory store</h2>
+  <p>In the previous lesson SeatSwift (a concert ticket site) double-sold seat 14C because two data centers both accepted writes during a partition. The team&#39;s fix: keep seat inventory in a small, replicated store that never disagrees with itself. It runs on <b>5 servers</b>, S1 to S5, spread across 3 availability zones (separate buildings with separate power).</p>
+  <p>Five copies of the data, and they must behave like one. That needs three things this lesson builds up: a way to <b>order</b> events, a way to <b>detect</b> when two writes conflict, and a way for machines to <b>agree</b> on one history even when some of them crash.</p>
+
+  <h2>2. Why timestamps can&#39;t order events</h2>
+  <p>The tempting design: every write carries the server&#39;s clock time, and when two copies disagree, the later timestamp wins (<b>last-write-wins</b>, LWW). The problem is that the clocks are not the same clock.</p>
+  <ul>
+    <li><b>Drift.</b> A server&#39;s quartz clock is off by tens of parts per million. 20 ppm × 86,400 seconds in a day ≈ 1.7 seconds per day if nothing corrects it.</li>
+    <li><b>Correction is imperfect.</b> NTP (Network Time Protocol) pulls clocks back toward true time, typically to within a few milliseconds in one data center, often tens of milliseconds across the internet. It can also step a clock backwards, so time on one machine can appear to run in reverse.</li>
+    <li><b>Pauses.</b> A virtual machine can be frozen for hundreds of milliseconds (live migration, a long garbage-collection pause), then wake up with a stale idea of &quot;now&quot;.</li>
+  </ul>
+  <div class="trace"><b>Trace: last-write-wins drops the newer price</b>
+    <ol>
+      <li><p>S2&#39;s clock is <b>30 ms fast</b>. S4&#39;s clock is correct.</p></li>
+      <li><p>True time 10:00:00.000: an admin sets the price of section A to <b>$50</b> via S2. Stamped <code>10:00:00.030</code>.</p></li>
+      <li><p>True time 10:00:00.020: a second admin, seeing $50 is wrong, sets it to <b>$40</b> via S4. Stamped <code>10:00:00.020</code>.</p></li>
+      <li><p>Replicas compare stamps: .030 &gt; .020, so <b>$50 wins</b>. <span class="no">The write that happened later in real time is silently discarded.</span> No error, no log line. Fans pay $50.</p></li>
+    </ol>
+  </div>
+  <p>Google&#39;s Spanner is the famous exception that proves the rule: it uses GPS receivers and atomic clocks in every data center (TrueTime) to bound clock error to a few milliseconds, and then deliberately <i>waits out</i> that uncertainty before committing. You don&#39;t have atomic clocks, so you need <b>logical clocks</b>: counters that track cause and effect instead of wall time.</p>
+
+  <h2>3. Logical clocks: Lamport and vector clocks</h2>
+  <p>The insight (Leslie Lamport, 1978): what you actually care about is <b>causality</b>. Did write B happen with knowledge of write A? If yes, B should win. If neither knew about the other, they are <b>concurrent</b>, and no clock can tell you which is &quot;right&quot;; you have a genuine conflict.</p>
+  <p>A <b>Lamport clock</b> is one counter per server: increment it on every event, attach it to every message, and on receiving a message set your counter to <code>max(mine, theirs) + 1</code>. It gives a total order that respects causality, but if A&#39;s number is smaller than B&#39;s you can&#39;t tell whether A caused B or they just happened independently.</p>
+  <p>A <b>vector clock</b> fixes that by keeping <i>one counter per server</i>, like <code>{VA: 2, OR: 1}</code>: &quot;this version has seen 2 writes from VA and 1 from OR&quot;. Compare two vectors entry by entry:</p>
+  <ul>
+    <li>Every entry of A ≤ B, and at least one is smaller: <b>A happened before B</b>. B safely replaces A.</li>
+    <li>A is bigger in some entry and B is bigger in another: <b>concurrent</b>. Neither saw the other. Keep both and resolve.</li>
+  </ul>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 250" width="100%" role="img" aria-label="Space-time diagram: VA and OR replicas. VA writes held by Alice, replicates to OR, then during a partition VA writes sold to Alice and OR writes sold to Bob; the two clocks are concurrent." style="font-family:inherit">
+      <defs><marker id="cons-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="330" y="30" width="200" height="180" style="fill:var(--bad-soft);opacity:.7"/>
+      <text x="430" y="125" text-anchor="middle" style="fill:var(--bad);font-size:12px">partition</text>
+      <text x="20" y="64" style="fill:currentColor;font-size:14px;font-weight:600">VA</text>
+      <line x1="60" y1="60" x2="660" y2="60" style="stroke:var(--line);stroke-width:2"/>
+      <text x="20" y="184" style="fill:currentColor;font-size:14px;font-weight:600">OR</text>
+      <line x1="60" y1="180" x2="660" y2="180" style="stroke:var(--line);stroke-width:2"/>
+      <circle cx="120" cy="60" r="7" style="fill:var(--accent)"/>
+      <text x="120" y="40" text-anchor="middle" style="fill:currentColor;font-size:12px">held: Alice</text>
+      <text x="120" y="88" text-anchor="middle" class="mono" style="fill:var(--accent);font-size:12px">{VA:1}</text>
+      <line x1="126" y1="66" x2="234" y2="174" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cons-arr)"/>
+      <text x="200" y="118" style="fill:var(--muted);font-size:12px">replicate</text>
+      <circle cx="240" cy="180" r="7" style="fill:var(--muted)"/>
+      <text x="240" y="206" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">{VA:1}</text>
+      <circle cx="420" cy="60" r="7" style="fill:var(--accent)"/>
+      <text x="420" y="40" text-anchor="middle" style="fill:currentColor;font-size:12px">sold: Alice</text>
+      <text x="420" y="88" text-anchor="middle" class="mono" style="fill:var(--accent);font-size:12px">{VA:2}</text>
+      <circle cx="460" cy="180" r="7" style="fill:var(--accent)"/>
+      <text x="460" y="160" text-anchor="middle" style="fill:currentColor;font-size:12px">sold: Bob</text>
+      <text x="460" y="206" text-anchor="middle" class="mono" style="fill:var(--accent);font-size:12px">{VA:1, OR:1}</text>
+      <line x1="560" y1="60" x2="560" y2="180" style="stroke:var(--bad);stroke-width:1.5;stroke-dasharray:4 4"/>
+      <text x="570" y="110" style="fill:var(--bad);font-size:12px;font-weight:600">heal: compare</text>
+      <text x="570" y="128" style="fill:currentColor;font-size:12px">VA 2 &gt; 1, OR 0 &lt; 1</text>
+      <text x="570" y="146" style="fill:var(--bad);font-size:12px;font-weight:600">→ concurrent</text>
+    </svg>
+    <figcaption>Time runs left to right. Each write bumps its own server&#39;s entry. After the partition, neither vector dominates the other, so the system knows it has a real conflict instead of silently picking one.</figcaption>
+  </figure>
+  <p>Contrast: if OR had received <code>{VA:2}</code> before Bob&#39;s purchase, Bob&#39;s write would carry <code>{VA:2, OR:1}</code>, which is strictly after, and the system would know Bob&#39;s request was made <i>with knowledge of</i> Alice&#39;s sale (and the app would have rejected it).</p>
+  <p>Amazon&#39;s original Dynamo and Riak used this to keep conflicting versions as <b>siblings</b> and let the application merge them (the classic example: union two shopping carts). You&#39;ll build exactly this in the lab below.</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Thinking vector clocks <i>prevent</i> conflicts. They <b>detect</b> them. For a shopping cart, detection plus a merge rule is enough. For seat inventory, a detected double sale is still a double sale. If a conflict is unacceptable, you need a design where only one party decides: a single leader agreed on by consensus. That&#39;s the rest of this lesson.</p></div>
+
+  <h2>4. Agreement: why a leader, and why that is hard</h2>
+  <p>The simplest way to avoid conflicts is to have one <b>leader</b> (also called primary): all writes go through it, it decides the order, and it copies that order to <b>followers</b>. Postgres with replicas works this way.</p>
+  <p>The hard part is changing leaders. If the leader dies, someone must promote a follower. If the old leader was only <i>slow</i> (a long pause, a flaky network), you can end up with <b>two leaders</b> accepting writes: <b>split brain</b>. That&#39;s the double sale again, inside one data center.</p>
+  <p>So the cluster needs a way to agree, even with crashes and lost messages, on one leader at a time and one order of writes. That is the <b>consensus</b> problem. The algorithms that solve it are Paxos (1989, famously hard to understand) and Raft (2014, designed to be understandable). Raft runs inside etcd (Kubernetes&#39; brain), Consul, CockroachDB, TiKV and Kafka&#39;s KRaft mode; ZooKeeper uses a close cousin called ZAB.</p>
+
+  <h2>5. Raft in five ideas</h2>
+  <ol>
+    <li><b>Roles.</b> Each server is a <b>follower</b>, a <b>candidate</b>, or the <b>leader</b>. Normally one leader and everyone else follows.</li>
+    <li><b>Terms.</b> Time is divided into numbered <b>terms</b> (1, 2, 3...). Each term has at most one leader. A term number is like an election year: anyone who sees a higher term than their own immediately updates and, if they were leader, steps down.</li>
+    <li><b>Heartbeats and timeouts.</b> The leader sends heartbeats (say every 50&nbsp;ms). Each follower has an <b>election timeout</b>, randomized per server (the Raft paper suggests 150–300&nbsp;ms). If it hears nothing for that long, it assumes the leader is dead and runs for election. Randomization makes it likely one server times out first and wins cleanly.</li>
+    <li><b>Majority votes.</b> A candidate increments the term, votes for itself, and asks the others for votes. Each server votes at most once per term, and only for a candidate whose log is at least as up to date as its own. A candidate with votes from a <b>majority</b> (3 of 5) becomes leader.</li>
+    <li><b>Majority commits.</b> The leader appends each write to its log and sends it to followers. Once a <b>majority</b> has stored it, the entry is <b>committed</b>: it will never be lost, and the leader can tell the client &quot;done&quot;.</li>
+  </ol>
+  <p>Why majorities? Any two majorities of the same 5 servers share at least one server. So two leaders can&#39;t both win the same term (they&#39;d need the same voter twice), and any future leader&#39;s majority includes someone who has every committed entry (and the &quot;up-to-date log&quot; voting rule ensures that someone&#39;s log wins).</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 260" width="100%" role="img" aria-label="Raft election: S1 crashed, S3 times out first, increments to term 5, requests votes from S2 S4 S5, receives a majority and becomes leader" style="font-family:inherit">
+      <defs><marker id="cons-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <circle cx="340" cy="130" r="44" style="fill:var(--accent-soft);stroke:var(--accent);stroke-width:2"/>
+      <text x="340" y="124" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">S3</text>
+      <text x="340" y="142" text-anchor="middle" style="fill:currentColor;font-size:12px">candidate</text>
+      <text x="340" y="157" text-anchor="middle" class="mono" style="fill:var(--accent);font-size:12px">term 5</text>
+      <circle cx="110" cy="60" r="44" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:5 4"/>
+      <text x="110" y="58" text-anchor="middle" style="fill:var(--muted);font-size:14px;font-weight:600">S1</text>
+      <text x="110" y="76" text-anchor="middle" style="fill:var(--bad);font-size:12px">crashed</text>
+      <circle cx="110" cy="200" r="44" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="110" y="198" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">S2</text>
+      <text x="110" y="216" text-anchor="middle" style="fill:var(--muted);font-size:12px">timer 210 ms</text>
+      <circle cx="570" cy="60" r="44" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="570" y="58" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">S4</text>
+      <text x="570" y="76" text-anchor="middle" style="fill:var(--muted);font-size:12px">timer 290 ms</text>
+      <circle cx="570" cy="200" r="44" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="570" y="198" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">S5</text>
+      <text x="570" y="216" text-anchor="middle" style="fill:var(--muted);font-size:12px">timer 245 ms</text>
+      <line x1="298" y1="146" x2="154" y2="190" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cons-arr2)"/>
+      <line x1="382" y1="114" x2="528" y2="72" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cons-arr2)"/>
+      <line x1="382" y1="146" x2="528" y2="188" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cons-arr2)"/>
+      <line x1="298" y1="114" x2="146" y2="70" style="stroke:var(--line);stroke-width:1.5;stroke-dasharray:4 4"/>
+      <text x="200" y="128" style="fill:var(--ok);font-size:12px;font-weight:600">vote ✓</text>
+      <text x="440" y="82" style="fill:var(--ok);font-size:12px;font-weight:600">vote ✓</text>
+      <text x="440" y="190" style="fill:var(--ok);font-size:12px;font-weight:600">vote ✓</text>
+      <text x="340" y="30" text-anchor="middle" style="fill:currentColor;font-size:13px">S3 timed out first (163 ms), asks for votes in term 5</text>
+      <text x="340" y="250" text-anchor="middle" style="fill:currentColor;font-size:13px">Self + 2 votes = 3 of 5, a majority → S3 is leader for term 5</text>
+    </svg>
+    <figcaption>A Raft election. Randomized timeouts mean one follower usually times out well before the others, so it collects a majority before anyone else runs.</figcaption>
+  </figure>
+
+  <h2>6. Trace: a leader crashes</h2>
+  <div class="trace"><b>Trace: Raft election and one committed write</b>
+    <ol>
+      <li><p><b>Before.</b> Term 4. S1 is leader. All five logs end at entry #17 (the last committed write, &quot;hold 14B for Dana&quot;). S1 sends heartbeats every 50&nbsp;ms; each heartbeat resets the followers&#39; election timers.</p></li>
+      <li><p><b>t = 0 ms.</b> S1&#39;s machine loses power. Heartbeats stop. Followers&#39; randomized timers are now running down: S2 210&nbsp;ms, S3 163&nbsp;ms, S4 290&nbsp;ms, S5 245&nbsp;ms.</p></li>
+      <li><p><b>t = 163 ms.</b> S3&#39;s timer fires first. It becomes a candidate: term 4 → <b>5</b>, votes for itself, and sends <code>RequestVote(term 5, lastLogIndex 17, lastLogTerm 4)</code> to everyone.</p></li>
+      <li><p><b>t = 164–165 ms.</b> S2, S4 and S5 each see term 5 &gt; 4, update their term, check that S3&#39;s log is at least as up to date as theirs (it is: same last entry), see they haven&#39;t voted in term 5, and vote yes. They reset their timers, so they won&#39;t run themselves.</p></li>
+      <li><p><b>t = 165 ms.</b> S3 has 3 votes (itself, S2, S4): a majority of 5. <span class="yes">S3 is leader for term 5.</span> It immediately sends heartbeats so nobody else starts an election. The cluster was unable to accept writes for about 165&nbsp;ms (plus however long clients take to find the new leader).</p></li>
+      <li><p><b>t = 200 ms.</b> A client asks to &quot;sell 14C to Alice&quot;. S3 appends it as entry #18 (term 5) and sends <code>AppendEntries</code> to S2, S4, S5 (S1 is still down).</p></li>
+      <li><p><b>t ≈ 201 ms.</b> S2 and S4 store #18 and acknowledge. Now 3 of 5 servers (S3, S2, S4) have it. <span class="yes">Committed.</span> S3 applies it (14C is sold) and replies to the client. S5&#39;s ack arriving later changes nothing.</p></li>
+      <li><p><b>Later.</b> S1 reboots with term 4 and a log ending at #17. The first <code>AppendEntries</code> from S3 carries term 5, so S1 becomes a follower and catches up on #18.</p></li>
+    </ol>
+  </div>
+  <p>The cluster survived losing one server without losing a write or a moment of correctness. With 5 servers it can survive <b>2</b> failures (3 still form a majority). With 3 servers it survives 1. That&#39;s the rule: <b>2f + 1 servers tolerate f failures</b>. Going from 5 to 6 buys nothing (a majority of 6 is 4, so you still only tolerate 2), which is why clusters are odd-sized.</p>
+
+  <h2>7. Trace: the partition, Raft style</h2>
+  <p>Now replay lesson 1&#39;s nightmare. A network fault splits the cluster into {S1, S2} and {S3, S4, S5}. S1 happens to be leader in term 6.</p>
+  <div class="trace"><b>Trace: no double sale</b>
+    <ol>
+      <li><p><b>Minority side.</b> S1 still believes it&#39;s leader. Bob&#39;s request &quot;sell 14C to Bob&quot; reaches it. S1 appends entry #30 and sends it to S2, which stores it. That&#39;s 2 of 5: <span class="no">not a majority, so not committed.</span> S1 never tells Bob &quot;sold&quot;; his request times out and he sees &quot;please try again&quot;.</p></li>
+      <li><p><b>Majority side.</b> S3, S4, S5 stop hearing heartbeats. S4 times out first, starts term 7, gets votes from S3 and S5, becomes leader. Alice&#39;s &quot;sell 14C to Alice&quot; becomes entry #30 in term 7, stored on 3 servers. <span class="yes">Committed. Alice is told &quot;sold&quot;.</span></p></li>
+      <li><p><b>Heal.</b> S1 receives a message carrying term 7 &gt; 6. It steps down to follower. Its uncommitted #30 (Bob) conflicts with the leader&#39;s #30 (Alice) and is overwritten. Nobody was ever promised Bob&#39;s version, so nothing promised was lost.</p></li>
+    </ol>
+  </div>
+  <p>This is CP behavior: the minority side gave up availability (Bob got an error) to keep consistency. It&#39;s exactly the choice we wanted for seat inventory.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;I wouldn&#39;t implement consensus myself. For leader election, locks or critical config I&#39;d use etcd, ZooKeeper or Consul, or a database that runs Raft or Paxos underneath like CockroachDB or Spanner. Five nodes across three zones tolerate two failures; writes commit when a majority stores them, so a partitioned minority can&#39;t accept writes. The cost is a round trip to a majority on every write and a short pause, typically well under a second, during leader elections.&quot;</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Using a lock with a timeout (&quot;lease&quot;) and assuming only one holder can act. Worker A takes the lock for 10 seconds, then pauses for 15 seconds (garbage collection), the lease expires, worker B takes it, and A wakes up and writes anyway. The fix is a <b>fencing token</b>: the lock service hands out an increasing number with each grant (etcd and ZooKeeper give you one), and the storage rejects writes carrying a token lower than one it has already seen. A&#39;s token 33 loses to B&#39;s 34.</p></div>
+
+  <h2>8. Quorums without a leader: R + W &gt; N</h2>
+  <p>Some databases (Cassandra, Riak, the DynamoDB lineage) skip the leader. Any replica can take a write, and correctness comes from <b>quorums</b>: you write to some replicas and read from some replicas, and make sure the two sets overlap.</p>
+  <ul>
+    <li><b>N</b>: how many replicas hold each item (say 3: A, B, C).</li>
+    <li><b>W</b>: how many must acknowledge a write before it counts as successful.</li>
+    <li><b>R</b>: how many you read from, returning the newest version among them.</li>
+  </ul>
+  <p>If <b>R + W &gt; N</b>, every read set overlaps every write set in at least one replica, so a read sees the latest successful write.</p>
+  <div class="trace"><b>Trace: N = 3, W = 2, R = 2</b>
+    <ol>
+      <li><p>Event 42&#39;s seat map is at version 7 on A, B and C.</p></li>
+      <li><p>A write of version 8 goes to all three. A and B acknowledge; C is slow (its copy of the message is still in flight). 2 acks = W, so the write <span class="yes">succeeds</span>. State: A=v8, B=v8, C=v7.</p></li>
+      <li><p>A read asks two replicas and happens to pick B and C. It gets v8 and v7, returns the newer, <b>v8</b>. Whichever 2 of the 3 it picks, at least one has v8, because 2 + 2 &gt; 3.</p></li>
+      <li><p>The read also notices C is behind and sends it v8 (<b>read repair</b>). A background process (<b>anti-entropy</b>) catches any others.</p></li>
+    </ol>
+  </div>
+  <table class="tbl">
+    <thead><tr><th>N = 3 setting</th><th>Overlap?</th><th>What you get</th><th>Choose when</th></tr></thead>
+    <tbody>
+      <tr><td>W=1, R=1</td><td>No (2 ≤ 3)</td><td>Fastest, survives 2 node failures for both, reads can be stale</td><td>Metrics, logs, view counts</td></tr>
+      <tr><td>W=2, R=2</td><td>Yes (4 &gt; 3)</td><td>Balanced; survives 1 failure for reads and writes</td><td>The usual &quot;QUORUM&quot; default for data that matters</td></tr>
+      <tr><td>W=3, R=1</td><td>Yes (4 &gt; 3)</td><td>Fast reads; any single node down blocks writes</td><td>Read-heavy, rarely written data</td></tr>
+      <tr><td>W=1, R=3</td><td>Yes (4 &gt; 3)</td><td>Fast writes; any single node down blocks reads</td><td>Write-heavy, rarely read data</td></tr>
+    </tbody>
+  </table>
+  <p>Quorums are not consensus. R + W &gt; N makes stale reads unlikely, but two clients writing concurrently to different replicas still produce concurrent versions that need resolving (by LWW timestamps, or by vector clocks and siblings). And under failures some systems use <b>sloppy quorums</b> (writing to a stand-in node and handing the data back later), which can break the overlap. That&#39;s why seat inventory belongs in a leader-based, consensus-backed store, while quorum stores shine for high-volume data where availability matters more than a perfect order.</p>
+
+  <h2>9. When to reach for what</h2>
+  <table class="tbl">
+    <thead><tr><th>Need</th><th>Tool</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>One order of writes, no conflicts, survive failures</td><td>Consensus-backed store (Raft/Paxos)</td><td>Seat inventory, account balances, &quot;who is the leader&quot;</td></tr>
+      <tr><td>Exactly one worker doing a job at a time</td><td>Lease from etcd/ZooKeeper + fencing token</td><td>The nightly billing run</td></tr>
+      <tr><td>Always-writable, high volume, conflicts mergeable</td><td>Quorum store with version vectors or CRDTs</td><td>Carts, presence, activity feeds</td></tr>
+      <tr><td>Order events without trusting clocks</td><td>Lamport or vector clocks; or a single sequencer (a Kafka partition, a database sequence)</td><td>Chat message order within a room</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Lab: catch the double sale with vector clocks</h2>
+  <p>Build <code>merge</code>, <code>compare</code> and a replica that keeps concurrent writes as siblings. The tests replay the VA/OR partition from the diagram above.</p>
+  <div data-lab="vector-clock"></div>
+
+  <div data-quiz='[
+    {"q":"Why is last-write-wins by wall-clock timestamp risky?","o":["Timestamps take too much storage","Clocks on different machines drift and can jump, so the write that happened later in real time can carry the smaller timestamp and be silently dropped","Databases cannot compare timestamps quickly","It only works with an odd number of servers"],"a":1,"why":"Skew of even a few tens of milliseconds can reverse the order of two writes. Nothing errors; the newer data just disappears."},
+    {"q":"Version X has clock {VA: 3, OR: 1}. Version Y has {VA: 2, OR: 2}. What is their relationship?","o":["X happened before Y","Y happened before X","They are equal","They are concurrent: neither saw the other"],"a":3,"why":"X is bigger on VA, Y is bigger on OR. Neither dominates, so they are concurrent and the conflict must be resolved by the application or a merge rule."},
+    {"q":"A 5-node Raft cluster is split into {S1, S2} and {S3, S4, S5}. S1 was the leader. What happens to a write sent to S1?","o":["It commits on S1 and S2 and is merged later","It cannot reach a majority, so it never commits and the client does not get success","S1 and the new leader both commit, and the higher term wins later","S1 forwards it to S3 across the partition"],"a":1,"why":"Commits need a majority (3 of 5). S1 can reach only S2, so the entry stays uncommitted and is overwritten when the partition heals. The majority side elects a new leader and keeps working."},
+    {"q":"Why are consensus clusters usually 3 or 5 nodes, not 4 or 6?","o":["Raft only supports odd numbers","An even number cannot hold elections","Adding the even node raises the majority size without tolerating any more failures","Odd numbers make heartbeats faster"],"a":2,"why":"2f + 1 nodes tolerate f failures. 4 nodes need 3 for a majority and tolerate 1, the same as 3 nodes; 6 tolerate 2, the same as 5. You pay for a node and get more replication traffic for nothing."},
+    {"q":"N = 3 replicas. Which setting guarantees every read overlaps the latest successful write?","o":["W = 1, R = 1","W = 1, R = 2","W = 2, R = 2","W = 2, R = 1"],"a":2,"why":"You need R + W greater than N. Only 2 + 2 = 4 is greater than 3; the others sum to 3 or less, so a read can miss every replica that took the write."},
+    {"q":"A worker holds a 10 second lease from etcd, then freezes for 15 seconds in a garbage collection pause. What prevents it from corrupting data when it wakes up?","o":["Nothing, leases are always safe","A fencing token: storage rejects writes carrying a token older than one it has already accepted","Making the lease 20 seconds instead","Running the worker on a faster machine"],"a":1,"why":"The lease expired and another worker got a higher token. Storage that checks tokens rejects the stale worker. Longer leases only make the window rarer, not impossible."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Wall clocks drift and jump, so timestamps can&#39;t reliably order writes across machines; last-write-wins can silently drop the newer write.</li>
+    <li>Vector clocks track causality: they tell you whether one write saw another, or whether the two are concurrent (a real conflict). They detect conflicts; they don&#39;t prevent them.</li>
+    <li>Raft: one leader per term, randomized election timeouts, majority votes, and a write is committed once a majority stores it. 2f + 1 nodes tolerate f failures, and a partitioned minority can&#39;t commit.</li>
+    <li>Quorums: R + W &gt; N makes reads overlap writes, but concurrent writes still need resolving. Quorums are not consensus.</li>
+    <li>Don&#39;t build consensus yourself: use etcd/ZooKeeper/Consul or a consensus-backed database, and protect leases with fencing tokens.</li>
+  </ul>
+</template>

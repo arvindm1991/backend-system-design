@@ -1,0 +1,44 @@
+{
+  "id": "dsa-valid-palindrome",
+  "title": "Valid palindrome",
+  "minutes": 10,
+  "prompt": "<p>PageTurn has a word game: students type a phrase and the app says whether it is a <b>palindrome</b> (reads the same forwards and backwards). Only letters and digits count, and case doesn&#39;t matter, so spaces and punctuation are skipped.</p>\n<p>Write <code>isPalindrome(text)</code> that returns <code>true</code> or <code>false</code>. Use <b>O(1) extra space</b>: don&#39;t build a cleaned or reversed copy of the string.</p>\n<p>Examples:</p>\n<ul>\n<li><code>isPalindrome(&quot;Race car&quot;)</code> → <code>true</code> (it is &quot;racecar&quot;)</li>\n<li><code>isPalindrome(&quot;A man, a plan, a canal: Panama&quot;)</code> → <code>true</code></li>\n<li><code>isPalindrome(&quot;reading&quot;)</code> → <code>false</code></li>\n<li><code>isPalindrome(&quot;&quot;)</code> → <code>true</code> (nothing to contradict it)</li>\n</ul>\n<p>Constraints: 0 ≤ <code>text.length</code> ≤ 10<sup>5</sup>, plain ASCII. A character counts if <code>/[a-z0-9]/i.test(ch)</code> is true.</p>",
+  "starter": "function isPalindrome(text) {\n  // TODO: one pointer at each end, skip characters that aren't letters/digits,\n  // compare lowercase versions, move inward.\n  return false;\n}",
+  "solution": "function isLetterOrDigit(ch) {\n  return /[a-z0-9]/i.test(ch);\n}\n\nfunction isPalindrome(text) {\n  let left = 0;\n  let right = text.length - 1;\n  while (left < right) {\n    if (!isLetterOrDigit(text[left])) {\n      left++;\n      continue;\n    }\n    if (!isLetterOrDigit(text[right])) {\n      right--;\n      continue;\n    }\n    if (text[left].toLowerCase() !== text[right].toLowerCase()) return false;\n    left++;\n    right--;\n  }\n  return true;\n}",
+  "tests": [
+    {
+      "name": "simple palindrome with a space and mixed case",
+      "code": "assertEqual(isPalindrome('Race car'), true);"
+    },
+    {
+      "name": "punctuation and spaces are ignored",
+      "code": "assertEqual(isPalindrome('A man, a plan, a canal: Panama'), true);\nassertEqual(isPalindrome('No lemon, no melon!'), true);"
+    },
+    {
+      "name": "not a palindrome",
+      "code": "assertEqual(isPalindrome('reading'), false);\nassertEqual(isPalindrome('ab'), false);"
+    },
+    {
+      "name": "empty string and single character are palindromes",
+      "code": "assertEqual(isPalindrome(''), true);\nassertEqual(isPalindrome('x'), true);"
+    },
+    {
+      "name": "a string with only punctuation is a palindrome",
+      "code": "assertEqual(isPalindrome('.,! ?'), true);"
+    },
+    {
+      "name": "digits count and are not equal to letters",
+      "code": "assertEqual(isPalindrome('0P'), false);\nassertEqual(isPalindrome('12 3 21'), true);"
+    },
+    {
+      "name": "mismatch near the middle is caught",
+      "code": "assertEqual(isPalindrome('abcxba'), false);\nassertEqual(isPalindrome('ab_a'), true, 'underscore is not a letter or digit');"
+    }
+  ],
+  "hints": [
+    "<p>&quot;Reads the same forwards and backwards&quot; means: compare the first character with the last, the second with the second-to-last, and so on. That is two pointers from opposite ends.</p>",
+    "<p>Start <code>left = 0</code> and <code>right = text.length - 1</code>. While <code>left &lt; right</code>: if the left character doesn&#39;t count, move <code>left</code> right and try again; same for <code>right</code>. Otherwise compare lowercase versions; a mismatch means <code>false</code>.</p>",
+    "<p>Shape:</p><pre><code>while (left &lt; right) {\n  if (!counts(text[left])) { left++; continue; }\n  if (!counts(text[right])) { right--; continue; }\n  if (text[left].toLowerCase() !== text[right].toLowerCase()) return false;\n  left++; right--;\n}\nreturn true;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n), extra space O(1).</b> Each step moves at least one pointer inward, so there are at most n steps, and you only store two indexes. The &quot;clean, reverse, compare&quot; version is also O(n) time but allocates two extra strings of length n.</p><p><b>In an interview:</b> &quot;Palindrome means mirrored, so I&#39;ll compare from both ends with two pointers, skipping non-alphanumeric characters. That&#39;s O(n) time and O(1) extra space, versus O(n) space if I built a reversed copy.&quot;</p>"
+}

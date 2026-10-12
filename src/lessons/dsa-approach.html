@@ -1,0 +1,398 @@
+<template id="tpl-dsa-approach" data-title="How to attack any problem" data-part="Part 5 · Coding patterns (DSA)" data-order="300">
+  <h1>How to attack any problem</h1>
+  <p class="lede">After this lesson you will be able to look at any piece of code and say how fast it is (its Big-O), read a problem&#39;s constraints and know how fast your answer has to be, and work through any coding problem with the same six steps: restate, brute force, find the repeated work, pick the pattern that removes it, code, test. You will also have the master table that maps the words in a problem to the pattern that solves it, which is the map for the rest of this part.</p>
+
+  <h2>1. Speed is counting steps, not seconds</h2>
+  <p>Here is the one running example for this lesson: a list of a stock&#39;s price on each day.</p>
+  <pre><code class="lang-js">const prices = [7, 1, 5, 3, 6, 4]; // day 0 .. day 5</code></pre>
+  <p>Three questions you could ask about it, and how much work each one takes:</p>
+  <ul>
+    <li><b>&quot;What was the price on day 3?&quot;</b> <code>prices[3]</code>. One step, no matter how long the list is.</li>
+    <li><b>&quot;What was the highest price?&quot;</b> Look at every day once and remember the biggest. 6 days, 6 steps.</li>
+    <li><b>&quot;What is the best profit if I buy on one day and sell on a later day?&quot;</b> The obvious way is to try every (buy, sell) pair. With 6 days that&#39;s 5 + 4 + 3 + 2 + 1 = <b>15</b> pairs.</li>
+  </ul>
+  <p>We don&#39;t measure in seconds, because seconds depend on the laptop, the language and what else is running. We count <b>steps</b>: simple operations like reading an array slot, comparing two numbers, adding, or looking a key up in a hash map. Each of those takes roughly the same tiny amount of time.</p>
+  <p>Now make the list longer and count again. Call the length of the input <b>n</b> (here, the number of days).</p>
+  <table class="tbl">
+    <thead><tr><th>Question</th><th>n = 6</th><th>n = 1,000</th><th>n = 100,000</th></tr></thead>
+    <tbody>
+      <tr><td>Price on day 3</td><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td>Highest price (look at each day once)</td><td>6</td><td>1,000</td><td>100,000</td></tr>
+      <tr><td>Best profit (try every pair)</td><td>15</td><td>499,500</td><td>about 5,000,000,000</td></tr>
+    </tbody>
+  </table>
+  <p>At n = 6 all three are instant. At n = 100,000 the first two are still instant, and the third takes five billion steps. That is the whole reason this topic exists: <b>what matters is how the step count grows when n grows</b>.</p>
+
+  <h2>2. Big-O: keep only the part that grows</h2>
+  <p>For the pair version, the exact count is n × (n − 1) ÷ 2. Expand it: 0.5 × n² − 0.5 × n. When n is 100,000, the n² part is 5,000,000,000 and the n part is 50,000. The n part is a rounding error. The 0.5 in front doesn&#39;t change the <i>shape</i> either: double n and the work still quadruples.</p>
+  <p><b>Big-O</b> is the name for that shape. You take the step count, keep the fastest-growing term, and drop constant multipliers. So:</p>
+  <ul>
+    <li>Price on day 3: always 1 step → <b>O(1)</b>, &quot;constant time&quot;.</li>
+    <li>Highest price: n steps → <b>O(n)</b>, &quot;linear time&quot;.</li>
+    <li>Every pair: 0.5n² − 0.5n → <b>O(n²)</b>, &quot;quadratic time&quot;.</li>
+    <li>A function that loops over the list 3 times: 3n → still <b>O(n)</b>.</li>
+  </ul>
+  <p>Read &quot;O(n)&quot; out loud as &quot;order n&quot; or &quot;big O of n&quot;. It answers one question: <i>if the input gets 10 times bigger, how much more work?</i> O(1): none. O(n): 10 times. O(n²): 100 times.</p>
+  <p>Big-O describes the <b>worst case</b> unless someone says otherwise: if you search a list for a value, it might be in slot 0, but you quote O(n) because it could be last or missing.</p>
+
+  <h2>3. The six speeds you need to know</h2>
+  <p>Almost every interview answer lands on one of these six. Here is what each one looks like in code and in plain words.</p>
+  <h3>O(1): one step, whatever the size</h3>
+  <pre><code class="lang-js">const priceOnDay3 = prices[3];
+const seen = new Set([7, 1, 5]);
+seen.has(5); // hash lookup: O(1) on average</code></pre>
+  <h3>O(log n): cut the problem in half each step</h3>
+  <p>Guess a number between 1 and 1,000,000 where each answer is &quot;higher&quot; or &quot;lower&quot;. Guess the middle every time and you need at most <b>20</b> guesses, because halving 1,000,000 twenty times gets you to 1. <b>log n</b> (log base 2) is just &quot;how many times can I halve n before it reaches 1&quot;: log 1,000 ≈ 10, log 1,000,000 ≈ 20, log 1,000,000,000 ≈ 30. This is binary search on a <i>sorted</i> list.</p>
+  <pre><code class="lang-js">let low = 0, high = sorted.length - 1;
+while (low &lt;= high) {                 // runs about log2(n) times
+  const mid = Math.floor((low + high) / 2);
+  if (sorted[mid] === target) return mid;
+  if (sorted[mid] &lt; target) low = mid + 1; else high = mid - 1;
+}</code></pre>
+  <h3>O(n): touch each item a fixed number of times</h3>
+  <pre><code class="lang-js">let highest = -Infinity;
+for (const price of prices) {           // n steps
+  if (price &gt; highest) highest = price;
+}</code></pre>
+  <h3>O(n log n): sorting</h3>
+  <p>A good sort (JavaScript&#39;s <code>array.sort</code>, merge sort) does about n × log n comparisons. For n = 100,000 that&#39;s about 1.7 million: barely slower than O(n) in practice. So &quot;sort first, then do one pass&quot; is a cheap move.</p>
+  <h3>O(n²): a loop inside a loop over the same input</h3>
+  <pre><code class="lang-js">for (let buy = 0; buy &lt; prices.length; buy++) {
+  for (let sell = buy + 1; sell &lt; prices.length; sell++) {
+    // runs about n*n/2 times
+  }
+}</code></pre>
+  <h3>O(2ⁿ): try every subset</h3>
+  <p>Each item is in or out, so n items have 2 × 2 × ... × 2 = 2ⁿ combinations. 2¹⁰ = 1,024. 2²⁰ ≈ 1 million. 2³⁰ ≈ 1 billion. 2¹⁰⁰ is more than you could ever run. Only fine when n is tiny (about 20 or less). Trying every <i>ordering</i> (permutations) is even worse, O(n!), fine only up to about n = 10.</p>
+
+  <h3>The table to remember</h3>
+  <p>Steps needed for each speed, at three input sizes:</p>
+  <table class="tbl">
+    <thead><tr><th>Big-O</th><th>Name</th><th>n = 10</th><th>n = 1,000</th><th>n = 100,000</th></tr></thead>
+    <tbody>
+      <tr><td>O(1)</td><td>constant</td><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td>O(log n)</td><td>logarithmic</td><td>~3</td><td>~10</td><td>~17</td></tr>
+      <tr><td>O(n)</td><td>linear</td><td>10</td><td>1,000</td><td>100,000</td></tr>
+      <tr><td>O(n log n)</td><td>&quot;n log n&quot;</td><td>~33</td><td>~10,000</td><td>~1,700,000</td></tr>
+      <tr><td>O(n²)</td><td>quadratic</td><td>100</td><td>1,000,000</td><td>10,000,000,000</td></tr>
+      <tr><td>O(2ⁿ)</td><td>exponential</td><td>1,024</td><td>a 302-digit number</td><td>forget it</td></tr>
+    </tbody>
+  </table>
+  <p>The rule of thumb that turns steps into time: a computer does very roughly <b>100 million (10⁸) simple steps per second</b>. It&#39;s a rough number (it can be 10x either way depending on language and what a &quot;step&quot; is), but it&#39;s good enough to decide between &quot;instant&quot; and &quot;minutes&quot;. 10 billion steps at 10⁸ per second is about 100 seconds. Every coding judge times you out long before that.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 300" width="100%" role="img" aria-label="Bar chart on a log scale of steps needed at n = 100,000 for each Big-O class, with a line at 100 million steps marking about one second" style="font-family:inherit">
+      <text x="20" y="20" style="fill:currentColor;font-size:13px;font-weight:600">Steps needed when n = 100,000 (log scale)</text>
+      <g style="font-size:13px">
+        <text x="150" y="56" text-anchor="end" style="fill:currentColor">O(1)</text>
+        <rect x="160" y="40" width="5" height="24" rx="3" style="fill:var(--accent)"/>
+        <text x="174" y="56" style="fill:var(--muted);font-size:12px">1</text>
+        <text x="150" y="92" text-anchor="end" style="fill:currentColor">O(log n)</text>
+        <rect x="160" y="76" width="55" height="24" rx="3" style="fill:var(--accent)"/>
+        <text x="223" y="92" style="fill:var(--muted);font-size:12px">17</text>
+        <text x="150" y="128" text-anchor="end" style="fill:currentColor">O(n)</text>
+        <rect x="160" y="112" width="222" height="24" rx="3" style="fill:var(--accent)"/>
+        <text x="390" y="128" style="fill:var(--muted);font-size:12px">100,000</text>
+        <text x="150" y="164" text-anchor="end" style="fill:currentColor">O(n log n)</text>
+        <rect x="160" y="148" width="277" height="24" rx="3" style="fill:var(--accent)"/>
+        <text x="445" y="164" style="fill:var(--muted);font-size:12px">1.7 million</text>
+        <text x="150" y="200" text-anchor="end" style="fill:currentColor">O(n²)</text>
+        <rect x="160" y="184" width="445" height="24" rx="3" style="fill:var(--bad)"/>
+        <text x="611" y="200" style="fill:var(--muted);font-size:12px">10 billion</text>
+        <text x="150" y="236" text-anchor="end" style="fill:currentColor">O(2ⁿ)</text>
+        <rect x="160" y="220" width="520" height="24" rx="3" style="fill:var(--bad);opacity:.55"/>
+        <text x="672" y="236" text-anchor="end" style="fill:currentColor;font-size:12px;font-weight:600">off the chart →</text>
+      </g>
+      <line x1="516" y1="32" x2="516" y2="252" style="stroke:currentColor;stroke-width:1.5;stroke-dasharray:5 4"/>
+      <text x="512" y="44" text-anchor="end" style="fill:currentColor;font-size:12px;font-weight:600">10⁸ ≈ 1 second</text>
+      <g style="fill:var(--muted);font-size:12px" text-anchor="middle">
+        <line x1="160" y1="256" x2="680" y2="256" style="stroke:var(--line)"/>
+        <text x="160" y="274">1</text><text x="249" y="274">100</text><text x="338" y="274">10⁴</text><text x="427" y="274">10⁶</text><text x="516" y="274">10⁸</text><text x="605" y="274">10¹⁰</text>
+      </g>
+      <text x="420" y="294" text-anchor="middle" style="fill:var(--muted);font-size:12px">each tick is 100x more work than the one before</text>
+    </svg>
+    <figcaption>At n = 100,000, everything up to O(n log n) finishes in a blink. O(n²) is about 100 times over a one-second budget.</figcaption>
+  </figure>
+
+  <h2>4. Reading Big-O off your code</h2>
+  <p>You don&#39;t need math. Four rules cover almost everything:</p>
+  <ol>
+    <li><b>One loop over the input</b> → O(n).</li>
+    <li><b>A loop inside a loop</b>, both over the input → O(n × n) = O(n²). Three nested → O(n³).</li>
+    <li><b>Loops one after another</b> add, they don&#39;t multiply: a loop of n then another loop of n is 2n → O(n).</li>
+    <li><b>A loop that halves</b> what&#39;s left (or doubles a counter up to n) → O(log n).</li>
+  </ol>
+  <p>The trap is the <b>hidden loop</b>: a built-in method that looks like one step but walks the whole array. Put one inside a <code>for</code> loop and your &quot;O(n)&quot; code is secretly O(n²).</p>
+  <table class="tbl">
+    <thead><tr><th>JavaScript operation</th><th>Cost</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>arr[i]</code>, <code>arr.length</code>, <code>arr.push(x)</code>, <code>arr.pop()</code></td><td>O(1)</td><td>Direct slot access at the end of the array</td></tr>
+      <tr><td><code>map.get/set/has/delete</code>, <code>set.add/has/delete</code></td><td>O(1) average</td><td>Hashing jumps straight to the bucket (next lesson)</td></tr>
+      <tr><td><code>arr.includes(x)</code>, <code>arr.indexOf(x)</code>, <code>arr.find(fn)</code></td><td>O(n)</td><td>Checks items one by one</td></tr>
+      <tr><td><code>arr.shift()</code>, <code>arr.unshift(x)</code>, <code>arr.splice(i, 1)</code></td><td>O(n)</td><td>Every later item moves over one slot</td></tr>
+      <tr><td><code>arr.slice()</code>, <code>[...arr]</code>, <code>str.split(&#39;&#39;)</code>, <code>Object.keys(obj)</code></td><td>O(n)</td><td>Builds a new array of n items</td></tr>
+      <tr><td><code>arr.sort()</code></td><td>O(n log n)</td><td>A real sorting algorithm</td></tr>
+      <tr><td><code>Math.min(...arr)</code></td><td>O(n)</td><td>Looks at every item (and very large arrays can overflow the call stack)</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Writing <code>for (const x of nums) { if (list.includes(x)) ... }</code> and calling it O(n). <code>includes</code> is a loop, so this is O(n²). Same for <code>indexOf</code>, <code>shift</code>, <code>splice</code> and <code>slice</code> inside a loop. When you state complexity, look inside every line of the loop body and ask &quot;does this walk the array?&quot; The fix is usually to build a <code>Set</code> or <code>Map</code> once before the loop.</p></div>
+
+  <h2>5. Space complexity: the memory you add</h2>
+  <p><b>Space complexity</b> is the same idea for memory: how much <i>extra</i> storage does your code create as n grows? You don&#39;t count the input itself.</p>
+  <ul>
+    <li>Highest price with one <code>highest</code> variable: <b>O(1) space</b>. A few variables, whatever n is.</li>
+    <li>Building a <code>Set</code> of every price seen: up to n entries → <b>O(n) space</b>.</li>
+    <li>A 2D table of n × n cells: <b>O(n²) space</b>. At n = 100,000 that&#39;s 10 billion cells; you&#39;d run out of memory first.</li>
+  </ul>
+  <p>The most common trade in this whole part is <b>spending memory to save time</b>: store something in a hash map (O(n) extra space) so you never have to loop again (O(n²) → O(n) time). Interviewers almost always accept that trade; just say it out loud.</p>
+
+  <h2>6. Constraints tell you how fast you need to be</h2>
+  <p>Every LeetCode-style problem ends with a block like this:</p>
+  <pre><code class="lang-js">// Constraints:
+// 1 &lt;= prices.length &lt;= 10^5
+// 0 &lt;= prices[i] &lt;= 10^4</code></pre>
+  <p>Most people skip it. It&#39;s actually the problem author telling you the target speed. Plug the biggest n into each Big-O and check it against the ~10⁸ steps per second budget:</p>
+  <table class="tbl">
+    <thead><tr><th>If n is at most...</th><th>Steps for the slowest OK speed</th><th>Target</th><th>Usually means</th></tr></thead>
+    <tbody>
+      <tr><td>~10</td><td>10! ≈ 3.6 million</td><td>O(n!)</td><td>Try every ordering (permutations)</td></tr>
+      <tr><td>~20</td><td>2²⁰ ≈ 1 million</td><td>O(2ⁿ)</td><td>Try every subset (backtracking)</td></tr>
+      <tr><td>~500</td><td>500³ ≈ 125 million</td><td>O(n³)</td><td>Three nested loops are OK</td></tr>
+      <tr><td>~10⁴ (10,000)</td><td>10⁸</td><td>O(n²)</td><td>Nested loops are OK (or a 2D DP table)</td></tr>
+      <tr><td>~10⁵ to 10⁶</td><td>n log n ≈ 2–20 million</td><td>O(n log n) or O(n)</td><td>Sort, hash map, two pointers, sliding window, prefix sums, heap</td></tr>
+      <tr><td>~10⁹ or more</td><td>log n ≈ 30</td><td>O(log n) or O(1)</td><td>Binary search, or a math formula; you can&#39;t even read every value</td></tr>
+    </tbody>
+  </table>
+  <p>Read our constraint: <code>prices.length</code> up to 10⁵. Try O(n²): 10⁵ × 10⁵ = 10¹⁰ steps, about 100 seconds. Too slow. So before writing a line of code you know the answer needs to be <b>O(n log n) or O(n)</b>, which means the brute force pair loop is only a starting point.</p>
+  <p>In a live interview there&#39;s often no constraints block. Ask: &quot;Roughly how big can the input get?&quot; If they shrug, assume large (10⁵ or more) and aim for O(n) or O(n log n).</p>
+  <div class="callout tip"><span class="callout-label">Shortcut</span><p>Small n is also a hint. If a problem says n ≤ 20, the author is <i>inviting</i> you to try every subset. Don&#39;t waste time hunting for an O(n) trick that doesn&#39;t exist.</p></div>
+
+  <h2>7. The 6-step attack method</h2>
+  <p>Most people who freeze in coding interviews freeze because they try to jump straight to the clever answer. The clever answer almost never comes from nowhere. It comes from writing the dumb answer and asking what it does twice. Use these six steps every time, in order.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 250" width="100%" role="img" aria-label="Six steps in two rows: 1 restate and examples, 2 brute force out loud, 3 find the repeated work, 4 pick the pattern that removes it, 5 code, 6 test with edge cases" style="font-family:inherit">
+      <defs><marker id="dsaa-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <g style="font-size:13px">
+        <rect x="10" y="20" width="200" height="80" rx="9" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="110" y="48" text-anchor="middle" style="fill:currentColor;font-weight:600">1. Restate + examples</text>
+        <text x="110" y="68" text-anchor="middle" style="fill:var(--muted);font-size:12px">in your words; 2 small inputs</text>
+        <text x="110" y="85" text-anchor="middle" style="fill:var(--muted);font-size:12px">ask: how big is n?</text>
+        <rect x="250" y="20" width="200" height="80" rx="9" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="350" y="48" text-anchor="middle" style="fill:currentColor;font-weight:600">2. Brute force out loud</text>
+        <text x="350" y="68" text-anchor="middle" style="fill:var(--muted);font-size:12px">simplest correct idea</text>
+        <text x="350" y="85" text-anchor="middle" style="fill:var(--muted);font-size:12px">state its Big-O</text>
+        <rect x="490" y="20" width="200" height="80" rx="9" style="fill:var(--surface);stroke:var(--accent);stroke-width:2.5"/>
+        <text x="590" y="48" text-anchor="middle" style="fill:currentColor;font-weight:600">3. Find the bottleneck</text>
+        <text x="590" y="68" text-anchor="middle" style="fill:var(--muted);font-size:12px">what work is repeated?</text>
+        <text x="590" y="85" text-anchor="middle" style="fill:var(--muted);font-size:12px">(usually the inner loop)</text>
+        <rect x="490" y="150" width="200" height="80" rx="9" style="fill:var(--surface);stroke:var(--accent);stroke-width:2.5"/>
+        <text x="590" y="178" text-anchor="middle" style="fill:currentColor;font-weight:600">4. Pick the pattern</text>
+        <text x="590" y="198" text-anchor="middle" style="fill:var(--muted);font-size:12px">that removes that work</text>
+        <text x="590" y="215" text-anchor="middle" style="fill:var(--muted);font-size:12px">(trigger table, section 10)</text>
+        <rect x="250" y="150" width="200" height="80" rx="9" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="350" y="178" text-anchor="middle" style="fill:currentColor;font-weight:600">5. Code it</text>
+        <text x="350" y="198" text-anchor="middle" style="fill:var(--muted);font-size:12px">clear names, talk as</text>
+        <text x="350" y="215" text-anchor="middle" style="fill:var(--muted);font-size:12px">you type</text>
+        <rect x="10" y="150" width="200" height="80" rx="9" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="110" y="178" text-anchor="middle" style="fill:currentColor;font-weight:600">6. Test + edge cases</text>
+        <text x="110" y="198" text-anchor="middle" style="fill:var(--muted);font-size:12px">trace your example by hand;</text>
+        <text x="110" y="215" text-anchor="middle" style="fill:var(--muted);font-size:12px">empty, one item, duplicates</text>
+      </g>
+      <line x1="210" y1="60" x2="246" y2="60" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsaa-arr)"/>
+      <line x1="450" y1="60" x2="486" y2="60" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsaa-arr)"/>
+      <line x1="590" y1="100" x2="590" y2="146" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsaa-arr)"/>
+      <line x1="490" y1="190" x2="454" y2="190" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsaa-arr)"/>
+      <line x1="250" y1="190" x2="214" y2="190" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsaa-arr)"/>
+      <text x="350" y="130" text-anchor="middle" style="fill:var(--accent);font-size:12px;font-weight:600">steps 3 and 4 are where the speed-up comes from</text>
+    </svg>
+    <figcaption>The method. The brute force isn&#39;t wasted time: it&#39;s how you find the repeated work that the pattern removes.</figcaption>
+  </figure>
+  <p>What each step sounds like:</p>
+  <ol>
+    <li><b>Restate + examples.</b> Say the problem back in your own words and run one small example by hand. Ask the questions that change the answer: can the input be empty? negative numbers? duplicates? is it sorted? how big?</li>
+    <li><b>Brute force out loud.</b> The simplest thing that is <i>correct</i>, usually &quot;try every possibility&quot;. Say its Big-O. You don&#39;t have to code it; saying it proves you understand the problem and gives you a fallback.</li>
+    <li><b>Find the bottleneck.</b> Point at the slowest part (almost always the inner loop) and ask: <i>what is it recomputing that I already knew?</i> or <i>what is it searching for that I could look up instantly?</i></li>
+    <li><b>Pick the pattern</b> that removes exactly that work: a hash map to replace a search, a running variable to replace a recomputation, sorting to make neighbors meaningful, two pointers to replace a pair loop.</li>
+    <li><b>Code it.</b> Plain loops, clear names. Narrate.</li>
+    <li><b>Test.</b> Walk your small example through the code line by line, writing down the variables. Then the edge cases. Then state the final time and space.</li>
+  </ol>
+
+  <h2>8. The method end to end: Best Time to Buy and Sell Stock</h2>
+  <p><b>The problem:</b> given <code>prices</code>, where <code>prices[i]</code> is the price on day <code>i</code>, return the biggest profit from buying on one day and selling on a <i>later</i> day. If no profit is possible, return 0. Constraints: up to 10⁵ days.</p>
+
+  <h3>Step 1: Restate + examples</h3>
+  <p>&quot;I need the largest <code>prices[sell] − prices[buy]</code> where <code>buy</code> comes before <code>sell</code>, or 0 if every later price is lower.&quot;</p>
+  <ul>
+    <li><code>[7, 1, 5, 3, 6, 4]</code> → buy at 1 (day 1), sell at 6 (day 4) → <b>5</b>. Note: not 7 − 1; you can&#39;t sell before you buy.</li>
+    <li><code>[7, 6, 4, 3, 1]</code> → prices only fall → <b>0</b>.</li>
+    <li>Questions: empty or one day? (Return 0.) Can I buy and sell the same day? (Profit 0, same as doing nothing.) n up to 10⁵, so I need better than O(n²).</li>
+  </ul>
+
+  <h3>Step 2: Brute force out loud</h3>
+  <p>&quot;Try every buy day, and for each one every later sell day, and keep the best difference.&quot;</p>
+  <pre><code class="lang-js">function maxProfitBrute(prices) {
+  let best = 0;
+  for (let buy = 0; buy &lt; prices.length; buy++) {
+    for (let sell = buy + 1; sell &lt; prices.length; sell++) {
+      best = Math.max(best, prices[sell] - prices[buy]);
+    }
+  }
+  return best;
+}
+// Time O(n^2): about n*n/2 pairs. Space O(1).
+// n = 10^5 → ~5 billion pairs. Too slow.</code></pre>
+
+  <h3>Step 3: Find the bottleneck</h3>
+  <p>Flip the loops around in your head: for each <b>sell</b> day, which buy day is best? Obviously the <b>cheapest earlier day</b>. So the inner loop is really doing one job: finding the minimum of everything before <code>sell</code>. Watch how much of that it redoes:</p>
+  <table class="tbl">
+    <thead><tr><th>Sell day</th><th>Inner loop scans</th><th>Minimum found</th></tr></thead>
+    <tbody>
+      <tr><td>day 2 (price 5)</td><td>7, 1</td><td>1</td></tr>
+      <tr><td>day 3 (price 3)</td><td>7, 1, 5</td><td>1</td></tr>
+      <tr><td>day 4 (price 6)</td><td>7, 1, 5, 3</td><td>1</td></tr>
+      <tr><td>day 5 (price 4)</td><td>7, 1, 5, 3, 6</td><td>1</td></tr>
+    </tbody>
+  </table>
+  <p>Each row rescans everything the previous row already scanned, just to add one more number. The minimum of days 0–4 is simply <i>min(minimum of days 0–3, price on day 4)</i>. That&#39;s the repeated work.</p>
+
+  <h3>Step 4: Pick the pattern</h3>
+  <p>&quot;Carry the answer forward instead of recomputing it&quot;: keep a running minimum as you walk once from left to right. This is the <b>precompute / running value</b> move (you&#39;ll see its big brother, prefix sums, two lessons from now).</p>
+
+  <h3>Step 5: Code it</h3>
+  <pre><code class="lang-js">// In TypeScript you'd write: function maxProfit(prices: number[]): number
+function maxProfit(prices) {
+  let cheapestSoFar = Infinity; // lowest price on any day before today
+  let bestProfit = 0;
+  for (const price of prices) {
+    const profitIfSoldToday = price - cheapestSoFar;
+    if (profitIfSoldToday &gt; bestProfit) bestProfit = profitIfSoldToday;
+    if (price &lt; cheapestSoFar) cheapestSoFar = price;
+  }
+  return bestProfit;
+}
+// Time O(n): one pass. Space O(1): two variables.</code></pre>
+
+  <h3>Step 6: Test it by hand</h3>
+  <div class="trace">
+    <div class="trace-title">Trace: maxProfit([7, 1, 5, 3, 6, 4])</div>
+    <table class="tbl">
+      <thead><tr><th>Day</th><th>price</th><th>price − cheapestSoFar</th><th>bestProfit after</th><th>cheapestSoFar after</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>7</td><td>7 − ∞ = −∞</td><td>0</td><td>7</td></tr>
+        <tr><td>1</td><td>1</td><td>1 − 7 = −6</td><td>0</td><td><b>1</b></td></tr>
+        <tr><td>2</td><td>5</td><td>5 − 1 = 4</td><td>4</td><td>1</td></tr>
+        <tr><td>3</td><td>3</td><td>3 − 1 = 2</td><td>4</td><td>1</td></tr>
+        <tr><td>4</td><td>6</td><td>6 − 1 = 5</td><td><b>5</b></td><td>1</td></tr>
+        <tr><td>5</td><td>4</td><td>4 − 1 = 3</td><td>5</td><td>1</td></tr>
+      </tbody>
+    </table>
+    <p>Returns <span class="yes">5</span>. Six steps instead of fifteen pairs; at n = 10⁵ it&#39;s 100,000 steps instead of 5 billion.</p>
+  </div>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 270" width="100%" role="img" aria-label="Price chart for 7, 1, 5, 3, 6, 4 with the running minimum as a dashed line dropping to 1 on day 1, and the best profit of 5 shown between day 1 at price 1 and day 4 at price 6" style="font-family:inherit">
+      <defs><marker id="dsaa-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--ok)"/></marker></defs>
+      <g style="stroke:var(--line)">
+        <line x1="70" y1="230" x2="640" y2="230"/>
+        <line x1="70" y1="30" x2="70" y2="230"/>
+      </g>
+      <g style="fill:var(--muted);font-size:12px" text-anchor="end">
+        <text x="62" y="209">1</text><text x="62" y="109">5</text><text x="62" y="59">7</text>
+      </g>
+      <g style="fill:var(--muted);font-size:12px" text-anchor="middle">
+        <text x="110" y="250">day 0</text><text x="210" y="250">day 1</text><text x="310" y="250">day 2</text><text x="410" y="250">day 3</text><text x="510" y="250">day 4</text><text x="610" y="250">day 5</text>
+      </g>
+      <polyline points="110,55 210,205 310,105 410,155 510,80 610,130" style="fill:none;stroke:var(--accent);stroke-width:2.5"/>
+      <polyline points="110,55 210,55 210,205 640,205" style="fill:none;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:6 4"/>
+      <text x="636" y="198" text-anchor="end" style="fill:var(--muted);font-size:12px">cheapestSoFar</text>
+      <g style="fill:var(--accent)">
+        <circle cx="110" cy="55" r="5"/><circle cx="210" cy="205" r="6"/><circle cx="310" cy="105" r="5"/><circle cx="410" cy="155" r="5"/><circle cx="510" cy="80" r="6"/><circle cx="610" cy="130" r="5"/>
+      </g>
+      <g style="font-size:12px;fill:currentColor" text-anchor="middle">
+        <text x="110" y="42">7</text><text x="226" y="222">1</text><text x="310" y="92">5</text><text x="410" y="142">3</text><text x="510" y="66">6</text><text x="610" y="117">4</text>
+      </g>
+      <line x1="530" y1="203" x2="530" y2="86" style="stroke:var(--ok);stroke-width:2" marker-end="url(#dsaa-arr2)"/>
+      <text x="540" y="150" style="fill:var(--ok);font-size:13px;font-weight:600">+5 best</text>
+      <text x="230" y="40" style="fill:var(--muted);font-size:12px">7 − 1 is bigger, but selling on day 0 is before buying on day 1</text>
+    </svg>
+    <figcaption>The dashed line is the running minimum. At each day, the possible profit is just the gap between today&#39;s price and that line.</figcaption>
+  </figure>
+  <p>Now the edge cases, quickly: <code>[]</code> → the loop never runs → 0. <code>[5]</code> → 5 − ∞ is −∞, not better than 0 → 0. <code>[7, 6, 4, 3, 1]</code> → every difference is negative → 0. <code>[2, 4, 1]</code> → best is 2, found on day 1, and the later low of 1 can&#39;t hurt it because nothing comes after. All good. Final answer: <b>O(n) time, O(1) space.</b></p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;Brute force is every buy/sell pair: O(n²), which is 10¹⁰ steps at n = 10⁵, too slow. The repeated work is the inner loop re-finding the cheapest earlier price for every sell day. If I carry the minimum forward as I scan, each day is O(1), so the whole thing is O(n) time and O(1) space.&quot;</p></div>
+  <div data-lab="dsa-max-profit"></div>
+
+  <h2>9. The four speed-up moves</h2>
+  <p>Step 4 feels like magic until you notice that almost every speed-up is one of four moves. Each one kills a specific kind of repeated work.</p>
+  <table class="tbl">
+    <thead><tr><th>Move</th><th>The repeated work it kills</th><th>Typical before → after</th><th>Lesson</th></tr></thead>
+    <tbody>
+      <tr><td><b>Replace the inner loop with a hash map lookup</b></td><td>&quot;For each item, search the whole list for its partner / for a duplicate&quot;</td><td>O(n²) → O(n) time, O(n) space</td><td><a href="#dsa-hashing">Hash maps</a></td></tr>
+      <tr><td><b>Sort first</b></td><td>&quot;Compare everything with everything&quot; when only neighbors in sorted order matter (duplicates, closest pair, overlapping intervals)</td><td>O(n²) → O(n log n)</td><td><a href="#dsa-sorting-intervals">Sorting</a></td></tr>
+      <tr><td><b>Precompute / carry a running value</b></td><td>Re-adding or re-scanning the same stretch of the array for every query or every position</td><td>O(n²) → O(n)</td><td><a href="#dsa-prefix">Prefix sums</a></td></tr>
+      <tr><td><b>Two pointers (or a sliding window) instead of nested loops</b></td><td>Trying all pairs or all subarrays when the data is sorted or the window only ever moves forward</td><td>O(n²) → O(n)</td><td><a href="#dsa-two-pointers">Two pointers</a>, <a href="#dsa-sliding-window">Sliding window</a></td></tr>
+    </tbody>
+  </table>
+  <p>Here is the first move on a real problem, because it&#39;s the one you&#39;ll use most. <b>&quot;Do any two prices add up to 10?&quot;</b></p>
+  <pre><code class="lang-js">// Before: for each price, search the rest of the list for its partner. O(n^2).
+function hasPairBrute(prices, target) {
+  for (let i = 0; i &lt; prices.length; i++) {
+    for (let j = i + 1; j &lt; prices.length; j++) {
+      if (prices[i] + prices[j] === target) return true;
+    }
+  }
+  return false;
+}
+
+// After: remember what you've seen in a Set; the "search" becomes one lookup. O(n).
+function hasPair(prices, target) {
+  const seen = new Set();
+  for (const price of prices) {
+    if (seen.has(target - price)) return true; // O(1) instead of a loop
+    seen.add(price);
+  }
+  return false;
+}</code></pre>
+  <p>Same question, same answer. The inner loop was &quot;search for <code>target − price</code>&quot;, and a <code>Set</code> answers that in one step. Two smaller moves worth knowing too: <b>binary search</b> replaces a linear search when the data is sorted (O(n) → O(log n), <a href="#dsa-binary-search">lesson</a>), and a <b>heap</b> replaces &quot;sort everything just to get the top k&quot; (<a href="#dsa-heaps">lesson</a>).</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Skipping steps 1–3 and staring at the problem waiting for the trick. In an interview that looks like being stuck, and it often ends with a clever-looking answer that solves a different problem. Say the brute force first, even if it&#39;s obviously slow. Then point at its inner loop and ask &quot;what is this re-doing?&quot; That question, not inspiration, is what finds the pattern.</p></div>
+
+  <h2>10. The master trigger table</h2>
+  <p>This is the map for the rest of the part. When you read a problem, underline the words that describe its <i>shape</i> (what the input is, what&#39;s being asked) and look them up here. Each row is a lesson; each lesson starts with its trigger.</p>
+  <table class="tbl">
+    <thead><tr><th>If the problem says...</th><th>Think</th><th>Typical target</th><th>Lesson</th></tr></thead>
+    <tbody>
+      <tr><td>&quot;count&quot;, &quot;frequency&quot;, &quot;most common&quot;, &quot;duplicate&quot;, &quot;seen before&quot;, &quot;anagram&quot;, &quot;two numbers that add up to&quot; (unsorted), &quot;group by&quot;</td><td>Hash map / set</td><td>O(n)</td><td><a href="#dsa-hashing">Hash maps &amp; sets</a></td></tr>
+      <tr><td>&quot;sum of elements between i and j&quot;, &quot;many range queries&quot;, &quot;subarray sum equals k&quot;, &quot;running total&quot;, &quot;product of all except self&quot;</td><td>Prefix sums / precompute</td><td>O(n) build, O(1) per query</td><td><a href="#dsa-prefix">Prefix sums</a></td></tr>
+      <tr><td>&quot;sorted array&quot; + &quot;pair&quot; / &quot;triplet&quot;, &quot;palindrome&quot;, &quot;in place&quot;, &quot;remove duplicates&quot;, &quot;merge two sorted&quot;</td><td>Two pointers</td><td>O(n)</td><td><a href="#dsa-two-pointers">Two pointers</a></td></tr>
+      <tr><td>&quot;contiguous subarray / substring&quot;, &quot;longest / shortest ... such that&quot;, &quot;window of size k&quot;, &quot;at most k distinct&quot;</td><td>Sliding window</td><td>O(n)</td><td><a href="#dsa-sliding-window">Sliding window</a></td></tr>
+      <tr><td>&quot;valid parentheses&quot;, &quot;nested&quot;, &quot;undo&quot;, &quot;most recent&quot;, &quot;next greater / smaller element&quot;, &quot;days until warmer&quot;</td><td>Stack (monotonic stack)</td><td>O(n)</td><td><a href="#dsa-stack">Stacks</a></td></tr>
+      <tr><td>&quot;sorted&quot; + &quot;find&quot;, &quot;first / last position&quot;, &quot;minimum X such that ...&quot;, &quot;in O(log n)&quot;</td><td>Binary search (on the array or on the answer)</td><td>O(log n) or O(n log n)</td><td><a href="#dsa-binary-search">Binary search</a></td></tr>
+      <tr><td>&quot;intervals&quot;, &quot;overlapping&quot;, &quot;meetings&quot;, &quot;schedule&quot;, &quot;maximum number of non-overlapping&quot;</td><td>Sort + sweep / greedy</td><td>O(n log n)</td><td><a href="#dsa-sorting-intervals">Sorting &amp; intervals</a></td></tr>
+      <tr><td>&quot;linked list&quot;, &quot;cycle&quot;, &quot;middle node&quot;, &quot;k-th from the end&quot;, &quot;reverse&quot;</td><td>Pointer rewiring, fast/slow pointers</td><td>O(n), O(1) space</td><td><a href="#dsa-linked-lists">Linked lists</a></td></tr>
+      <tr><td>&quot;tree&quot;, &quot;depth&quot;, &quot;path from root&quot;, &quot;level by level&quot;, &quot;BST&quot;</td><td>Recursion: DFS, or BFS with a queue</td><td>O(n)</td><td><a href="#dsa-trees">Trees</a></td></tr>
+      <tr><td>&quot;k largest / smallest&quot;, &quot;top k&quot;, &quot;k most frequent&quot;, &quot;k-th&quot;, &quot;merge k sorted&quot;</td><td>Heap (priority queue)</td><td>O(n log k)</td><td><a href="#dsa-heaps">Heaps</a></td></tr>
+      <tr><td>&quot;grid&quot;, &quot;islands&quot;, &quot;connected&quot;, &quot;network&quot;, &quot;prerequisites / dependencies&quot;, &quot;fewest steps&quot;</td><td>Graph: BFS / DFS with a visited set, topological sort</td><td>O(nodes + edges)</td><td><a href="#dsa-graphs">Graphs</a></td></tr>
+      <tr><td>&quot;all combinations&quot;, &quot;all subsets / permutations&quot;, &quot;generate every&quot;, n ≤ 20</td><td>Backtracking</td><td>O(2ⁿ) or O(n!)</td><td><a href="#dsa-backtracking">Backtracking</a></td></tr>
+      <tr><td>&quot;number of ways&quot;, &quot;minimum / maximum cost&quot;, &quot;can you reach&quot;, &quot;longest increasing / common subsequence&quot;, a choice at each step</td><td>Dynamic programming</td><td>O(n) to O(n²)</td><td><a href="#dsa-dp">Dynamic programming</a></td></tr>
+    </tbody>
+  </table>
+  <p>Two things to notice. First, <b>hash maps show up everywhere</b>, even inside other patterns (sliding window keeps counts in a map; graphs keep a visited set). That&#39;s why they&#39;re the next lesson. Second, the trigger is often the <b>shape of the input</b> (&quot;sorted&quot;, &quot;contiguous&quot;, &quot;tree&quot;) more than the question. Sorted input is a gift: it almost always means two pointers or binary search.</p>
+  <p>When nothing matches, fall back to the method: brute force, find the repeated work, and ask which of the four moves removes it.</p>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"A function loops over an array of n items, and inside the loop calls arr.includes(x) on the same array. What is its time complexity?","o":["O(n)","O(n log n)","O(n²)","O(1)"],"a":2,"why":"includes walks the array, so it is a hidden O(n) loop running n times: O(n²). Building a Set before the loop and using set.has makes it O(n)."},
+    {"q":"The constraints say 1 ≤ nums.length ≤ 10^5. Which target complexity should you aim for?","o":["O(2ⁿ): try every subset","O(n²): nested loops are fine","O(n log n) or O(n)","O(n³)"],"a":2,"why":"10^5 squared is 10^10 steps, about 100 seconds at roughly 10^8 steps per second. n log n (about 1.7 million) or n fits easily."},
+    {"q":"A problem says n ≤ 15 and asks for every subset of items whose weights add up to a target. What does that small n tell you?","o":["You must find an O(n) trick","Trying all 2^n subsets (about 32,000) is acceptable: backtracking","Use binary search","Use a sliding window"],"a":1,"why":"Tiny n is the author inviting an exponential search. 2^15 is about 32,000 subsets, which is instant."},
+    {"q":"Brute force for the question (is there a pair that sums to target in this unsorted array?) is two nested loops. What is the repeated work, and which move removes it?","o":["Re-sorting: use a heap","Searching the rest of the array for target − x each time: replace it with a hash set lookup","Re-adding the same range: use prefix sums","Recursion: use memoization"],"a":1,"why":"The inner loop is a search for one specific value. A Set of values seen so far answers that in O(1), so the whole thing becomes O(n) time with O(n) space."},
+    {"q":"Which problem statement most strongly suggests a sliding window?","o":["Return the k most frequent words","Find the length of the longest substring with no repeating characters","Count the number of ways to climb n stairs","Check whether a binary tree is balanced"],"a":1,"why":"Longest + contiguous substring + a condition is the sliding window trigger. k most frequent is a heap (or hash map), number of ways is DP, balanced tree is tree recursion."},
+    {"q":"Your code loops over n items twice in a row (not nested), then sorts the array once. What is the overall time complexity?","o":["O(n)","O(2n + n log n), which simplifies to O(n log n)","O(n²)","O(n² log n)"],"a":1,"why":"Sequential steps add: n + n + n log n. Keep the fastest-growing term and drop constants: O(n log n)."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li><b>Big-O</b> counts how the number of steps grows with input size n, keeping the fastest-growing term and dropping constants. The six to know: O(1), O(log n), O(n), O(n log n), O(n²), O(2ⁿ).</li>
+    <li>Read it off code: one loop is n, nested loops multiply, sequential loops add, halving is log n. Watch for <b>hidden loops</b> like <code>includes</code>, <code>indexOf</code>, <code>shift</code>, <code>splice</code>, <code>slice</code>.</li>
+    <li><b>Constraints set the target</b>: with ~10⁸ steps per second, n ≤ 20 allows 2ⁿ, n ≤ 10⁴ allows n², n ≤ 10⁵–10⁶ needs n log n or n.</li>
+    <li>Use the <b>6 steps</b>: restate + examples, brute force out loud, find the repeated work, pick the pattern that removes it, code, test with edge cases.</li>
+    <li>Most speed-ups are one of four moves: <b>hash map lookup</b> instead of an inner loop, <b>sort first</b>, <b>precompute</b> a running value, <b>two pointers / window</b> instead of nested loops. They usually trade O(n) memory for a big time win.</li>
+    <li>The <b>trigger table</b> maps problem words to patterns; it&#39;s the index for the rest of this part.</li>
+  </ul>
+</template>

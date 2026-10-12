@@ -1,0 +1,271 @@
+<template id="tpl-dsa-heaps" data-title="Heaps &amp; top-K" data-part="Part 5 · Coding patterns (DSA)" data-order="395">
+  <h1>Heaps &amp; top-K</h1>
+  <p class="lede">After this lesson you will know exactly what a heap (priority queue) guarantees and what it doesn&#39;t, have a small <code>MinHeap</code> class you can drop into any JavaScript interview, and recognize the problems it unlocks: <b>k largest / smallest</b>, <b>k most frequent</b>, <b>merge k sorted lists</b>, and &quot;always process the most urgent next&quot;. You will also know when plain sorting is the better answer.</p>
+
+  <p>Running example for the whole lesson: <b>the reading app&#39;s weekly leaderboard.</b> 200,000 students log minutes read. Every Monday the app shows the top 10 readers, the most-searched books, and a merged district timeline of reading events. All three are heap problems.</p>
+
+  <h2>1. The problem: you only need the top of the pile</h2>
+  <p>You have 200,000 reading totals and want the top 10. Three ways to do it:</p>
+  <table class="tbl">
+    <thead><tr><th>Approach</th><th>Rough steps (n = 200,000, k = 10)</th><th>Big-O</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Sort everything, take the first 10</td><td>~200,000 × 18 ≈ 3.5 million</td><td>O(n log n)</td><td>Simple. Orders 199,990 students nobody will see.</td></tr>
+      <tr><td>Scan for the max, 10 times</td><td>10 × 200,000 = 2 million</td><td>O(n · k)</td><td>Fine for k = 10; terrible for k = 5,000.</td></tr>
+      <tr><td>Keep a heap of the best 10 so far</td><td>~200,000 × 3.3 ≈ 660,000</td><td>O(n log k)</td><td>Also works on a live stream, using only k memory.</td></tr>
+    </tbody>
+  </table>
+  <p>(Big-O is from the lesson <i>How to attack any problem</i>: it describes how the step count grows with n. log k is tiny when k is small: log₂ 10 ≈ 3.3.)</p>
+  <p>The sort does more work than you need: it fully orders everyone. A <b>heap</b> keeps things only <i>partly</i> ordered, just enough to always know the smallest (or largest) item. That partial order is cheaper to maintain.</p>
+
+  <h2>2. What a heap guarantees</h2>
+  <p>Think of hospital triage. The nurse always knows who is <b>most urgent right now</b>. She doesn&#39;t keep everyone else in a perfectly sorted line, because new patients keep arriving and re-sorting would be a waste. She just needs &quot;who&#39;s next?&quot; to be fast, and adding a patient to be fast.</p>
+  <p>A <b>min-heap</b> is a binary tree with one rule: <b>every parent is ≤ its children</b>. That&#39;s it. So the smallest item is always at the top (the root). Siblings are in no particular order, and the heap is <b>not sorted</b>. A <b>max-heap</b> is the same with ≥. A <b>priority queue</b> is the general idea (&quot;give me the highest-priority item next&quot;); a heap is the usual way to build one.</p>
+  <table class="tbl">
+    <thead><tr><th>Operation</th><th>Cost</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>peek()</code>: look at the smallest</td><td>O(1)</td><td>It&#39;s always at index 0.</td></tr>
+      <tr><td><code>push(x)</code></td><td>O(log n)</td><td>Fix one path from the bottom up.</td></tr>
+      <tr><td><code>pop()</code>: remove the smallest</td><td>O(log n)</td><td>Fix one path from the top down.</td></tr>
+      <tr><td>Find an arbitrary value</td><td>O(n)</td><td>No order to exploit; a heap is not a search tree.</td></tr>
+    </tbody>
+  </table>
+  <p>Why log n? A heap is always a <b>complete</b> tree (every level full except maybe the last, filled left to right), so n items make only about log₂ n levels. 1,000,000 items is about 20 levels. Push and pop each walk one path.</p>
+
+  <h2>3. A tree stored in an array</h2>
+  <p>Because the tree is complete, you can store it in a plain array with no pointers. The item at index <code>i</code> has its children at <code>2i + 1</code> and <code>2i + 2</code>, and its parent at <code>Math.floor((i − 1) / 2)</code>.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 300" width="100%" role="img" aria-label="A min-heap drawn as a tree with root 5, children 12 and 8, and leaves 20, 15, 9, and the same heap as an array 5, 12, 8, 20, 15, 9 with indices 0 to 5" style="font-family:inherit">
+      <g style="font-size:13px">
+        <line x1="340" y1="40" x2="200" y2="105" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="340" y1="40" x2="480" y2="105" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="200" y1="105" x2="130" y2="170" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="200" y1="105" x2="270" y2="170" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="480" y1="105" x2="410" y2="170" style="stroke:var(--line);stroke-width:2"/>
+        <circle cx="340" cy="40" r="22" style="fill:var(--surface);stroke:var(--accent);stroke-width:2.5"/>
+        <text x="340" y="45" text-anchor="middle" style="fill:currentColor;font-weight:600">5</text>
+        <circle cx="200" cy="105" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="200" y="110" text-anchor="middle" style="fill:currentColor;font-weight:600">12</text>
+        <circle cx="480" cy="105" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="480" y="110" text-anchor="middle" style="fill:currentColor;font-weight:600">8</text>
+        <circle cx="130" cy="170" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="130" y="175" text-anchor="middle" style="fill:currentColor;font-weight:600">20</text>
+        <circle cx="270" cy="170" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="270" y="175" text-anchor="middle" style="fill:currentColor;font-weight:600">15</text>
+        <circle cx="410" cy="170" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="410" y="175" text-anchor="middle" style="fill:currentColor;font-weight:600">9</text>
+        <text x="370" y="30" style="fill:var(--muted);font-size:12px">i=0 (smallest)</text>
+        <text x="148" y="98" style="fill:var(--muted);font-size:12px">i=1</text>
+        <text x="510" y="98" style="fill:var(--muted);font-size:12px">i=2</text>
+        <text x="80" y="200" style="fill:var(--muted);font-size:12px">i=3</text>
+        <text x="296" y="200" style="fill:var(--muted);font-size:12px">i=4</text>
+        <text x="436" y="200" style="fill:var(--muted);font-size:12px">i=5</text>
+        <rect x="100" y="222" width="60" height="34" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="130" y="244" text-anchor="middle" style="fill:currentColor;font-weight:600">5</text>
+        <rect x="160" y="222" width="60" height="34" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="190" y="244" text-anchor="middle" style="fill:currentColor">12</text>
+        <rect x="220" y="222" width="60" height="34" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="250" y="244" text-anchor="middle" style="fill:currentColor">8</text>
+        <rect x="280" y="222" width="60" height="34" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="310" y="244" text-anchor="middle" style="fill:currentColor">20</text>
+        <rect x="340" y="222" width="60" height="34" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="370" y="244" text-anchor="middle" style="fill:currentColor">15</text>
+        <rect x="400" y="222" width="60" height="34" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="430" y="244" text-anchor="middle" style="fill:currentColor">9</text>
+        <text x="130" y="274" text-anchor="middle" style="fill:var(--muted);font-size:12px">0</text>
+        <text x="190" y="274" text-anchor="middle" style="fill:var(--muted);font-size:12px">1</text>
+        <text x="250" y="274" text-anchor="middle" style="fill:var(--muted);font-size:12px">2</text>
+        <text x="310" y="274" text-anchor="middle" style="fill:var(--muted);font-size:12px">3</text>
+        <text x="370" y="274" text-anchor="middle" style="fill:var(--muted);font-size:12px">4</text>
+        <text x="430" y="274" text-anchor="middle" style="fill:var(--muted);font-size:12px">5</text>
+        <text x="40" y="244" style="fill:var(--muted);font-size:12px">array</text>
+        <text x="480" y="236" style="fill:currentColor;font-size:12px">children of i: 2i+1, 2i+2</text>
+        <text x="480" y="256" style="fill:currentColor;font-size:12px">parent of i: floor((i−1)/2)</text>
+        <text x="520" y="160" style="fill:var(--muted);font-size:12px">every parent ≤ its children;</text>
+        <text x="520" y="178" style="fill:var(--muted);font-size:12px">siblings in any order</text>
+      </g>
+    </svg>
+    <figcaption>The same min-heap as a tree and as an array. Index 1 (12) has children at 3 and 4 (20, 15); index 2 (8) has child 5 (9). Note it is not sorted: 12 comes before 8.</figcaption>
+  </figure>
+
+  <h2>4. Push and pop, traced</h2>
+  <p><b>Push</b> puts the new item at the end of the array (the next free spot in the bottom row), then <b>bubbles it up</b>: while it is smaller than its parent, swap them.</p>
+  <div class="trace">
+    <p><b>Trace: push 3 into <code>[5, 12, 8, 20, 15, 9]</code></b></p>
+    <ol>
+      <li>Append: <code>[5, 12, 8, 20, 15, 9, 3]</code>. 3 is at index 6; its parent is index floor(5/2) = 2, value 8.</li>
+      <li>3 &lt; 8: swap. <code>[5, 12, 3, 20, 15, 9, 8]</code>. 3 is at index 2; parent is index 0, value 5.</li>
+      <li>3 &lt; 5: swap. <code>[3, 12, 5, 20, 15, 9, 8]</code>. 3 is at the root. Done: 2 swaps, which is about log₂ 7.</li>
+    </ol>
+  </div>
+  <p><b>Pop</b> removes the root (the smallest). To keep the tree complete, move the <b>last</b> item to the root, then <b>sink it down</b>: while it is bigger than its smaller child, swap with that child.</p>
+  <div class="trace">
+    <p><b>Trace: pop from <code>[3, 12, 5, 20, 15, 9, 8]</code></b></p>
+    <ol>
+      <li>Save the root, 3 (that&#39;s the return value). Move the last item, 8, to the root: <code>[8, 12, 5, 20, 15, 9]</code>.</li>
+      <li>8&#39;s children are 12 (index 1) and 5 (index 2). The smaller is 5, and 8 &gt; 5: swap. <code>[5, 12, 8, 20, 15, 9]</code>.</li>
+      <li>8 is now at index 2. Its only child is 9 (index 5). 8 &lt; 9: stop. Return <b>3</b>.</li>
+    </ol>
+  </div>
+  <p>Why swap with the <i>smaller</i> child? Because that child becomes the parent of the other one, and it has to be ≤ it.</p>
+
+  <h2>5. The MinHeap class to reuse</h2>
+  <p>JavaScript has no built-in heap (Python has <code>heapq</code>, Java has <code>PriorityQueue</code>). In an interview, it&#39;s usually fine to say &quot;assume a MinHeap with push, pop, peek and size&quot;, but you should be able to write it in a few minutes. You&#39;ll build it yourself in the first lab. Here it is:</p>
+  <pre><code class="lang-js">// compare(a, b) &lt; 0 means a comes out first. Default: smallest number first.
+// Max-heap: new MinHeap((a, b) =&gt; b - a). Pairs: new MinHeap((a, b) =&gt; a[0] - b[0]).
+// (In TypeScript: class MinHeap&lt;T&gt; with compare: (a: T, b: T) =&gt; number.)
+class MinHeap {
+  constructor(compare = (a, b) =&gt; a - b) {
+    this.items = [];
+    this.compare = compare;
+  }
+  size() { return this.items.length; }
+  peek() { return this.items[0]; }
+
+  push(value) {
+    this.items.push(value);
+    let index = this.items.length - 1;
+    while (index &gt; 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (this.compare(this.items[index], this.items[parent]) &gt;= 0) break;
+      [this.items[index], this.items[parent]] = [this.items[parent], this.items[index]];
+      index = parent;
+    }
+  }
+
+  pop() {
+    if (this.items.length === 0) return undefined;
+    const top = this.items[0];
+    const last = this.items.pop();
+    if (this.items.length &gt; 0) {
+      this.items[0] = last;
+      let index = 0;
+      const n = this.items.length;
+      while (true) {
+        const left = 2 * index + 1;
+        const right = 2 * index + 2;
+        let smallest = index;
+        if (left &lt; n &amp;&amp; this.compare(this.items[left], this.items[smallest]) &lt; 0) smallest = left;
+        if (right &lt; n &amp;&amp; this.compare(this.items[right], this.items[smallest]) &lt; 0) smallest = right;
+        if (smallest === index) break;
+        [this.items[index], this.items[smallest]] = [this.items[smallest], this.items[index]];
+        index = smallest;
+      }
+    }
+    return top;
+  }
+}</code></pre>
+
+  <h2>6. The trigger</h2>
+  <ul>
+    <li><b>&quot;k largest&quot;, &quot;k smallest&quot;, &quot;top k&quot;, &quot;k closest&quot;, &quot;k-th largest&quot;</b> → a heap of size k.</li>
+    <li><b>&quot;k most frequent&quot;</b> → frequency map, then a heap of size k on the counts.</li>
+    <li><b>&quot;Merge k sorted lists / streams / files&quot;</b> → a heap holding the front item of each list.</li>
+    <li><b>Repeatedly take the smallest/largest while new items keep arriving</b> (a job scheduler, &quot;process the most urgent&quot;, &quot;running median&quot;, Dijkstra&#39;s shortest path) → a priority queue.</li>
+    <li><b>A stream</b> (&quot;numbers arrive one at a time; after each, report the k-th largest&quot;) → heap, because you can&#39;t re-sort after every arrival.</li>
+  </ul>
+
+  <h2>7. Worked problem 1: the k-th largest (and top k)</h2>
+  <p>&quot;What&#39;s the 3rd-highest weekly total?&quot; Minutes read: <code>[30, 85, 10, 60, 95, 40, 70]</code>, k = 3.</p>
+  <p><b>Brute force:</b> sort descending, take index k − 1. <b>O(n log n)</b>. Not terrible! But it orders everyone, and it can&#39;t handle a stream.</p>
+  <p><b>The pattern, and its surprising twist:</b> to keep the k <b>largest</b>, use a <b>min</b>-heap of size k. The top of the heap is the <i>weakest</i> of your current top k, like a bouncer at a club with k spots: a new reader only gets in by beating the weakest person inside, who is then shown the door.</p>
+  <table class="tbl">
+    <thead><tr><th>Next value</th><th>Push</th><th>Size &gt; 3? Pop smallest</th><th>Heap now holds</th><th>Top (peek)</th></tr></thead>
+    <tbody>
+      <tr><td>30</td><td>30</td><td>no</td><td>{30}</td><td>30</td></tr>
+      <tr><td>85</td><td>85</td><td>no</td><td>{30, 85}</td><td>30</td></tr>
+      <tr><td>10</td><td>10</td><td>no</td><td>{10, 30, 85}</td><td>10</td></tr>
+      <tr><td>60</td><td>60</td><td>yes, pop 10</td><td>{30, 60, 85}</td><td>30</td></tr>
+      <tr><td>95</td><td>95</td><td>yes, pop 30</td><td>{60, 85, 95}</td><td>60</td></tr>
+      <tr><td>40</td><td>40</td><td>yes, pop 40</td><td>{60, 85, 95}</td><td>60</td></tr>
+      <tr><td>70</td><td>70</td><td>yes, pop 60</td><td>{70, 85, 95}</td><td><b>70</b></td></tr>
+    </tbody>
+  </table>
+  <p>The heap ends holding the top 3 (95, 85, 70), and its top, <b>70</b>, is the 3rd largest. The heap never holds more than k + 1 items, so each push/pop costs O(log k): <b>O(n log k)</b> time, <b>O(k)</b> space. What removed the work: you never order the 199,990 students who can&#39;t make the leaderboard.</p>
+  <pre><code class="lang-js">function kthLargest(nums, k) {
+  const heap = new MinHeap();
+  for (const num of nums) {
+    heap.push(num);
+    if (heap.size() &gt; k) heap.pop(); // evict the weakest
+  }
+  return heap.peek();                 // weakest of the top k = k-th largest
+}</code></pre>
+  <p>Mirror image: for the k <b>smallest</b>, use a <b>max</b>-heap of size k (<code>new MinHeap((a, b) =&gt; b - a)</code>).</p>
+
+  <h2>8. Worked problem 2: the k most-searched books</h2>
+  <p>This week&#39;s searches: <code>[&quot;holes&quot;, &quot;wonder&quot;, &quot;holes&quot;, &quot;dogman&quot;, &quot;wonder&quot;, &quot;holes&quot;, &quot;matilda&quot;]</code>. Show the top 2.</p>
+  <p>Two patterns stacked. First, <b>count</b> with a hash map: holes 3, wonder 2, dogman 1, matilda 1. Then <b>top-k on the counts</b> with a size-k min-heap of <code>[count, title]</code> pairs, compared by count.</p>
+  <p><b>Brute force:</b> for each distinct title, count it by scanning the whole list: O(n · d) for d distinct titles. <b>Better but simple:</b> count with a map, then sort the d entries by count: O(n + d log d), fine to say first. <b>Heap:</b> O(n + d log k), which wins when there are many distinct titles and k is small.</p>
+  <pre><code class="lang-js">function topKFrequent(items, k) {
+  const counts = new Map();
+  for (const item of items) counts.set(item, (counts.get(item) || 0) + 1);
+
+  const heap = new MinHeap((a, b) =&gt; a[0] - b[0]); // compare pairs by count
+  for (const [item, count] of counts) {
+    heap.push([count, item]);
+    if (heap.size() &gt; k) heap.pop();
+  }
+  const result = [];
+  while (heap.size() &gt; 0) result.push(heap.pop()[1]);
+  return result.reverse(); // most frequent first
+}
+// topKFrequent([...searches], 2) -&gt; [&quot;holes&quot;, &quot;wonder&quot;]</code></pre>
+
+  <h2>9. Worked problem 3 (concept): merge k sorted lists</h2>
+  <p>Each school&#39;s server sends its reading events <b>already sorted by time</b>. The district wants one merged timeline. With 3 schools: A = <code>[2, 9]</code>, B = <code>[4, 5]</code>, C = <code>[1, 7]</code> (minutes past 8:00).</p>
+  <p><b>Brute force:</b> concatenate everything and sort: O(N log N) for N total events. It ignores that each list is already sorted.</p>
+  <p><b>Heap:</b> keep a min-heap holding just the <b>front</b> event of each list. Pop the smallest, output it, and push the next event from the same list. The heap never holds more than k items (one per school).</p>
+  <div class="trace">
+    <p><b>Trace: merging A = [2, 9], B = [4, 5], C = [1, 7]</b></p>
+    <ol>
+      <li>Heap starts with the fronts: {1 (C), 2 (A), 4 (B)}.</li>
+      <li>Pop <b>1</b> (C). Push C&#39;s next, 7. Heap {2 A, 4 B, 7 C}.</li>
+      <li>Pop <b>2</b> (A). Push 9. Heap {4 B, 7 C, 9 A}.</li>
+      <li>Pop <b>4</b> (B). Push 5. Heap {5 B, 7 C, 9 A}.</li>
+      <li>Pop <b>5</b> (B). B is empty, push nothing. Then pop <b>7</b>, then <b>9</b>. Output: <b>1, 2, 4, 5, 7, 9</b>.</li>
+    </ol>
+  </div>
+  <p>Each of the N events is pushed and popped once on a heap of size k: <b>O(N log k)</b>. With 40 schools, log₂ 40 ≈ 5.3, versus log₂ N ≈ 20+ for sorting a few million events. Store <code>[time, listIndex, positionInList]</code> in the heap so you know where the next item comes from. This is how databases merge sorted runs and how log aggregators merge per-server logs.</p>
+
+  <h2>10. When sorting is fine instead</h2>
+  <table class="tbl">
+    <thead><tr><th>Situation</th><th>Use</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>One-off batch, n is modest (thousands), any k</td><td>Sort</td><td>Simpler code; the speed difference is invisible.</td></tr>
+      <tr><td>k is close to n (&quot;top 90%&quot;)</td><td>Sort</td><td>log k ≈ log n, so the heap saves nothing.</td></tr>
+      <tr><td>You need everything in order anyway</td><td>Sort</td><td>A heap only gives order one pop at a time.</td></tr>
+      <tr><td>k much smaller than n, n large</td><td>Heap of size k</td><td>O(n log k) and only O(k) memory.</td></tr>
+      <tr><td>Items arrive over time (stream, live leaderboard)</td><td>Heap</td><td>Re-sorting after each arrival costs O(n log n) every time.</td></tr>
+      <tr><td>Repeatedly take the min while inserting (scheduler, merge k, Dijkstra)</td><td>Heap</td><td>Both operations stay O(log n).</td></tr>
+    </tbody>
+  </table>
+  <p>In an interview, saying &quot;sorting is O(n log n) and fine here, but since k is small a size-k heap gets O(n log k)&quot; scores better than jumping straight to the heap without comparing.</p>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><b>Using a max-heap to find the k largest.</b> If you push all n items into a max-heap and pop k times, that works but costs O(n) memory and O(n + k log n) or O(n log n) time depending on how you build the heap; the point of the pattern is a size-k <b>min</b>-heap that evicts the weakest. Other classics: forgetting to pop when the size exceeds k (the heap grows to n); assuming <code>heap.items</code> is sorted (only index 0 is meaningful); comparing pairs with the default <code>a - b</code> (arrays minus arrays is <code>NaN</code>: pass a comparator like <code>(a, b) =&gt; a[0] - b[0]</code>); and returning counts instead of the items in top-k-frequent.</p></div>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;I only need the top k, not a full sort. Sorting is O(n log n) and would be my simple answer. Better: keep a min-heap of size k. For each item I push it and, if the heap grows past k, pop the smallest, so the heap always holds the k best seen so far and its top is the k-th best. That&#39;s O(n log k) time and O(k) space, and it works on a stream. JavaScript has no built-in heap, so I&#39;ll assume a small MinHeap class with push, pop and peek, and I can write it if you&#39;d like.&quot;</p></div>
+
+  <div data-quiz='[
+    {"q":"A server receives latency measurements one at a time, millions per hour. After each one, the dashboard must show the 100 slowest seen so far. Which approach fits?","o":["Append to an array and sort after every measurement","A min-heap of size 100: push each value, pop the smallest when the size exceeds 100","A hash map from latency to count","Binary search on the sorted array"],"a":1,"why":"Top-k on a stream is the size-k heap pattern. The min-heap evicts the weakest of the current top 100, so each update is O(log 100)."},
+    {"q":"Given the coordinates of 1,000,000 students&#39; homes, return the 50 closest to a school. Which approach fits best?","o":["Sort all by distance, take 50","A max-heap of size 50 keyed by distance, evicting the farthest when it grows past 50","A min-heap of all 1,000,000, pop 50","Two pointers"],"a":1,"why":"k smallest means a size-k MAX-heap: its top is the worst (farthest) of the current best 50, so it is the one to evict. O(n log k). Sorting works but is O(n log n)."},
+    {"q":"What does a min-heap guarantee about its array items = [2, 7, 3, 9, 8, 4]?","o":["The array is sorted","items[0] is the smallest, and every parent is less than or equal to its children","items[items.length - 1] is the largest","Every value is unique"],"a":1,"why":"Only the parent-child rule holds. Here 7 is before 3, so it is not sorted, and the last item (4) is not the largest."},
+    {"q":"Merge 40 sorted lists with 5 million items in total. Which approach and cost?","o":["Concatenate and sort: O(N log N)","A min-heap of the 40 list fronts: pop the smallest, push the next from its list: O(N log 40)","Merge lists one by one into a growing result: O(N)","Binary search each list"],"a":1,"why":"The heap never holds more than one item per list, so every push and pop is O(log k) with k = 40. Merging one by one re-copies the growing result each time, which is about O(N times k)."},
+    {"q":"You have 2,000 quiz scores in a one-off report and need the top 10. A teammate wrote scores.slice().sort((a, b) =&gt; b - a).slice(0, 10). Is a heap worth it?","o":["Yes, sorting is always too slow","No, n is small and it is a one-off, so the simpler sort is fine","Yes, because sort mutates the input","No, you should use a hash map"],"a":1,"why":"For 2,000 items, sorting is a few microseconds to a millisecond. A heap pays off for large n with small k, streams, or repeated min/max operations."},
+    {"q":"After pushing 3 into the min-heap [5, 12, 8, 20, 15, 9], what does the array look like?","o":["[3, 5, 8, 9, 12, 15, 20]","[3, 12, 5, 20, 15, 9, 8]","[5, 12, 8, 20, 15, 9, 3]","[3, 5, 12, 8, 20, 15, 9]"],"a":1,"why":"3 is appended at index 6, swaps with its parent 8 (index 2), then with 5 at the root. Only that one path changes; the rest of the array stays put."}
+  ]'></div>
+
+  <h2>Labs</h2>
+  <p>First build the heap itself. The next two labs start with a finished <code>MinHeap</code> in the editor so you can focus on the pattern.</p>
+  <div data-lab="dsa-min-heap"></div>
+  <div data-lab="dsa-kth-largest"></div>
+  <div data-lab="dsa-top-k-frequent"></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>A <b>heap</b> keeps only a partial order: every parent ≤ its children, so the min is at the root. <code>peek</code> O(1); <code>push</code>/<code>pop</code> O(log n). It is <b>not</b> sorted and not searchable.</li>
+    <li>It lives in an array: children of i at 2i + 1 and 2i + 2, parent at floor((i − 1) / 2). Push bubbles up; pop moves the last item to the root and sinks it.</li>
+    <li><b>Top k largest → size-k min-heap</b> (evict the weakest); top k smallest → size-k max-heap. O(n log k) time, O(k) space, works on streams.</li>
+    <li><b>k most frequent</b> = hash-map counts + top-k heap. <b>Merge k sorted lists</b> = heap of the k fronts, O(N log k).</li>
+    <li>Sorting is fine (and simpler) for small n, one-off batches, or k near n. Say the sort first, then the heap and why it&#39;s better.</li>
+    <li>Practice next: LeetCode 215 (Kth Largest), 703 (Kth Largest in a Stream), 347 (Top K Frequent), 973 (K Closest Points), 23 (Merge k Sorted Lists), 295 (Find Median from Data Stream).</li>
+  </ul>
+</template>

@@ -1,0 +1,217 @@
+<template id="tpl-events" data-title="Event-driven architecture" data-part="Part 3 · Distributed systems" data-order="130">
+  <h1>Event-driven architecture</h1>
+  <p class="lede">By the end of this lesson you will be able to explain the difference between commands and events, spot the dual-write bug in a code review and fix it with a transactional outbox, design a multi-step booking as a saga with compensations, explain why &quot;exactly-once&quot; really means &quot;at-least-once plus idempotency&quot;, and say when event sourcing is (and isn&#39;t) worth it.</p>
+
+  <h2>1. The running example: SeatSwift checkout</h2>
+  <p>SeatSwift sells concert tickets. Buying a ticket touches several services, each with its own database:</p>
+  <ul>
+    <li><b>Inventory</b>: holds and sells seats.</li>
+    <li><b>Payments</b>: charges the card through a payment provider such as Stripe.</li>
+    <li><b>Ticketing</b>: issues the ticket with the venue&#39;s access-control system (the barcode scanned at the door).</li>
+    <li><b>Email</b>, <b>Loyalty points</b>, <b>Analytics</b>: want to know when a booking happens.</li>
+  </ul>
+  <p>In version 1, the booking service called each of these over HTTP in a row. Every new team that wanted to react to bookings (loyalty, then fraud, then analytics) had to get a line added to the booking code, and when Email was slow, checkout was slow. This lesson is about the alternative: <b>events</b>.</p>
+
+  <h2>2. Commands vs events</h2>
+  <p>Two kinds of messages flow between services, and mixing them up causes most confusion.</p>
+  <table class="tbl">
+    <thead><tr><th></th><th>Command</th><th>Event</th></tr></thead>
+    <tbody>
+      <tr><td>Meaning</td><td>&quot;Please do this&quot;</td><td>&quot;This happened&quot;</td></tr>
+      <tr><td>Naming</td><td>Imperative: <code>ChargeCard</code>, <code>IssueTicket</code></td><td>Past tense: <code>BookingConfirmed</code>, <code>PaymentFailed</code></td></tr>
+      <tr><td>Receivers</td><td>Exactly one handler that owns the action</td><td>Zero, one or many subscribers; the sender doesn&#39;t know who</td></tr>
+      <tr><td>Can it be refused?</td><td>Yes (card declined)</td><td>No; it&#39;s a fact about the past</td></tr>
+      <tr><td>Coupling</td><td>Sender depends on the receiver existing</td><td>Sender depends on nobody</td></tr>
+    </tbody>
+  </table>
+  <p>With events, the booking service publishes <code>BookingConfirmed</code> once to a <b>topic</b> (a named channel), and anyone who cares <b>subscribes</b>. This is <b>publish/subscribe</b> (pub/sub). Common tools: Kafka, Amazon SNS + SQS, Google Pub/Sub, RabbitMQ. When the fraud team arrives, they subscribe; the booking code doesn&#39;t change. If Email is down for ten minutes, its messages wait in its queue and checkout is unaffected.</p>
+  <p>Events give you decoupling and resilience at the cost of visibility (no single place shows the whole flow) and eventual consistency (Loyalty learns about the booking a moment later). Choose them for reactions that don&#39;t need to finish before you answer the user; keep a direct call when you need the answer right now (&quot;was the card approved?&quot;).</p>
+
+  <h2>3. The dual-write problem</h2>
+  <p>Here is the first version of the booking code. Read it and find the bug.</p>
+  <pre><code class="lang-js">async function confirmBooking(booking) {
+  await db.query('INSERT INTO bookings (id, seat_id, user_id, status) VALUES ($1, $2, $3, $4)',
+                 [booking.id, booking.seatId, booking.userId, 'confirmed']);
+  await kafka.publish('booking.confirmed', { bookingId: booking.id, seatId: booking.seatId });
+}</code></pre>
+  <p>It writes to two systems (the database and the broker) that can&#39;t share a transaction. That&#39;s a <b>dual write</b>, and the gap between the two lines is where things go wrong:</p>
+  <div class="trace"><b>Trace: three ways a dual write breaks</b>
+    <ol>
+      <li><p><b>Crash between the lines.</b> The <code>INSERT</code> commits. The process is killed by a deploy 2&nbsp;ms later. <span class="no">Booking exists, no event.</span> Alice is charged, never gets her ticket email, and Loyalty never credits her points. Nothing logs an error.</p></li>
+      <li><p><b>Broker unavailable.</b> Kafka is mid-failover and <code>publish</code> throws. The booking is already committed. Do you retry for how long? Return an error to Alice for a booking that succeeded?</p></li>
+      <li><p><b>Swap the order</b> (publish first, then insert). The event goes out, then the <code>INSERT</code> fails on a constraint. <span class="no">Email sends a ticket for a booking that doesn&#39;t exist.</span></p></li>
+    </ol>
+  </div>
+  <p>At SeatSwift volume (say 2 million bookings a month), even a 1-in-100,000 crash window is 20 lost events a month, and you&#39;ll only find out from angry customers.</p>
+
+  <h2>4. The fix: the transactional outbox</h2>
+  <p>Don&#39;t write to two systems. Write to <b>one</b> system, the database, in <b>one</b> transaction: the booking row <i>and</i> a row in an <code>outbox</code> table describing the event. A separate process, the <b>relay</b>, reads the outbox and publishes to the broker.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 250" width="100%" role="img" aria-label="Transactional outbox: the booking service writes bookings and outbox rows in one transaction; a relay reads the outbox and publishes to the broker; consumers subscribe" style="font-family:inherit">
+      <defs><marker id="evt-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="15" y="90" width="120" height="60" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="75" y="116" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Booking</text>
+      <text x="75" y="134" text-anchor="middle" style="fill:var(--muted);font-size:12px">service</text>
+      <rect x="180" y="40" width="190" height="160" rx="12" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="275" y="62" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Postgres (one transaction)</text>
+      <rect x="198" y="76" width="154" height="44" rx="6" style="fill:var(--accent-soft);stroke:var(--line)"/>
+      <text x="275" y="103" text-anchor="middle" class="mono" style="fill:currentColor;font-size:12px">bookings</text>
+      <rect x="198" y="134" width="154" height="44" rx="6" style="fill:var(--accent-soft);stroke:var(--line)"/>
+      <text x="275" y="161" text-anchor="middle" class="mono" style="fill:currentColor;font-size:12px">outbox</text>
+      <line x1="135" y1="110" x2="194" y2="98" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#evt-arr)"/>
+      <line x1="135" y1="130" x2="194" y2="154" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#evt-arr)"/>
+      <rect x="400" y="130" width="100" height="56" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="450" y="155" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Relay</text>
+      <text x="450" y="173" text-anchor="middle" style="fill:var(--muted);font-size:12px">poll or CDC</text>
+      <line x1="352" y1="158" x2="396" y2="158" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#evt-arr)"/>
+      <rect x="530" y="130" width="130" height="56" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="595" y="155" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Broker</text>
+      <text x="595" y="173" text-anchor="middle" style="fill:var(--muted);font-size:12px">booking.confirmed</text>
+      <line x1="500" y1="158" x2="526" y2="158" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#evt-arr)"/>
+      <text x="595" y="40" text-anchor="middle" style="fill:currentColor;font-size:12px">Email</text>
+      <text x="595" y="70" text-anchor="middle" style="fill:currentColor;font-size:12px">Loyalty</text>
+      <text x="595" y="100" text-anchor="middle" style="fill:currentColor;font-size:12px">Analytics</text>
+      <line x1="595" y1="128" x2="595" y2="106" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#evt-arr)"/>
+      <text x="275" y="230" text-anchor="middle" style="fill:currentColor;font-size:13px">Both rows commit or neither does.</text>
+      <text x="530" y="230" text-anchor="middle" style="fill:var(--muted);font-size:12px">Publishing can lag and retry; it can&#39;t be lost.</text>
+    </svg>
+    <figcaption>The transactional outbox. The database transaction is the only write that must succeed; everything after it is a retryable copy.</figcaption>
+  </figure>
+  <pre><code class="lang-sql">BEGIN;
+INSERT INTO bookings (id, seat_id, user_id, status)
+VALUES ('b_901', '14C', 'u_alice', 'confirmed');
+
+INSERT INTO outbox (id, topic, payload)
+VALUES ('evt_b_901', 'booking.confirmed',
+        '{"bookingId":"b_901","seatId":"14C","amountCents":8900}');
+COMMIT;
+
+-- The relay, every ~200 ms (SKIP LOCKED lets several relays share the work):
+SELECT * FROM outbox WHERE sent_at IS NULL
+ ORDER BY seq LIMIT 100 FOR UPDATE SKIP LOCKED;
+-- publish each row, then:
+UPDATE outbox SET sent_at = now() WHERE id = 'evt_b_901';</code></pre>
+  <p>Instead of polling, the relay can use <b>change data capture</b> (CDC): a tool like Debezium reads the database&#39;s write-ahead log (the log every committed change is written to) and streams new outbox rows to Kafka. CDC gives lower latency and no polling load at the cost of running another piece of infrastructure.</p>
+  <div class="trace"><b>Trace: the crash, replayed with an outbox</b>
+    <ol>
+      <li><p><b>12:00:00.000</b> Transaction commits <code>b_901</code> and <code>evt_b_901</code> together.</p></li>
+      <li><p><b>12:00:00.002</b> The booking process is killed by a deploy. <span class="yes">Doesn&#39;t matter: the event is safely in the outbox.</span></p></li>
+      <li><p><b>12:00:00.180</b> Relay polls, publishes <code>evt_b_901</code>, and is itself killed before running the <code>UPDATE ... sent_at</code>.</p></li>
+      <li><p><b>12:00:05</b> A new relay instance starts, sees <code>evt_b_901</code> still unsent, publishes it <b>again</b>, and marks it sent.</p></li>
+      <li><p><b>Result</b> The event is never lost, but Email received it <b>twice</b>. The outbox gives <b>at-least-once</b> delivery. Duplicates are the price, and the next section is how consumers pay it.</p></li>
+    </ol>
+  </div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>&quot;Fixing&quot; a dual write by wrapping both calls in a try/catch with retries, or by publishing inside the database transaction before <code>COMMIT</code>. The first still loses events when the process dies; the second sends events for transactions that later roll back. The only robust options are an outbox (or CDC) or making the broker the single source of truth (event sourcing, section 8).</p></div>
+
+  <h2>5. Exactly-once is effectively-once</h2>
+  <p>Every real message system can deliver a message more than once: a relay crash, a consumer that processes a message and crashes before acknowledging it, a network retry. You cannot get <b>exactly-once delivery</b> across a network. You can get <b>exactly-once effect</b> (people say &quot;effectively-once&quot;) by making consumers <b>idempotent</b>: processing the same event twice has the same result as once.</p>
+  <p>The standard trick: record the event id in the same transaction as the side effect, with a unique constraint.</p>
+  <pre><code class="lang-sql">-- Loyalty service, handling evt_b_901 (+890 points)
+BEGIN;
+INSERT INTO processed_events (event_id) VALUES ('evt_b_901');  -- PRIMARY KEY
+-- if this fails with a unique violation: already handled, ROLLBACK and ack
+UPDATE loyalty_accounts SET points = points + 890 WHERE user_id = 'u_alice';
+COMMIT;</code></pre>
+  <p>For side effects outside your database (sending an email, charging a card), pass the event id as an <b>idempotency key</b> to the provider (Stripe and most email APIs accept one), or check-and-record before sending and accept that a crash in the tiny window may still double-send a low-stakes email.</p>
+  <p>Kafka does offer &quot;exactly-once semantics&quot;, and it&#39;s real, but it covers reading from Kafka, processing, and writing back to Kafka in one Kafka transaction. The moment your consumer touches anything outside Kafka (Postgres, an email API), you&#39;re back to idempotency.</p>
+
+  <h2>6. Sagas: multi-step workflows without a distributed transaction</h2>
+  <p>A booking is three steps in three services: hold the seat, charge the card, issue the ticket. On one database you&#39;d wrap them in a transaction and roll back on failure. Across services you can&#39;t, at least not practically.</p>
+  <p>The textbook tool is <b>two-phase commit</b> (2PC): a coordinator asks every participant &quot;can you commit?&quot;, then tells all of them &quot;commit&quot;. It works inside some databases, but across services it holds locks while waiting on the slowest participant, blocks everyone if the coordinator dies at the wrong moment, and third-party APIs like a payment provider don&#39;t take part in it at all.</p>
+  <p>A <b>saga</b> is the alternative: a sequence of <b>local transactions</b>, one per service, each committed on its own. If a later step fails, you run <b>compensating actions</b> for the earlier steps, in reverse order. A compensation is a <i>semantic undo</i>: you can&#39;t un-charge a card, but you can refund it.</p>
+  <table class="tbl">
+    <thead><tr><th>Step</th><th>Service</th><th>Action</th><th>Compensation</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Inventory</td><td>Hold seat 14C for 10 minutes</td><td>Release the hold</td></tr>
+      <tr><td>2</td><td>Payments</td><td>Charge $89 (idempotency key = booking id)</td><td>Refund $89</td></tr>
+      <tr><td>3</td><td>Ticketing</td><td>Issue barcode with the venue system</td><td>Void the barcode</td></tr>
+      <tr><td>4</td><td>Booking</td><td>Mark booking confirmed; publish <code>BookingConfirmed</code></td><td>(final step, no compensation)</td></tr>
+    </tbody>
+  </table>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 230" width="100%" role="img" aria-label="Booking saga: hold seat, charge card, issue ticket fails, then refund and release hold run in reverse" style="font-family:inherit">
+      <defs><marker id="evt-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker>
+      <marker id="evt-arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--warn)"/></marker></defs>
+      <rect x="20" y="40" width="160" height="56" rx="10" style="fill:var(--ok-soft);stroke:var(--ok)"/>
+      <text x="100" y="64" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">1. Hold seat 14C</text>
+      <text x="100" y="82" text-anchor="middle" style="fill:var(--ok);font-size:12px">done</text>
+      <rect x="260" y="40" width="160" height="56" rx="10" style="fill:var(--ok-soft);stroke:var(--ok)"/>
+      <text x="340" y="64" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">2. Charge $89</text>
+      <text x="340" y="82" text-anchor="middle" style="fill:var(--ok);font-size:12px">done</text>
+      <rect x="500" y="40" width="160" height="56" rx="10" style="fill:var(--bad-soft);stroke:var(--bad)"/>
+      <text x="580" y="64" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">3. Issue ticket</text>
+      <text x="580" y="82" text-anchor="middle" style="fill:var(--bad);font-size:12px">failed: seat taken</text>
+      <line x1="180" y1="68" x2="256" y2="68" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#evt-arr2)"/>
+      <line x1="420" y1="68" x2="496" y2="68" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#evt-arr2)"/>
+      <rect x="260" y="150" width="160" height="56" rx="10" style="fill:var(--warn-soft);stroke:var(--warn)"/>
+      <text x="340" y="174" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">C2. Refund $89</text>
+      <text x="340" y="192" text-anchor="middle" style="fill:var(--muted);font-size:12px">idempotent, retried</text>
+      <rect x="20" y="150" width="160" height="56" rx="10" style="fill:var(--warn-soft);stroke:var(--warn)"/>
+      <text x="100" y="174" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">C1. Release hold</text>
+      <text x="100" y="192" text-anchor="middle" style="fill:var(--muted);font-size:12px">idempotent, retried</text>
+      <path d="M580,96 C580,150 470,178 424,178" style="fill:none;stroke:var(--warn);stroke-width:1.5" marker-end="url(#evt-arr3)"/>
+      <line x1="260" y1="178" x2="184" y2="178" style="stroke:var(--warn);stroke-width:1.5" marker-end="url(#evt-arr3)"/>
+      <text x="340" y="24" text-anchor="middle" style="fill:currentColor;font-size:12px">forward steps (each a local transaction)</text>
+      <text x="520" y="222" text-anchor="middle" style="fill:var(--warn);font-size:12px">compensations, in reverse</text>
+    </svg>
+    <figcaption>A saga. When step 3 fails, the orchestrator runs compensations for steps 2 and 1, newest first.</figcaption>
+  </figure>
+  <div class="trace"><b>Trace: Alice&#39;s booking fails at step 3 (orchestrated saga)</b>
+    <ol>
+      <li><p><b>19:30:00.000</b> Orchestrator creates saga <code>b_901</code> in its own table: state <code>STARTED</code>. Every state change below is persisted before the next step, so a crash resumes where it left off.</p></li>
+      <li><p><b>19:30:00.040</b> Inventory holds 14C until 19:40. Saga state <code>SEAT_HELD</code>.</p></li>
+      <li><p><b>19:30:01.900</b> Payments charges $89 with idempotency key <code>b_901</code>. Approved. State <code>PAID</code>.</p></li>
+      <li><p><b>19:30:02.300</b> Ticketing calls the venue system: rejected, 14C was sold at the box office (the venue&#39;s system was the real source of truth for that seat). State <code>COMPENSATING</code>.</p></li>
+      <li><p><b>19:30:02.310</b> Refund $89 (key <code>refund-b_901</code>). The provider times out. The orchestrator retries at 19:30:04 and succeeds; the idempotency key means a refund that actually went through the first time isn&#39;t issued twice.</p></li>
+      <li><p><b>19:30:06.120</b> Release the hold on 14C. State <code>FAILED_COMPENSATED</code>. Publish <code>BookingFailed</code>; Email sends &quot;Sorry, that seat was just taken. You have not been charged.&quot;</p></li>
+    </ol>
+  </div>
+  <p>Notice what a saga does <i>not</i> give you: <b>isolation</b>. Between 19:30:01.9 and 19:30:02.3, Alice&#39;s card shows a charge for a booking that will be reversed. Sagas trade isolation for availability, and you design around it: holds that expire, &quot;pending&quot; statuses in the UI, and ordering steps so the hardest-to-undo step (the <b>pivot</b>, here issuing the ticket) is as late as possible, or comes first if it is the most likely to fail.</p>
+  <table class="tbl">
+    <thead><tr><th></th><th>Orchestration</th><th>Choreography</th></tr></thead>
+    <tbody>
+      <tr><td>How</td><td>A central orchestrator sends commands and tracks state</td><td>Each service reacts to the previous service&#39;s events</td></tr>
+      <tr><td>Gives you</td><td>One place to see and debug the flow; easy timeouts and compensations</td><td>No central component; services fully decoupled</td></tr>
+      <tr><td>Costs you</td><td>Another service to run; orchestrator knows every step</td><td>The flow is implicit, spread across services; hard to change and debug past ~3 steps</td></tr>
+      <tr><td>Choose when</td><td>Multi-step business flows with compensations (bookings, orders)</td><td>Simple fan-out reactions (email and loyalty on <code>BookingConfirmed</code>)</td></tr>
+    </tbody>
+  </table>
+  <p>Workflow engines like Temporal, AWS Step Functions or Camunda are orchestrators-as-a-service: they persist saga state, retry steps and run compensations for you.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;Checkout spans inventory, payments and ticketing, so there&#39;s no single transaction. I&#39;d run it as an orchestrated saga: hold the seat with an expiry, charge with the booking id as an idempotency key, issue the ticket, and on failure run compensations in reverse: refund, then release. Every step and compensation is idempotent and retried, saga state is persisted so a crash resumes, and each service publishes its events through an outbox so nothing is lost between the database and the broker.&quot;</p></div>
+
+  <h2>7. Ordering</h2>
+  <p>Brokers like Kafka only guarantee order <b>within a partition</b> (a single ordered log; a topic is split into many for parallelism). If <code>BookingConfirmed</code> and <code>BookingCancelled</code> for <code>b_901</code> land on different partitions, a consumer can see the cancel first. The fix: choose a <b>partition key</b> so all events about one thing go to one partition, e.g. key = booking id. You get order per booking (which is what you need) and parallelism across bookings.</p>
+
+  <h2>8. Event sourcing, briefly</h2>
+  <p>So far the database holds current state and events are notifications. <b>Event sourcing</b> flips it: the <b>events are the source of truth</b>, and current state is computed by replaying them.</p>
+  <pre><code class="lang-js">// Seat 14C's stored history (append-only):
+// 1 SeatHeld      { by: 'u_alice', until: '19:40' }
+// 2 HoldExpired   {}
+// 3 SeatHeld      { by: 'u_bob', until: '19:52' }
+// 4 SeatSold      { to: 'u_bob', bookingId: 'b_917' }
+const state = events.reduce(applyEvent, { status: 'available' });
+// =&gt; { status: 'sold', holder: 'u_bob' }</code></pre>
+  <p>Read models (&quot;projections&quot;) like &quot;available seats for event 42&quot; are built by consumers of this stream, and you can rebuild a new one from history at any time. Event sourcing gives you a perfect audit trail, time travel (&quot;what did the seat map look like at 19:35?&quot;) and new projections for free, at the cost of real complexity: event schemas you can never change (only version), eventually consistent read models, and snapshots to keep replays fast. Choose it for domains where history <i>is</i> the product (ledgers, audit-heavy workflows); don&#39;t default to it for CRUD.</p>
+
+  <h2>9. Lab: build the outbox</h2>
+  <p>Write the booking and its event in one transaction, then build a relay that publishes in order, survives a broker outage, and redelivers (with the same id) after a crash.</p>
+  <div data-lab="outbox-relay"></div>
+
+  <div data-quiz='[
+    {"q":"Which message is an event rather than a command?","o":["ChargeCard","IssueTicket","BookingConfirmed","SendEmail"],"a":2,"why":"Events are facts in the past tense, broadcast to any subscriber. The others are requests to one handler that may refuse."},
+    {"q":"The booking service inserts the booking, then publishes to Kafka. The process crashes between the two. What happens?","o":["Kafka rolls back the insert","The booking exists but no event is ever published, so email and loyalty never hear about it","The event is published twice","Nothing, the insert and publish are atomic"],"a":1,"why":"This is the dual-write problem: two systems, no shared transaction. The outbox fixes it by writing the event to the same database in the same transaction."},
+    {"q":"With a transactional outbox, what delivery guarantee do consumers get?","o":["At-most-once: events may be lost","Exactly-once delivery","At-least-once: events are not lost but may be duplicated","No guarantee"],"a":2,"why":"The relay can publish and crash before marking the row sent, so it publishes again. Consumers must be idempotent, typically by recording the event id."},
+    {"q":"How does the loyalty service make handling of evt_b_901 effectively-once?","o":["Ask Kafka for exactly-once delivery","Insert the event id into a processed_events table with a unique key in the same transaction as the points update","Process events only once per day","Use a longer consumer timeout"],"a":1,"why":"If the id is already present, the insert fails and the update is skipped. The dedupe record and the side effect commit together, so a crash cannot separate them."},
+    {"q":"In the booking saga, issuing the ticket fails after the card was charged. What runs next?","o":["A database rollback across all three services","Compensations in reverse order: refund the card, then release the seat hold","Nothing; the saga is complete","Retry the charge"],"a":1,"why":"Each step committed locally, so there is nothing to roll back. Compensating actions undo the effects semantically, newest first, and must be idempotent and retryable."},
+    {"q":"BookingConfirmed and BookingCancelled for the same booking sometimes arrive in the wrong order. What is the usual fix in Kafka?","o":["Add timestamps and sort in the consumer","Use one partition for the whole topic","Use the booking id as the partition key so all events for one booking share a partition","Switch to a different broker"],"a":2,"why":"Order is guaranteed only within a partition. Keying by booking id keeps per-booking order while still spreading different bookings across partitions."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Commands ask one handler to do something (and can be refused); events announce facts to any number of subscribers. Events decouple teams at the cost of visibility and eventual consistency.</li>
+    <li>Writing to a database and a broker separately is a dual write and will lose or invent events. Use a transactional outbox (relay or CDC).</li>
+    <li>Delivery is at-least-once; get effectively-once with idempotent consumers (dedupe on event id in the same transaction, idempotency keys for external calls).</li>
+    <li>Multi-service workflows are sagas: local transactions plus idempotent compensations in reverse. Orchestrate complex flows; choreograph simple reactions. Sagas give up isolation, so design around it.</li>
+    <li>Order holds only within a partition, so key by the entity. Event sourcing makes events the source of truth: great for audit-heavy domains, overkill for most CRUD.</li>
+  </ul>
+</template>

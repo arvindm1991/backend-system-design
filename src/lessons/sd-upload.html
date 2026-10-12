@@ -1,0 +1,208 @@
+<template id="tpl-sd-upload" data-title="Case: File upload and storage" data-part="Part 4 · System design" data-order="185">
+  <h1>Case study: File upload and storage</h1>
+  <p class="lede">Uploading a file sounds like one POST request. Then a teacher on school Wi-Fi tries to upload a 400 MB video, the connection drops at 80%, and your app servers are tied up holding thousands of slow uploads. After this lesson you can design uploads that go straight from the browser to object storage with presigned URLs, survive flaky networks with chunked resumable uploads, and run a safe processing pipeline (scan, thumbnail, transcode) before anything is shown to students.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: a learning platform where teachers upload worksheets (PDFs), images and lesson videos, and students upload projects and read-aloud recordings.</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>Upload files up to 5 GB; resumable if the connection drops.</li>
+    <li>Process after upload: virus scan, type check, thumbnails for images/PDFs, video transcoding to streamable formats.</li>
+    <li>Download/stream with access control (only the class can see a student's project).</li>
+    <li>Per-tenant storage quotas; delete on request or when a district's contract ends.</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li>Uploads don't consume app-server capacity.</li>
+    <li>Durable: once "uploaded" is shown, the file is never lost.</li>
+    <li>Nothing unscanned is ever served to other users.</li>
+    <li>Fast downloads anywhere (CDN).</li>
+  </ul>
+  <p><b>Out of scope:</b> real-time collaborative editing of the files; desktop sync clients.</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Volume.</b> 1 million uploads/day, average 4 MB (most are small images and PDFs; a few videos are hundreds of MB). 1 M × 4 MB = <b>4 TB/day</b>, about <b>1.5 PB/year</b> before thumbnails and transcoded variants (add ~20–50%).</li>
+      <li><b>Ingest bandwidth.</b> 4 TB / 86,400 s ≈ 46 MB/s ≈ 370 Mbps averaged over a day. Uploads cluster in ~6 school hours, so ×4 ≈ 1.5 Gbps, with peaks around 3 Gbps.</li>
+      <li><b>Slow clients.</b> A 100 MB video over a 5 Mbps classroom uplink takes 100 × 8 / 5 = <b>160 seconds</b>. If app servers proxied uploads, each would hold that connection and its buffers for minutes. Thousands concurrently would need a big, expensive fleet doing nothing but shoveling bytes.</li>
+      <li><b>Processing.</b> If 5% are videos, that's 50,000 transcodes/day, each a few CPU-minutes: a worker pool that autoscales with queue depth.</li>
+      <li><b>Metadata.</b> 1 M rows/day × ~1 KB: trivial for a normal SQL database.</li>
+    </ol>
+  </div>
+  <p>Conclusion: bytes must <b>bypass</b> the app servers. App servers handle permission and bookkeeping; object storage handles bytes.</p>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-http">POST /v1/uploads
+{ "filename": "volcano-lesson.mp4", "size": 104857600, "content_type": "video/mp4",
+  "context": { "class_id": "c_12", "purpose": "lesson_material" } }
+201 { "upload_id": "up_9a", "file_id": "f_77", "part_size": 8388608,
+      "parts": [ { "n": 1, "url": "https://bucket.s3.../f_77?partNumber=1&amp;uploadId=...&amp;X-Amz-Signature=..." },
+                 ... 13 parts ... ],
+      "expires_at": "2026-10-10T09:15:00Z" }
+
+PUT  {part url}            (client -&gt; object storage directly; response header ETag: "e1...")
+
+POST /v1/uploads/up_9a/complete
+{ "parts": [ { "n": 1, "etag": "e1..." }, ... ] }
+202 { "file_id": "f_77", "status": "processing" }
+
+GET  /v1/uploads/up_9a             -- which parts are already stored (for resume)
+GET  /v1/files/f_77                -- status: processing | ready | rejected; download URL when ready</code></pre>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">files (
+  file_id      UUID PRIMARY KEY,
+  tenant_id    BIGINT NOT NULL,          -- district
+  owner_id     BIGINT NOT NULL,
+  context      JSONB,                    -- class_id, purpose: who may read it
+  filename     TEXT,                     -- display only, never used as a storage path
+  size_bytes   BIGINT, content_type TEXT, sha256 BYTEA,
+  storage_key  TEXT NOT NULL,            -- 'raw/{tenant}/{file_id}', server-generated
+  status       TEXT NOT NULL,            -- pending | uploaded | processing | ready | rejected
+  created_at   TIMESTAMPTZ, ready_at TIMESTAMPTZ
+);
+file_variants (file_id, kind, storage_key, width, height, bitrate,  -- 'thumb_320', 'hls_720p'
+               PRIMARY KEY (file_id, kind));
+tenant_usage  (tenant_id PK, bytes_used, bytes_quota);</code></pre>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 800 410" width="100%" role="img" aria-label="File upload pipeline with presigned URLs" xmlns="http://www.w3.org/2000/svg" style="max-width:800px;font-family:inherit">
+
+<rect x="20" y="170" width="110" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="75.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Client</text>
+<text x="75.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">browser / app</text>
+<rect x="210" y="40" width="150" height="56" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="285.0" y="65.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Upload API</text>
+<text x="285.0" y="80.0" text-anchor="middle" font-size="12" fill="var(--muted)">auth, quota, presign</text>
+<path d="M430,38 a75.0,8 0 0,0 150,0 a75.0,8 0 0,0 -150,0 v54 a75.0,8 0 0,0 150,0 v-54" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="505.0" y="67.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Files DB</text>
+<text x="505.0" y="82.0" text-anchor="middle" font-size="12" fill="var(--muted)">status, owner, key</text>
+<path d="M210,288 a75.0,8 0 0,0 150,0 a75.0,8 0 0,0 -150,0 v60 a75.0,8 0 0,0 150,0 v-60" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="285.0" y="320.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Object storage</text>
+<text x="285.0" y="335.0" text-anchor="middle" font-size="12" fill="var(--muted)">raw bucket</text>
+<rect x="430" y="300" width="140" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="560" y1="308" x2="560" y2="338" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="553" y1="308" x2="553" y2="338" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="546" y1="308" x2="546" y2="338" stroke="currentColor" stroke-opacity=".45"/>
+<text x="488.0" y="328.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Upload events</text>
+<rect x="620" y="170" width="160" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="700.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Processors</text>
+<text x="700.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">scan, thumbs, transcode</text>
+<rect x="620" y="300" width="160" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="700.0" y="322.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">CDN</text>
+<text x="700.0" y="337.0" text-anchor="middle" font-size="12" fill="var(--muted)">processed files</text>
+<path d="M122.8,168.4 L237.2,97.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M237.2,97.6 L231.9,106.1 L227.2,98.5 Z" fill="currentColor"/>
+<path d="M122.8,168.4 L128.1,159.9 L132.8,167.5 Z" fill="currentColor"/>
+<path d="M360.0,67.0 L427.0,66.1" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M427.0,66.1 L418.1,70.7 L417.9,61.7 Z" fill="currentColor"/>
+<path d="M124.0,226.0 L215.9,278.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M215.9,278.5 L205.8,278.0 L210.3,270.1 Z" fill="currentColor"/>
+<path d="M360.0,319.7 L427.0,321.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M427.0,321.3 L417.9,325.6 L418.1,316.6 Z" fill="currentColor"/>
+<path d="M536.8,300.0 L652.7,227.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M652.7,227.6 L647.4,236.2 L642.6,228.5 Z" fill="currentColor"/>
+<path d="M658.9,170.0 L558.8,101.7" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M558.8,101.7 L568.8,103.0 L563.7,110.5 Z" fill="currentColor"/>
+<path d="M700.0,226.0 L700.0,297.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M700.0,297.0 L695.5,288.0 L704.5,288.0 Z" fill="currentColor"/>
+<path d="M700.0,350.0 L700.0,390.0 L75.0,390.0 L75.0,229.0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M75.0,229.0 L79.5,238.0 L70.5,238.0 Z" fill="currentColor"/>
+<text x="140.0" y="127.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">1 POST /uploads</text>
+<text x="140.0" y="141.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">&lt;- part URLs</text>
+<text x="393.5" y="58.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">2 pending</text>
+<text x="129.9" y="260.3" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">3 PUT parts</text>
+<text x="393.5" y="312.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">4 created</text>
+<text x="634.9" y="141.8" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">5 ready</text>
+<text x="730.0" y="265.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">outputs</text>
+<text x="387.5" y="384.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">6 GET (signed URL)</text>
+</svg>
+    <figcaption>The app server only signs and records. Bytes go straight from the client to object storage. A storage event kicks off processing; only processed, scanned outputs are served through the CDN with short-lived signed URLs.</figcaption>
+  </figure>
+  <div class="trace">
+    <ol>
+      <li>Ms. Ortiz picks a 100 MB video. The client calls <code>POST /v1/uploads</code>. The API checks she can post to class c_12 and that the district has quota, inserts <code>files</code> with status <code>pending</code>, starts a multipart upload in object storage, and returns 13 presigned part URLs (8 MB each; the last is 4 MB), valid for 15 minutes.</li>
+      <li>A <b>presigned URL</b> is a normal URL with a signature in the query string that grants exactly one action (PUT part 5 of key <code>raw/31/f_77</code>) until it expires. No storage credentials ever reach the browser.</li>
+      <li>The browser uploads 3–4 parts in parallel. Part 9 fails when the Wi-Fi drops; the client retries just part 9. Each successful PUT returns an ETag (a checksum-like ID for that part); the client keeps the list.</li>
+      <li>The client calls <code>complete</code> with the 13 ETags. The API asks object storage to assemble the parts into one object, sets status <code>uploaded</code>, and returns 202.</li>
+      <li>The storage service emits an "object created" event onto a queue. Processors pick it up (deep dive 2). When done, status becomes <code>ready</code> and the client, polling or listening, shows the video.</li>
+    </ol>
+  </div>
+
+  <h2>6. Deep dive: chunked, resumable uploads</h2>
+  <p>Why chunk? Without chunks, a dropped connection at 80% of a 400 MB upload means starting over. With 8 MB parts, you lose at most one part's progress.</p>
+  <ul>
+    <li><b>Part size.</b> S3-style multipart uploads allow parts from 5 MB (except the last) up to 5 GB, and up to 10,000 parts. 8–16 MB is a good default for browsers: small enough to retry cheaply, big enough that request overhead is small. For a 5 GB file at 8 MB, that's 640 parts; fine.</li>
+    <li><b>Parallelism.</b> 3–6 concurrent parts usually saturate a classroom uplink; more just competes with itself.</li>
+    <li><b>Resume after a page reload.</b> The client stores <code>upload_id</code> in local storage. On return it calls <code>GET /v1/uploads/up_9a</code>; the server lists which parts storage already has and issues fresh URLs only for the missing ones.</li>
+    <li><b>Integrity.</b> Send a checksum per part (storage verifies it) and compute a whole-file SHA-256 during processing.</li>
+    <li><b>Garbage.</b> Abandoned multipart uploads keep their parts (and you pay for them) until aborted. Add a storage lifecycle rule: abort incomplete multipart uploads after ~3 days. A sweeper marks <code>pending</code> rows older than that as abandoned.</li>
+  </ul>
+
+  <h2>7. Deep dive: the processing pipeline, and safety</h2>
+  <p>User-uploaded files are untrusted input. A file named <code>worksheet.pdf</code> can be anything.</p>
+  <ol>
+    <li><b>Quarantine.</b> Raw uploads land in a private bucket that nothing serves from.</li>
+    <li><b>Verify.</b> Check the real type from the file's first bytes ("magic numbers"), not the client's <code>Content-Type</code>. Check actual size against the declared size and quota. Presigned PUT URLs can't enforce a maximum size by themselves; either verify after upload or use a presigned POST policy with a content-length range.</li>
+    <li><b>Scan.</b> Antivirus/malware scan. Reject → status <code>rejected</code>, delete the object, tell the user.</li>
+    <li><b>Derive.</b> Thumbnails for images and PDF first pages; transcode video into adaptive streaming renditions (e.g. HLS at 360p/720p/1080p). Each step is a separate job on the queue, idempotent by <code>(file_id, kind)</code> so a retried job overwrites the same output rather than duplicating it.</li>
+    <li><b>Publish.</b> Write variants to the processed bucket, set <code>ready</code>, emit "file.ready" for notifications.</li>
+  </ol>
+  <p><b>Serving safely.</b> Use server-generated storage keys (never the user's filename, which could contain <code>../</code> tricks). Serve user content from a separate domain (so an uploaded HTML or SVG file can't run scripts on your main site's cookies), with <code>Content-Disposition: attachment</code> for types you don't render. Downloads go through the CDN with signed URLs that expire in minutes, issued only after a permission check.</p>
+
+  <h2>8. Deep dive: storage cost and lifecycle</h2>
+  <ul>
+    <li><b>Tiering.</b> Most files are hot for weeks, then rarely read. Lifecycle rules move objects older than ~90 days to an infrequent-access class (cheaper storage, small retrieval fee).</li>
+    <li><b>Deduplication.</b> Hashing content lets you store identical files once (a district-wide worksheet uploaded by 200 teachers). Keep dedupe within a tenant: cross-tenant dedupe can leak information ("this upload finished instantly, so someone else already has this file").</li>
+    <li><b>Deletion.</b> Deletes must remove every variant and, for privacy commitments, eventually backups too. Keep a deletion job keyed by <code>file_id</code> that's safe to rerun.</li>
+  </ul>
+
+  <h2>9. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Direct-to-storage (presigned)</td><td>App servers never touch bytes; storage scales for you</td><td>Two-step protocol; verification happens after upload</td><td>Anything beyond tiny files (almost always)</td></tr>
+      <tr><td>Proxy through app server</td><td>Inspect and reject inline; simplest client</td><td>Bandwidth and long-held connections on your fleet</td><td>Small files (avatars under ~1 MB) where inline validation matters</td></tr>
+      <tr><td>Multipart (chunked)</td><td>Resume after failure, parallel throughput</td><td>More client logic, cleanup of abandoned parts</td><td>Files over ~50–100 MB, or flaky networks (schools)</td></tr>
+      <tr><td>Async processing via queue</td><td>Upload returns fast; retries; autoscaling</td><td>File isn't usable immediately; status UI needed</td><td>Scanning and transcoding (always async)</td></tr>
+      <tr><td>Content-hash dedupe</td><td>Lower storage cost</td><td>Reference counting on delete; possible info leak across tenants</td><td>Within a tenant with lots of repeated files</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Follow-up questions and strong answers</h2>
+  <h3>"How does the client learn processing is done?"</h3>
+  <p>Simplest: poll <code>GET /v1/files/f_77</code> every few seconds with backoff. Better UX: the app already has a realtime channel (SSE or WebSocket), so push a "file.ready" event. Either way, the status in the database is the truth.</p>
+  <h3>"What if the client never calls complete?"</h3>
+  <p>The object never assembles, the row stays <code>pending</code>, and the lifecycle rule aborts the multipart upload after a few days. Quota is counted only for <code>uploaded</code> and later states, so abandoned uploads don't eat a district's quota.</p>
+  <h3>"How do you enforce the quota if bytes bypass you?"</h3>
+  <p>Check declared size against remaining quota when issuing URLs (and reserve it), sign only the number of parts that size needs, then verify the actual size after completion and release or adjust the reservation. A client lying about size gets its file rejected in verification.</p>
+  <h3>"How would video playback work?"</h3>
+  <p>Transcode to HLS (or DASH): the video is cut into ~2–6 second segments at several bitrates, plus a playlist. The player picks a bitrate that fits the network and switches as bandwidth changes. Segments are static files, so the CDN caches them perfectly.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"App servers shouldn't move bytes: at roughly 1.5 Gbps during school hours with uploads taking minutes on classroom Wi-Fi, proxying would mean a fleet holding thousands of slow connections. So the API checks permission and quota, records a pending file, and hands back presigned part URLs; the browser uploads 8 MB parts directly to object storage and retries only failed parts. An object-created event drives an idempotent pipeline: verify type, scan, derive thumbnails and video renditions. Nothing is served until it's scanned, and downloads are short-lived signed CDN URLs."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Trusting the client: using its filename as the storage path, its Content-Type to decide how to serve, or its "upload complete" as proof the file is safe. Every one of those is an attack path (path traversal, stored cross-site scripting through an "image" that's really HTML, malware shared to a class). Server-generated keys, magic-byte checks, scanning before publishing, and a separate download domain close them.</p></div>
+
+  <h2>11. Your turn</h2>
+  <p>A district admin uploads a <b>500 MB roster CSV</b> (2 million rows: students, teachers, classes) to bulk-import into the platform. Design the upload and import.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Upload:</b> same presigned multipart flow (500 MB on school-office internet benefits from resume). File is private and treated as highly sensitive (student PII): encrypted at rest, short retention (delete raw CSV after import, e.g. 30 days).</p>
+    <p><b>Validate asynchronously:</b> an import job streams the CSV row by row (never loads 500 MB into memory), checks required columns, formats, and references (does class X exist?), and writes a row-level error report. It produces a <b>dry-run diff</b>: "+1,240 students, 37 moved schools, 12 deactivated, 58 rows with errors". The admin reviews before applying.</p>
+    <p><b>Apply:</b> batches of ~1,000 rows, each an idempotent upsert keyed by <code>(district_id, source_system, source_id)</code>, so a crash mid-import can be resumed or re-run safely. Students missing from the file are deactivated, never hard-deleted (their reading history matters). Progress is stored on the import job and shown live.</p>
+    <p><b>Timing:</b> 2 M rows at ~5,000 rows/s ≈ 7 minutes. Run imports on a separate worker pool and DB connection budget so a back-to-school import storm doesn't slow classrooms.</p>
+  </details>
+
+  <div data-quiz='[{"q":"What is a presigned URL?","o":["A URL that never expires","A URL whose signature grants one specific action on one object until it expires, without sharing storage credentials","A shortened URL","A URL that only works over HTTP/1.1"],"a":1,"why":"The server signs it with its own credentials; the client gets a narrow, time-limited permission."},{"q":"Why upload directly to object storage instead of through app servers?","o":["Object storage is always cheaper per request","App servers would hold slow multi-minute connections and gigabits of bandwidth doing nothing but copying bytes","Browsers cannot send files to app servers","It removes the need for authentication"],"a":1,"why":"Separating control (permissions, metadata) from data (bytes) lets each scale independently."},{"q":"A 400 MB upload in 8 MB parts loses its connection during part 37. What must be re-sent?","o":["The entire file","Only part 37 (and any others that did not finish)","Parts 1 to 37","Nothing; storage guesses the rest"],"a":1,"why":"Each part is stored independently; the client retries only missing parts."},{"q":"How should the pipeline determine a file real type?","o":["Trust the Content-Type header from the client","Trust the file extension","Inspect the file first bytes (magic numbers) on the server","Ask the user"],"a":2,"why":"Client-supplied type and name are attacker-controlled."},{"q":"Why add a lifecycle rule to abort incomplete multipart uploads?","o":["To speed up downloads","Abandoned parts are stored and billed until aborted","It is required for CDN caching","To enable deduplication"],"a":1,"why":"Parts of never-completed uploads otherwise sit in storage indefinitely."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Control plane vs data plane: the API authorizes and records; object storage receives bytes via presigned URLs.</li>
+    <li>Multipart uploads (8–16 MB parts) give resume and parallelism; clean up abandoned uploads with lifecycle rules.</li>
+    <li>Treat every upload as hostile: quarantine, magic-byte checks, scanning, server-generated keys, separate download domain.</li>
+    <li>Processing is async, queue-driven, and idempotent per (file, variant); status in the DB is the source of truth.</li>
+    <li>Serve via CDN with short-lived signed URLs; tier old files to cheaper storage.</li>
+  </ul>
+</template>

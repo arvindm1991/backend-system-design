@@ -1,0 +1,257 @@
+<template id="tpl-dsa-prefix" data-title="Prefix sums &amp; precomputation" data-part="Part 5 · Coding patterns (DSA)" data-order="320">
+  <h1>Prefix sums &amp; precomputation</h1>
+  <p class="lede">Some problems ask the same kind of question over and over about stretches of an array: &quot;what&#39;s the total from here to there?&quot; Precomputation means doing one pass up front so every later question is O(1). After this lesson you&#39;ll build prefix sums, answer range sums instantly, combine prefix sums with a hash map to count subarrays that add up to k, and use left/right running values for problems like Product of Array Except Self.</p>
+
+  <h2>1. The trigger</h2>
+  <ul>
+    <li><b>&quot;sum of elements between index i and j&quot;</b>, especially with <b>many queries</b> on an array that doesn&#39;t change.</li>
+    <li><b>&quot;subarray sum equals k&quot;</b>, &quot;number of contiguous subarrays whose sum is ...&quot;, &quot;subarray sum divisible by k&quot; (prefix sums + hash map).</li>
+    <li><b>&quot;running total&quot;, &quot;cumulative&quot;, &quot;balance&quot;</b>, &quot;equilibrium / pivot index&quot; (left sum equals right sum).</li>
+    <li><b>&quot;product of all except self&quot;</b>, &quot;max to the left / right of each position&quot; (left and right running values).</li>
+    <li>From the <a href="#dsa-approach">attack method</a>: the brute force <b>re-adds or re-scans the same stretch</b> of the array again and again.</li>
+  </ul>
+
+  <h2>2. The problem: a dashboard that keeps re-adding</h2>
+  <p>The running example: a reading app records how many minutes a student read each school day.</p>
+  <pre><code class="lang-js">const minutes = [20, 35, 0, 15, 40, 25, 30]; // day 0 .. day 6</code></pre>
+  <p>The teacher dashboard lets you pick any range of days and shows the total. &quot;Days 2 to 5?&quot; The obvious code loops from day 2 to day 5 and adds: 0 + 15 + 40 + 25 = 80.</p>
+  <pre><code class="lang-js">function rangeTotalBrute(minutes, from, to) {
+  let total = 0;
+  for (let day = from; day &lt;= to; day++) total += minutes[day];
+  return total;
+}
+// O(n) per query. With q queries: O(n * q).</code></pre>
+  <p>Fine for one query. But the dashboard draws a chart of &quot;last 30 days&quot; totals, one point per day of the year, and a district report runs it for 30,000 students. Each point re-adds 29 of the 30 numbers the previous point just added. In the version interviewers use, n = 10⁵ items and q = 10⁵ queries: up to 10¹⁰ additions.</p>
+  <p><b>The repeated work:</b> every query re-adds the same days. Days 2–5 and days 2–6 share four additions. Days 0–5 and days 2–5 share four too.</p>
+
+  <h2>3. The idea: a running balance</h2>
+  <p>Think of your bank statement. It doesn&#39;t make you add up every transaction to know how much you spent between March 3 and March 20. It shows a <b>running balance</b> after each transaction, and the amount spent in between is just <i>balance on the 3rd − balance on the 20th</i>. One subtraction, no matter how many transactions happened in between.</p>
+  <p>A <b>prefix sum</b> array is that running balance. <code>prefix[i]</code> is the total of the first <code>i</code> items (everything <i>before</i> index <code>i</code>). We add a <code>0</code> at the front so the formula has no special cases:</p>
+  <div class="trace">
+    <div class="trace-title">Trace: building prefix for minutes = [20, 35, 0, 15, 40, 25, 30]</div>
+    <table class="tbl">
+      <thead><tr><th>i</th><th>minutes[i]</th><th>prefix[i + 1] = prefix[i] + minutes[i]</th></tr></thead>
+      <tbody>
+        <tr><td>start</td><td></td><td>prefix[0] = 0 (sum of nothing)</td></tr>
+        <tr><td>0</td><td>20</td><td>prefix[1] = 0 + 20 = 20</td></tr>
+        <tr><td>1</td><td>35</td><td>prefix[2] = 20 + 35 = 55</td></tr>
+        <tr><td>2</td><td>0</td><td>prefix[3] = 55 + 0 = 55</td></tr>
+        <tr><td>3</td><td>15</td><td>prefix[4] = 55 + 15 = 70</td></tr>
+        <tr><td>4</td><td>40</td><td>prefix[5] = 70 + 40 = 110</td></tr>
+        <tr><td>5</td><td>25</td><td>prefix[6] = 110 + 25 = 135</td></tr>
+        <tr><td>6</td><td>30</td><td>prefix[7] = 135 + 30 = 165</td></tr>
+      </tbody>
+    </table>
+    <p>prefix = <code>[0, 20, 55, 55, 70, 110, 135, 165]</code>. One pass, 7 additions.</p>
+  </div>
+  <p>Now any range is one subtraction. The total from day <code>from</code> to day <code>to</code> (both included) is &quot;everything up to and including <code>to</code>&quot; minus &quot;everything before <code>from</code>&quot;:</p>
+  <p style="text-align:center"><code>sum(from..to) = prefix[to + 1] − prefix[from]</code></p>
+  <p>Days 2 to 5: <code>prefix[6] − prefix[2] = 135 − 55 = 80</code>. Same answer as the loop, in one step.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 250" width="100%" role="img" aria-label="The minutes array above, the prefix array below with one extra leading zero; the sum of days 2 through 5 equals prefix 6 minus prefix 2, 135 minus 55 equals 80" style="font-family:inherit">
+      <text x="10" y="44" style="fill:var(--muted);font-size:12px">minutes</text>
+      <g style="font-size:14px" text-anchor="middle">
+        <g style="fill:var(--surface);stroke:var(--line)">
+          <rect x="125" y="22" width="70" height="36"/><rect x="195" y="22" width="70" height="36"/>
+          <rect x="545" y="22" width="70" height="36"/>
+        </g>
+        <g style="fill:var(--accent-soft);stroke:var(--accent);stroke-width:2">
+          <rect x="265" y="22" width="70" height="36"/><rect x="335" y="22" width="70" height="36"/><rect x="405" y="22" width="70" height="36"/><rect x="475" y="22" width="70" height="36"/>
+        </g>
+        <g class="mono" style="fill:currentColor">
+          <text x="160" y="45">20</text><text x="230" y="45">35</text><text x="300" y="45">0</text><text x="370" y="45">15</text><text x="440" y="45">40</text><text x="510" y="45">25</text><text x="580" y="45">30</text>
+        </g>
+        <g style="fill:var(--muted);font-size:12px">
+          <text x="160" y="76">day 0</text><text x="230" y="76">1</text><text x="300" y="76">2</text><text x="370" y="76">3</text><text x="440" y="76">4</text><text x="510" y="76">5</text><text x="580" y="76">6</text>
+        </g>
+      </g>
+      <text x="405" y="98" text-anchor="middle" style="fill:var(--accent);font-size:12px;font-weight:600">days 2..5 = 80</text>
+      <text x="10" y="152" style="fill:var(--muted);font-size:12px">prefix</text>
+      <g style="font-size:14px" text-anchor="middle">
+        <g style="fill:var(--surface);stroke:var(--line)">
+          <rect x="90" y="130" width="70" height="36"/><rect x="160" y="130" width="70" height="36"/><rect x="300" y="130" width="70" height="36"/><rect x="370" y="130" width="70" height="36"/><rect x="440" y="130" width="70" height="36"/><rect x="580" y="130" width="70" height="36"/>
+        </g>
+        <rect x="230" y="130" width="70" height="36" style="fill:var(--surface);stroke:var(--muted);stroke-width:2.5"/>
+        <rect x="510" y="130" width="70" height="36" style="fill:var(--surface);stroke:var(--accent);stroke-width:2.5"/>
+        <g class="mono" style="fill:currentColor">
+          <text x="125" y="153">0</text><text x="195" y="153">20</text><text x="265" y="153">55</text><text x="335" y="153">55</text><text x="405" y="153">70</text><text x="475" y="153">110</text><text x="545" y="153">135</text><text x="615" y="153">165</text>
+        </g>
+        <g style="fill:var(--muted);font-size:12px">
+          <text x="125" y="184">[0]</text><text x="195" y="184">[1]</text><text x="265" y="184">[2]</text><text x="335" y="184">[3]</text><text x="405" y="184">[4]</text><text x="475" y="184">[5]</text><text x="545" y="184">[6]</text><text x="615" y="184">[7]</text>
+        </g>
+      </g>
+      <text x="545" y="210" text-anchor="middle" style="fill:var(--accent);font-size:12px;font-weight:600">prefix[to + 1] = 135</text>
+      <text x="265" y="210" text-anchor="middle" style="fill:currentColor;font-size:12px;font-weight:600">prefix[from] = 55</text>
+      <text x="405" y="238" text-anchor="middle" style="fill:currentColor;font-size:13px">135 − 55 = 80: everything up to day 5, minus everything before day 2</text>
+    </svg>
+    <figcaption>prefix[i] is the total of the first i days. The leading 0 makes every range sum the same subtraction, including ranges that start at day 0.</figcaption>
+  </figure>
+
+  <h2>4. The template</h2>
+  <pre><code class="lang-js">// In TypeScript: function buildPrefix(nums: number[]): number[]
+function buildPrefix(nums) {
+  const prefix = new Array(nums.length + 1);
+  prefix[0] = 0;                            // sum of the first 0 items
+  for (let i = 0; i &lt; nums.length; i++) {
+    prefix[i + 1] = prefix[i] + nums[i];    // running total
+  }
+  return prefix;
+}
+
+// sum of nums[from..to], both ends included
+function rangeSum(prefix, from, to) {
+  return prefix[to + 1] - prefix[from];
+}</code></pre>
+  <table class="tbl">
+    <thead><tr><th></th><th>Re-add every query</th><th>Prefix sums</th></tr></thead>
+    <tbody>
+      <tr><td>Build</td><td>nothing</td><td>O(n) once, O(n) space</td></tr>
+      <tr><td>Each query</td><td>O(n)</td><td>O(1)</td></tr>
+      <tr><td>q queries, n = q = 10⁵</td><td>up to 10¹⁰ steps</td><td>2 × 10⁵ steps</td></tr>
+      <tr><td>Choose it when</td><td>one or two queries, or the array changes constantly</td><td>many queries on an array that doesn&#39;t change</td></tr>
+    </tbody>
+  </table>
+  <p>(If the array is updated between queries, every prefix after the change goes stale and rebuilding is O(n). That&#39;s what a Fenwick tree or segment tree solves; you won&#39;t need them for most interviews, but naming them shows you know where prefix sums stop working.)</p>
+  <div data-lab="dsa-range-sum"></div>
+
+  <h2>5. Worked problem: Subarray Sum Equals K (prefix sums + hash map)</h2>
+  <p><b>Problem:</b> the app awards a badge for any stretch of <b>consecutive</b> days that adds up to exactly 55 minutes. Given <code>[20, 35, 0, 15, 40]</code> and <code>k = 55</code>, how many such stretches are there? (A contiguous stretch of an array is called a <b>subarray</b>.)</p>
+  <p>By hand: [20, 35], [20, 35, 0], [0, 15, 40], [15, 40]. Four.</p>
+  <h3>Brute force</h3>
+  <pre><code class="lang-js">function countSubarraysBrute(nums, k) {
+  let count = 0;
+  for (let start = 0; start &lt; nums.length; start++) {
+    let sum = 0;
+    for (let end = start; end &lt; nums.length; end++) {
+      sum += nums[end];               // extend the stretch by one day
+      if (sum === k) count++;
+    }
+  }
+  return count;
+}
+// O(n^2): every (start, end) pair. n = 2 * 10^4 → 2 * 10^8 steps. Too slow.</code></pre>
+  <h3>Finding the repeated work</h3>
+  <p>Using prefix sums, the sum of a subarray from <code>start</code> to <code>end</code> is <code>prefix[end + 1] − prefix[start]</code>. We want that to equal k:</p>
+  <p style="text-align:center"><code>prefix[end + 1] − prefix[start] = k</code> &nbsp;⟺&nbsp; <code>prefix[start] = prefix[end + 1] − k</code></p>
+  <p>Read the right side as a question: <b>standing at the current running total, how many earlier running totals were exactly k smaller?</b> Each one is the start of a valid stretch ending here. The inner loop was answering that question by scanning. &quot;How many earlier values equal X&quot; is a hash map count. This is Two Sum from the <a href="#dsa-hashing">last lesson</a>, played on running totals.</p>
+  <pre><code class="lang-js">function subarraySum(nums, k) {
+  const seenTotals = new Map([[0, 1]]); // running total -&gt; how many times seen; 0 = "before day 0"
+  let runningTotal = 0;
+  let count = 0;
+  for (const value of nums) {
+    runningTotal += value;
+    const needed = runningTotal - k;              // an earlier total that would leave exactly k
+    count += seenTotals.get(needed) || 0;
+    seenTotals.set(runningTotal, (seenTotals.get(runningTotal) || 0) + 1);
+  }
+  return count;
+}
+// O(n) time, O(n) space.</code></pre>
+  <div class="trace">
+    <div class="trace-title">Trace: subarraySum([20, 35, 0, 15, 40], 55)</div>
+    <table class="tbl">
+      <thead><tr><th>value</th><th>runningTotal</th><th>needed = total − 55</th><th>times seen</th><th>count</th><th>seenTotals after</th></tr></thead>
+      <tbody>
+        <tr><td>(start)</td><td>0</td><td></td><td></td><td>0</td><td>{0:1}</td></tr>
+        <tr><td>20</td><td>20</td><td>−35</td><td>0</td><td>0</td><td>{0:1, 20:1}</td></tr>
+        <tr><td>35</td><td>55</td><td>0</td><td class="yes">1</td><td>1</td><td>{0:1, 20:1, 55:1}</td></tr>
+        <tr><td>0</td><td>55</td><td>0</td><td class="yes">1</td><td>2</td><td>{0:1, 20:1, 55:2}</td></tr>
+        <tr><td>15</td><td>70</td><td>15</td><td>0</td><td>2</td><td>{..., 70:1}</td></tr>
+        <tr><td>40</td><td>110</td><td>55</td><td class="yes">2</td><td><b>4</b></td><td>{..., 110:1}</td></tr>
+      </tbody>
+    </table>
+    <p>At the last step, 55 had been seen <b>twice</b> (after day 1 and after day 2), so two stretches end on day 4: days 2–4 [0, 15, 40] and days 3–4 [15, 40]. Answer: <span class="yes">4</span>.</p>
+  </div>
+  <p>Why start the map with <code>{0: 1}</code>? It stands for the empty prefix before day 0. Without it, stretches that start at day 0 (like [20, 35]) are never counted: at the second step, <code>needed</code> is 0 and the map must say &quot;yes, once&quot;.</p>
+  <div class="callout tip"><span class="callout-label">Why not a sliding window?</span><p>A <a href="#dsa-sliding-window">sliding window</a> works for &quot;subarray sum&quot; problems only when every number is positive, because then growing the window always increases the sum and shrinking always decreases it. With zeros or negatives (a &quot;minutes vs goal&quot; difference can be −10), that breaks. Prefix sums + hash map works with any numbers. Negative numbers in a subarray-sum problem are a strong hint for this lesson&#39;s pattern.</p></div>
+  <div data-lab="dsa-subarray-sum-k"></div>
+
+  <h2>6. Running values from both sides</h2>
+  <p>Prefix sums are one example of a bigger idea: <b>sweep once, carry a running value, store it if later steps need it</b>. The value can be a sum, a product, a max or a min. You already met the running minimum in <a href="#dsa-approach">Best Time to Buy and Sell Stock</a>. Two more shapes come up constantly.</p>
+  <h3>Running max: &quot;best day so far&quot;</h3>
+  <pre><code class="lang-js">// bestSoFar[i] = max of minutes[0..i]
+const bestSoFar = [];
+let best = -Infinity;
+for (const m of minutes) {
+  best = Math.max(best, m);
+  bestSoFar.push(best);
+}
+// minutes [20, 35, 0, 15, 40, 25, 30] -&gt; bestSoFar [20, 35, 35, 35, 40, 40, 40]</code></pre>
+  <p>Do the same from the right to get &quot;max of everything after i&quot;. Problems like Trapping Rain Water are built from exactly these two arrays.</p>
+  <h3>Worked problem: Product of Array Except Self</h3>
+  <p><b>Problem:</b> return an array where <code>answer[i]</code> is the product of every number except <code>nums[i]</code>, in O(n) and <b>without division</b>. For <code>[1, 2, 3, 4]</code>: <code>[24, 12, 8, 6]</code>.</p>
+  <p><b>Brute force:</b> for each i, multiply everything else: O(n²). The repeated work: for i = 2, it multiplies <code>1 × 2</code> on the left; for i = 3, it multiplies <code>1 × 2 × 3</code>, redoing <code>1 × 2</code>.</p>
+  <p><b>The pattern:</b> &quot;everything except i&quot; = &quot;everything to the left of i&quot; × &quot;everything to the right of i&quot;. Both are running products: one sweep left to right, one sweep right to left.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 220" width="100%" role="img" aria-label="For nums 1, 2, 3, 4: left products 1, 1, 2, 6 computed left to right; right products 24, 12, 4, 1 computed right to left; multiplied together they give 24, 12, 8, 6" style="font-family:inherit">
+      <defs>
+        <marker id="dsap-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+        <marker id="dsap-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker>
+      </defs>
+      <g style="font-size:12px;fill:var(--muted)">
+        <text x="10" y="40">nums</text><text x="10" y="90">left product</text><text x="10" y="140">right product</text><text x="10" y="190">answer</text>
+      </g>
+      <g class="mono" style="font-size:14px" text-anchor="middle">
+        <g style="fill:var(--surface);stroke:var(--line)">
+          <rect x="190" y="18" width="80" height="34"/><rect x="270" y="18" width="80" height="34"/><rect x="350" y="18" width="80" height="34"/><rect x="430" y="18" width="80" height="34"/>
+          <rect x="190" y="68" width="80" height="34"/><rect x="270" y="68" width="80" height="34"/><rect x="350" y="68" width="80" height="34"/><rect x="430" y="68" width="80" height="34"/>
+          <rect x="190" y="118" width="80" height="34"/><rect x="270" y="118" width="80" height="34"/><rect x="350" y="118" width="80" height="34"/><rect x="430" y="118" width="80" height="34"/>
+        </g>
+        <g style="fill:var(--accent-soft);stroke:var(--accent);stroke-width:2">
+          <rect x="190" y="168" width="80" height="34"/><rect x="270" y="168" width="80" height="34"/><rect x="350" y="168" width="80" height="34"/><rect x="430" y="168" width="80" height="34"/>
+        </g>
+        <g style="fill:currentColor">
+          <text x="230" y="40">1</text><text x="310" y="40">2</text><text x="390" y="40">3</text><text x="470" y="40">4</text>
+          <text x="230" y="90">1</text><text x="310" y="90">1</text><text x="390" y="90">2</text><text x="470" y="90">6</text>
+          <text x="230" y="140">24</text><text x="310" y="140">12</text><text x="390" y="140">4</text><text x="470" y="140">1</text>
+          <text x="230" y="190">24</text><text x="310" y="190">12</text><text x="390" y="190">8</text><text x="470" y="190">6</text>
+        </g>
+      </g>
+      <line x1="530" y1="85" x2="620" y2="85" style="stroke:var(--accent);stroke-width:2" marker-end="url(#dsap-arr)"/>
+      <text x="530" y="74" style="fill:var(--accent);font-size:12px">sweep 1: left to right</text>
+      <line x1="620" y1="135" x2="530" y2="135" style="stroke:var(--muted);stroke-width:2" marker-end="url(#dsap-arr2)"/>
+      <text x="530" y="124" style="fill:var(--muted);font-size:12px">sweep 2: right to left</text>
+      <text x="530" y="190" style="fill:currentColor;font-size:12px">answer = left × right</text>
+    </svg>
+    <figcaption>Left product at i is everything before i; right product is everything after i. Their product skips exactly nums[i], and no division is needed.</figcaption>
+  </figure>
+  <pre><code class="lang-js">function productExceptSelf(nums) {
+  const answer = new Array(nums.length);
+  let leftProduct = 1;                        // product of everything before i
+  for (let i = 0; i &lt; nums.length; i++) {
+    answer[i] = leftProduct;
+    leftProduct *= nums[i];
+  }
+  let rightProduct = 1;                       // product of everything after i
+  for (let i = nums.length - 1; i &gt;= 0; i--) {
+    answer[i] *= rightProduct;
+    rightProduct *= nums[i];
+  }
+  return answer;
+}
+// O(n) time; O(1) extra space besides the output array.</code></pre>
+  <p>Why &quot;without division&quot;? The tempting shortcut is &quot;multiply everything, then divide by nums[i]&quot;. It breaks the moment there&#39;s a 0 in the array (dividing by zero), which is exactly the edge case the interviewer will try.</p>
+  <div data-lab="dsa-product-except-self"></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistakes</span><p><b>1. Off-by-one in the range formula.</b> With the leading 0, it&#39;s <code>prefix[to + 1] − prefix[from]</code>. Writing <code>prefix[to] − prefix[from]</code> silently drops the last day. Test with a range of a single day: <code>sum(3..3)</code> must equal <code>nums[3]</code>. <b>2. Forgetting <code>{0: 1}</code></b> in subarray-sum counting, which misses every subarray that starts at index 0. <b>3. Adding the current total to the map before looking up <code>needed</code></b>: with k = 0 every position would count itself as an empty subarray. <b>4. Rebuilding the prefix array inside the query function</b>, which quietly turns it back into O(n) per query. Build once, in the constructor.</p></div>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;The brute force re-adds the same elements for every range. I&#39;ll precompute prefix sums in one O(n) pass so any range sum is one subtraction, O(1) per query. For counting subarrays that sum to k, a subarray sum is a difference of two prefix sums, so I keep a hash map of how many times each running total has appeared and look up total − k as I go: O(n) time, O(n) space, and it works with negative numbers, unlike a sliding window.&quot;</p></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"An array of 100,000 daily step counts never changes, and you must answer 100,000 queries of the form: total steps from day i to day j. What fits best?","o":["Loop from i to j for each query","Prefix sums built once, then prefix[j + 1] − prefix[i] per query","Sort the array, then binary search","A hash set of all values"],"a":1,"why":"Many range-sum queries on a static array is the prefix-sum trigger: O(n) build, O(1) per query, instead of up to 10^10 additions."},
+    {"q":"Count the contiguous subarrays whose sum equals k. The array can contain negative numbers. Which approach fits?","o":["Sliding window that shrinks when the sum is too big","Prefix sums plus a hash map counting how often each running total has appeared","Sort then two pointers","Binary search on the answer"],"a":1,"why":"With negatives, shrinking a window does not reliably lower the sum, so a sliding window fails. A subarray sum is a difference of prefix sums, so count earlier totals equal to current − k in a map."},
+    {"q":"prefix = [0, 20, 55, 55, 70, 110] for nums = [20, 35, 0, 15, 40]. What is the sum of nums[1..3] (indexes 1 to 3 inclusive)?","o":["15","50","70","35"],"a":1,"why":"prefix[3 + 1] − prefix[1] = 70 − 20 = 50, which is 35 + 0 + 15."},
+    {"q":"In the subarray-sum-equals-k solution, why does the map start as {0: 1}?","o":["To avoid dividing by zero","It represents the empty prefix before index 0, so subarrays that start at index 0 are counted","It makes the map sorted","It is required by JavaScript Map"],"a":1,"why":"A subarray starting at index 0 has sum equal to the current running total, so needed = total − k = 0 must already be in the map once."},
+    {"q":"Return an array where each position holds the product of all other elements, without using division. Which idea fits?","o":["A hash map of value to count","Two sweeps: running product from the left and from the right, multiplied together","Sort the array first","A stack of products"],"a":1,"why":"Everything except i is the product of everything to its left times everything to its right. Each is a running value from one side: O(n) time."},
+    {"q":"Find the length of the longest substring without repeating characters. Is this a prefix-sum problem?","o":["Yes, build prefix sums of character codes","No, longest contiguous substring with a condition is a sliding window (with a set or map of the window contents)","Yes, use prefix sums with a map","No, it needs dynamic programming over all subsets"],"a":1,"why":"Longest + contiguous + a condition about what is inside the window is the sliding window trigger. Prefix sums answer sum questions about ranges."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li><b>Precompute</b> when the brute force re-adds or re-scans the same stretch repeatedly: one O(n) pass up front, then cheap answers.</li>
+    <li><b>Prefix sums</b>: <code>prefix[0] = 0</code>, <code>prefix[i + 1] = prefix[i] + nums[i]</code>; <code>sum(from..to) = prefix[to + 1] − prefix[from]</code>. O(n) build, O(1) per query.</li>
+    <li><b>Subarray sum equals k</b>: count earlier running totals equal to <code>total − k</code> in a hash map that starts at <code>{0: 1}</code>. O(n), works with negatives.</li>
+    <li>The same idea works with running <b>max, min and product</b>, and from <b>both sides</b> (left × right for Product Except Self).</li>
+    <li>Prefix sums assume the array doesn&#39;t change; with frequent updates, mention Fenwick or segment trees.</li>
+  </ul>
+</template>

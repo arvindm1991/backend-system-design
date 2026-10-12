@@ -1,0 +1,44 @@
+{
+  "id": "dsa-min-subarray-len",
+  "title": "Minimum size subarray sum",
+  "minutes": 20,
+  "prompt": "<p>PageTurn gives a &quot;sprint&quot; badge for the <b>fewest consecutive days</b> whose reading minutes add up to <b>at least</b> a goal.</p>\n<p>Write <code>minSubarrayLen(nums, goal)</code> that returns the length of the shortest contiguous subarray of <code>nums</code> whose sum is <code>&gt;= goal</code>, or <code>0</code> if there is none. All values are <b>non-negative</b> (that is what makes a sliding window safe). Aim for <b>O(n)</b> time.</p>\n<p>Examples:</p>\n<ul>\n<li><code>minSubarrayLen([10, 20, 5, 40, 15, 30], 55)</code> → <code>2</code> (40 + 15)</li>\n<li><code>minSubarrayLen([2, 3, 1, 2, 4, 3], 7)</code> → <code>2</code> (4 + 3)</li>\n<li><code>minSubarrayLen([1, 1, 1, 1], 11)</code> → <code>0</code></li>\n</ul>\n<p>Constraints: 0 ≤ <code>nums.length</code> ≤ 10<sup>5</sup>, 0 ≤ <code>nums[i]</code> ≤ 10<sup>4</sup>, 1 ≤ <code>goal</code> ≤ 10<sup>9</sup>.</p>",
+  "starter": "function minSubarrayLen(nums, goal) {\n  // TODO: variable window, \"shortest\" flavor.\n  // Expand right; WHILE the window sum reaches the goal, record its length and shrink from the left.\n  return 0;\n}",
+  "solution": "function minSubarrayLen(nums, goal) {\n  let left = 0;\n  let windowSum = 0;\n  let best = Infinity;\n  for (let right = 0; right < nums.length; right++) {\n    windowSum += nums[right];\n    while (windowSum >= goal) {\n      best = Math.min(best, right - left + 1);\n      windowSum -= nums[left];\n      left++;\n    }\n  }\n  return best === Infinity ? 0 : best;\n}",
+  "tests": [
+    {
+      "name": "reading minutes example",
+      "code": "assertEqual(minSubarrayLen([10, 20, 5, 40, 15, 30], 55), 2);"
+    },
+    {
+      "name": "classic example",
+      "code": "assertEqual(minSubarrayLen([2, 3, 1, 2, 4, 3], 7), 2);"
+    },
+    {
+      "name": "a single element can be enough",
+      "code": "assertEqual(minSubarrayLen([1, 4, 4], 4), 1);\nassertEqual(minSubarrayLen([0, 0, 5, 0], 5), 1);"
+    },
+    {
+      "name": "no subarray reaches the goal",
+      "code": "assertEqual(minSubarrayLen([1, 1, 1, 1, 1, 1, 1, 1], 11), 0);\nassertEqual(minSubarrayLen([], 5), 0);"
+    },
+    {
+      "name": "needs the whole array",
+      "code": "assertEqual(minSubarrayLen([1, 2, 3, 4, 5], 15), 5);"
+    },
+    {
+      "name": "must shrink more than once in a step",
+      "code": "assertEqual(minSubarrayLen([1, 1, 1, 1, 10], 10), 1);"
+    },
+    {
+      "name": "matches checking every subarray on many small inputs",
+      "code": "let seed = 11;\nconst rand = (m) => { seed = (seed * 48271) % 2147483647; return seed % m; };\nfunction brute(nums, goal) {\n  let best = 0;\n  for (let i = 0; i < nums.length; i++) { let s = 0; for (let j = i; j < nums.length; j++) { s += nums[j]; if (s >= goal) { if (best === 0 || j - i + 1 < best) best = j - i + 1; break; } } }\n  return best;\n}\nfor (let t = 0; t < 40; t++) {\n  const nums = Array.from({ length: rand(13) }, () => rand(10));\n  const goal = 1 + rand(30);\n  assertEqual(minSubarrayLen(nums, goal), brute(nums, goal), JSON.stringify(nums) + ' goal=' + goal);\n}"
+    }
+  ],
+  "hints": [
+    "<p>&quot;Shortest contiguous subarray whose sum is at least X&quot; with non-negative numbers is a variable sliding window, the &quot;shortest&quot; flavor.</p>",
+    "<p>Keep a running <code>windowSum</code> of <code>nums[left..right]</code>. Add <code>nums[right]</code> each step. Then, <b>while</b> <code>windowSum &gt;= goal</code>, the window is a candidate: record <code>right - left + 1</code>, subtract <code>nums[left]</code> and move <code>left</code> forward to try a shorter one.</p>",
+    "<p>Shape:</p><pre><code>let left = 0, windowSum = 0, best = Infinity;\nfor (let right = 0; right &lt; nums.length; right++) {\n  windowSum += nums[right];\n  while (windowSum &gt;= goal) {\n    best = Math.min(best, right - left + 1);\n    windowSum -= nums[left];\n    left++;\n  }\n}\nreturn best === Infinity ? 0 : best;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n), space O(1).</b> <code>right</code> adds each element once and <code>left</code> removes each at most once. Trying every start is O(n²).</p><p>The window works only because the values are non-negative: adding an element never lowers the sum and removing one never raises it. With negative values you would switch to prefix sums.</p><p><b>In an interview:</b> &quot;Shortest contiguous run that reaches a target, all non-negative, so a sliding window: expand right, and while the sum reaches the goal, record the length and shrink from the left. Each element enters and leaves once, so O(n) time and O(1) space.&quot;</p>"
+}

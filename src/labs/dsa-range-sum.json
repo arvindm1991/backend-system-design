@@ -1,0 +1,40 @@
+{
+  "id": "dsa-range-sum",
+  "title": "Range Sum Query - Immutable",
+  "minutes": 15,
+  "prompt": "<p>Build a class that answers &quot;what is the total of <code>nums[from..to]</code>?&quot; (both ends included) for an array that never changes. There may be up to 10^5 queries, so each query must be <b>O(1)</b>: do the work once in the constructor.</p>\n<ul>\n<li><code>new RangeSum(nums)</code>: precompute whatever you need.</li>\n<li><code>sum(from, to)</code>: returns <code>nums[from] + ... + nums[to]</code>. You can assume <code>0 &lt;= from &lt;= to &lt; nums.length</code>.</li>\n</ul>\n<p>Example: <code>const r = new RangeSum([20, 35, 0, 15, 40, 25, 30]);</code></p>\n<ul>\n<li><code>r.sum(2, 5)</code> → <code>80</code> (0 + 15 + 40 + 25)</li>\n<li><code>r.sum(0, 0)</code> → <code>20</code></li>\n<li><code>r.sum(0, 6)</code> → <code>165</code></li>\n</ul>\n<p>Constraints: <code>1 &lt;= nums.length &lt;= 10^5</code>, values may be negative.</p>",
+  "starter": "class RangeSum {\n  constructor(nums) {\n    this.nums = nums;\n    // TODO: precompute running totals here, once.\n  }\n\n  sum(from, to) {\n    // Looping from `from` to `to` would be O(n) per query.\n    // TODO: answer in O(1).\n    return 0;\n  }\n}",
+  "solution": "class RangeSum {\n  constructor(nums) {\n    // prefix[i] = total of the first i numbers; prefix[0] = 0\n    this.prefix = new Array(nums.length + 1);\n    this.prefix[0] = 0;\n    for (let i = 0; i < nums.length; i++) {\n      this.prefix[i + 1] = this.prefix[i] + nums[i];\n    }\n  }\n\n  sum(from, to) {\n    return this.prefix[to + 1] - this.prefix[from];\n  }\n}",
+  "tests": [
+    {
+      "name": "a range in the middle",
+      "code": "const r = new RangeSum([20, 35, 0, 15, 40, 25, 30]);\nassertEqual(r.sum(2, 5), 80);"
+    },
+    {
+      "name": "single-element ranges (catches off-by-one)",
+      "code": "const r = new RangeSum([20, 35, 0, 15, 40, 25, 30]);\nassertEqual(r.sum(0, 0), 20, 'first day');\nassertEqual(r.sum(3, 3), 15, 'one middle day');\nassertEqual(r.sum(6, 6), 30, 'last day');"
+    },
+    {
+      "name": "the whole array",
+      "code": "const r = new RangeSum([20, 35, 0, 15, 40, 25, 30]);\nassertEqual(r.sum(0, 6), 165);"
+    },
+    {
+      "name": "negative numbers",
+      "code": "const r = new RangeSum([-2, 0, 3, -5, 2, -1]);\nassertEqual(r.sum(0, 2), 1);\nassertEqual(r.sum(2, 5), -1);\nassertEqual(r.sum(0, 5), -3);"
+    },
+    {
+      "name": "an array of length 1",
+      "code": "const r = new RangeSum([7]);\nassertEqual(r.sum(0, 0), 7);"
+    },
+    {
+      "name": "many queries agree with a brute-force loop",
+      "code": "const nums = [];\nfor (let i = 0; i < 200; i++) nums.push(((i * 31) % 17) - 8);\nconst r = new RangeSum(nums);\nfor (let from = 0; from < nums.length; from += 7) {\n  for (let to = from; to < nums.length; to += 11) {\n    let expected = 0;\n    for (let d = from; d <= to; d++) expected += nums[d];\n    assertEqual(r.sum(from, to), expected, `sum(${from}, ${to})`);\n  }\n}"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: <b>many range-sum queries</b> on an array that <b>never changes</b>. That&#39;s prefix sums: pay O(n) once, then O(1) per query.</p>",
+    "<p>Idea: store <code>prefix[i]</code> = the total of the first <code>i</code> numbers, with <code>prefix[0] = 0</code>. The sum from <code>from</code> to <code>to</code> is &quot;everything through <code>to</code>&quot; minus &quot;everything before <code>from</code>&quot;.</p>",
+    "<p>Code shape: in the constructor, <code>this.prefix = [0]; for (const x of nums) this.prefix.push(this.prefix[this.prefix.length - 1] + x);</code>. In <code>sum</code>: <code>return this.prefix[to + 1] - this.prefix[from];</code></p>"
+  ],
+  "explain": "<p><b>Constructor O(n) time and O(n) space; each <code>sum</code> O(1).</b> For q queries that&#39;s O(n + q) instead of O(n · q). The leading 0 in the prefix array is what makes ranges starting at index 0 work without a special case.</p>\n<p>In real systems this is the same idea as storing a running balance in a ledger, or pre-aggregated daily totals in an analytics table so a dashboard can sum any date range from a few rows.</p>\n<p><b>How to say it:</b> &quot;The array is static and there are many queries, so I&#39;ll precompute prefix sums in O(n). Any range sum is then prefix[to + 1] minus prefix[from], O(1). If the array were updated between queries, I&#39;d reach for a Fenwick tree instead.&quot;</p>"
+}

@@ -1,0 +1,40 @@
+{
+  "id": "dsa-kth-largest",
+  "title": "Kth Largest Element in an Array",
+  "minutes": 20,
+  "prompt": "<p>Find the <b>k-th largest</b> value in an array (k-th largest in sorted order, so duplicates count separately). For example, the 2nd-highest reading score in a class.</p>\n<p>Write <code>kthLargest(nums, k)</code>. A finished <code>MinHeap</code> class is at the top of the editor; use it.</p>\n<ul>\n<li><code>kthLargest([3, 2, 1, 5, 6, 4], 2)</code> returns <code>5</code></li>\n<li><code>kthLargest([3, 2, 3, 1, 2, 4, 5, 5, 6], 4)</code> returns <code>4</code></li>\n<li><code>kthLargest([7], 1)</code> returns <code>7</code></li>\n</ul>\n<p>Constraints: <code>1 &lt;= k &lt;= nums.length &lt;= 10<sup>5</sup></code>; values can be negative. Target: O(n log k) with a heap of size k. (Sorting is O(n log n) and would also pass; try the heap.)</p>",
+  "starter": "// ---- MinHeap: a reusable priority queue (JavaScript has no built-in heap). ----\n// compare(a, b) < 0 means a should come out first. Default: smallest number first.\n// For a max-heap pass (a, b) => b - a. For pairs pass e.g. (a, b) => a[0] - b[0].\nclass MinHeap {\n  constructor(compare = (a, b) => a - b) {\n    this.items = [];\n    this.compare = compare;\n  }\n\n  size() {\n    return this.items.length;\n  }\n\n  peek() {\n    return this.items[0];\n  }\n\n  push(value) {\n    this.items.push(value);\n    let index = this.items.length - 1;\n    while (index > 0) {\n      const parent = Math.floor((index - 1) / 2);\n      if (this.compare(this.items[index], this.items[parent]) >= 0) break;\n      [this.items[index], this.items[parent]] = [this.items[parent], this.items[index]];\n      index = parent;\n    }\n  }\n\n  pop() {\n    if (this.items.length === 0) return undefined;\n    const top = this.items[0];\n    const last = this.items.pop();\n    if (this.items.length > 0) {\n      this.items[0] = last;\n      let index = 0;\n      const n = this.items.length;\n      while (true) {\n        const left = 2 * index + 1;\n        const right = 2 * index + 2;\n        let smallest = index;\n        if (left < n && this.compare(this.items[left], this.items[smallest]) < 0) smallest = left;\n        if (right < n && this.compare(this.items[right], this.items[smallest]) < 0) smallest = right;\n        if (smallest === index) break;\n        [this.items[index], this.items[smallest]] = [this.items[smallest], this.items[index]];\n        index = smallest;\n      }\n    }\n    return top;\n  }\n}\n// ---- End of MinHeap ----\n\nfunction kthLargest(nums, k) {\n  // TODO: keep a min-heap of the k largest values seen so far.\n}",
+  "solution": "// ---- MinHeap: a reusable priority queue (JavaScript has no built-in heap). ----\n// compare(a, b) < 0 means a should come out first. Default: smallest number first.\n// For a max-heap pass (a, b) => b - a. For pairs pass e.g. (a, b) => a[0] - b[0].\nclass MinHeap {\n  constructor(compare = (a, b) => a - b) {\n    this.items = [];\n    this.compare = compare;\n  }\n\n  size() {\n    return this.items.length;\n  }\n\n  peek() {\n    return this.items[0];\n  }\n\n  push(value) {\n    this.items.push(value);\n    let index = this.items.length - 1;\n    while (index > 0) {\n      const parent = Math.floor((index - 1) / 2);\n      if (this.compare(this.items[index], this.items[parent]) >= 0) break;\n      [this.items[index], this.items[parent]] = [this.items[parent], this.items[index]];\n      index = parent;\n    }\n  }\n\n  pop() {\n    if (this.items.length === 0) return undefined;\n    const top = this.items[0];\n    const last = this.items.pop();\n    if (this.items.length > 0) {\n      this.items[0] = last;\n      let index = 0;\n      const n = this.items.length;\n      while (true) {\n        const left = 2 * index + 1;\n        const right = 2 * index + 2;\n        let smallest = index;\n        if (left < n && this.compare(this.items[left], this.items[smallest]) < 0) smallest = left;\n        if (right < n && this.compare(this.items[right], this.items[smallest]) < 0) smallest = right;\n        if (smallest === index) break;\n        [this.items[index], this.items[smallest]] = [this.items[smallest], this.items[index]];\n        index = smallest;\n      }\n    }\n    return top;\n  }\n}\n// ---- End of MinHeap ----\n\nfunction kthLargest(nums, k) {\n  const heap = new MinHeap(); // holds the k largest values seen so far; the smallest of them is on top\n  for (const num of nums) {\n    heap.push(num);\n    if (heap.size() > k) {\n      heap.pop(); // throw away the smallest: it can't be in the top k\n    }\n  }\n  return heap.peek(); // the smallest of the top k = the k-th largest\n}",
+  "tests": [
+    {
+      "name": "classic example",
+      "code": "assertEqual(kthLargest([3, 2, 1, 5, 6, 4], 2), 5);"
+    },
+    {
+      "name": "duplicates count separately",
+      "code": "assertEqual(kthLargest([3, 2, 3, 1, 2, 4, 5, 5, 6], 4), 4);\nassertEqual(kthLargest([5, 5, 5], 2), 5);"
+    },
+    {
+      "name": "single element",
+      "code": "assertEqual(kthLargest([7], 1), 7);"
+    },
+    {
+      "name": "k = 1 is the max, k = n is the min",
+      "code": "const nums = [4, 9, -3, 12, 0];\nassertEqual(kthLargest(nums, 1), 12);\nassertEqual(kthLargest(nums, 5), -3);"
+    },
+    {
+      "name": "all negatives",
+      "code": "assertEqual(kthLargest([-1, -8, -3, -2], 3), -3);"
+    },
+    {
+      "name": "does not sort as strings",
+      "code": "assertEqual(kthLargest([100, 9, 20, 3], 2), 20, 'sort() without a comparator puts 100 before 20 and 9');"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: \"k-th largest\", \"top k\", \"k closest\" = a heap of size <b>k</b>. Counter-intuitive part: for the k <b>largest</b>, use a <b>min</b>-heap.</p>",
+    "<p>Push every number. Whenever the heap holds more than k items, pop the smallest. What survives is the k largest values, and the top of the heap (the smallest survivor) is the answer.</p>",
+    "<p>Shape:</p><pre><code>const heap = new MinHeap();\nfor (const num of nums) {\n  heap.push(num);\n  if (heap.size() &gt; k) heap.pop();\n}\nreturn heap.peek();</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n log k)</b>: n pushes and pops on a heap that never exceeds k + 1 items. <b>Space O(k)</b>. Sorting is O(n log n) time and simpler; for k = 2 and n = 100,000 the heap does roughly 100,000 × 1 steps versus 100,000 × 17 for the sort. The heap also works on a stream you can't hold in memory.</p>\n<p><b>Say it:</b> \"Top-k, so a size-k min-heap: push each value, pop when it grows past k. The root is the k-th largest. O(n log k) time, O(k) space. If k is close to n or n is small, sorting is fine and simpler.\"</p>"
+}

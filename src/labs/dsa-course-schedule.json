@@ -1,0 +1,44 @@
+{
+  "id": "dsa-course-schedule",
+  "title": "Course Schedule (order)",
+  "minutes": 25,
+  "prompt": "<p>There are <code>numCourses</code> courses labelled <code>0</code> to <code>numCourses - 1</code>. Each pair <code>[course, prerequisite]</code> in <code>prerequisites</code> means you must take <code>prerequisite</code> <b>before</b> <code>course</code>.</p>\n<p>Write <code>findOrder(numCourses, prerequisites)</code> that returns <b>any</b> order in which you can take all the courses. If it is impossible (the prerequisites form a cycle), return an empty array <code>[]</code>.</p>\n<pre><code>findOrder(4, [[1, 0], [2, 0], [3, 1], [3, 2]]);\n// [0, 1, 2, 3] or [0, 2, 1, 3]: both are fine\n\nfindOrder(2, [[1, 0], [0, 1]]);\n// []  (0 needs 1 and 1 needs 0)</code></pre>\n<p>Constraints: up to 2,000 courses and 5,000 pairs. The tests accept any valid order.</p>",
+  "starter": "function findOrder(numCourses, prerequisites) {\n  // TODO: build an adjacency list (prerequisite -> courses it unlocks)\n  // and count how many prerequisites each course still needs (its in-degree).\n  // Start from the courses that need nothing.\n  return [];\n}",
+  "solution": "function findOrder(numCourses, prerequisites) {\n  const unlocks = [];                       // unlocks[p] = courses that list p as a prerequisite\n  const needs = new Array(numCourses).fill(0);  // in-degree: prerequisites not yet taken\n  for (let course = 0; course < numCourses; course++) unlocks.push([]);\n  for (const [course, prerequisite] of prerequisites) {\n    unlocks[prerequisite].push(course);\n    needs[course] += 1;\n  }\n\n  const queue = [];\n  for (let course = 0; course < numCourses; course++) {\n    if (needs[course] === 0) queue.push(course);\n  }\n\n  const order = [];\n  let head = 0;\n  while (head < queue.length) {\n    const course = queue[head];\n    head += 1;\n    order.push(course);\n    for (const next of unlocks[course]) {\n      needs[next] -= 1;\n      if (needs[next] === 0) queue.push(next);\n    }\n  }\n  return order.length === numCourses ? order : [];   // leftovers mean a cycle\n}",
+  "tests": [
+    {
+      "name": "the example: any valid order of 4 courses",
+      "code": "function isValid(n, pre, order) {\n  if (order.length !== n || new Set(order).size !== n) return false;\n  const pos = new Map(order.map((c, i) => [c, i]));\n  return pre.every(([c, p]) => pos.has(c) && pos.has(p) && pos.get(p) < pos.get(c));\n}\nconst pre = [[1,0],[2,0],[3,1],[3,2]];\nconst order = findOrder(4, pre);\nassert(isValid(4, pre, order), 'not a valid order: ' + JSON.stringify(order));"
+    },
+    {
+      "name": "a two-course cycle is impossible",
+      "code": "assertEqual(findOrder(2, [[1,0],[0,1]]), []);"
+    },
+    {
+      "name": "no prerequisites: every course appears once",
+      "code": "const order = findOrder(3, []);\nassertEqual([...order].sort((a, b) => a - b), [0, 1, 2]);"
+    },
+    {
+      "name": "a single chain must come out in exactly one order",
+      "code": "assertEqual(findOrder(4, [[1,0],[2,1],[3,2]]), [0,1,2,3]);"
+    },
+    {
+      "name": "a longer cycle hidden behind valid courses is still impossible",
+      "code": "assertEqual(findOrder(5, [[1,0],[2,1],[3,2],[1,3],[4,0]]), []);"
+    },
+    {
+      "name": "a course that is its own prerequisite is impossible",
+      "code": "assertEqual(findOrder(1, [[0,0]]), []);"
+    },
+    {
+      "name": "a bigger graph with shared prerequisites",
+      "code": "function isValid(n, pre, order) {\n  if (order.length !== n || new Set(order).size !== n) return false;\n  const pos = new Map(order.map((c, i) => [c, i]));\n  return pre.every(([c, p]) => pos.get(p) < pos.get(c));\n}\nconst pre = [[5,2],[5,0],[4,0],[4,1],[2,3],[3,1],[6,5],[6,4],[7,6]];\nconst order = findOrder(8, pre);\nassert(isValid(8, pre, order), 'not a valid order: ' + JSON.stringify(order));"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: &quot;prerequisites&quot;, &quot;dependencies&quot;, &quot;must happen before&quot;, &quot;build order&quot;. That is <b>topological sort</b> on a directed graph.</p>",
+    "<p>Idea (Kahn&#39;s algorithm): count, for each course, how many prerequisites it still needs. Courses that need 0 can be taken now: put them in a queue. Each time you take a course, every course it unlocks needs one fewer; when one drops to 0, it joins the queue. If you finish with fewer than <code>numCourses</code> taken, the rest are stuck in a cycle.</p>",
+    "<p>Code shape: <code>unlocks = array of arrays</code>, <code>needs = new Array(n).fill(0)</code>; for each <code>[course, pre]</code>: <code>unlocks[pre].push(course); needs[course]++</code>. Then a queue loop that pushes onto <code>order</code> and decrements <code>needs[next]</code>. Return <code>order.length === n ? order : []</code>.</p>"
+  ],
+  "explain": "<p><b>Time O(V + E)</b> where V is the number of courses and E the number of prerequisite pairs: each course enters the queue once and each edge is looked at once. <b>Space O(V + E)</b> for the adjacency list.</p><p><b>Say it:</b> &quot;Prerequisites form a directed graph, and a valid order is a topological sort. I&#39;ll track in-degrees, start with everything that has none, and peel courses off; if some never reach zero, there&#39;s a cycle and I return empty.&quot; The same algorithm orders build steps in a monorepo, database migrations, and spreadsheet cell recalculation.</p>"
+}

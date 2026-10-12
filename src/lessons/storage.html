@@ -1,0 +1,182 @@
+<template id="tpl-storage" data-title="Storage choices, replication, sharding" data-part="Part 2 · Scaling building blocks" data-order="95">
+  <h1>Storage choices, replication, sharding</h1>
+  <p class="lede">After this lesson you will be able to pick the right kind of datastore for each part of a product (relational, document, key-value, wide-column, search, object storage, vector) and say why, explain how read replicas work and the replication-lag bugs they cause, choose a shard key, and explain consistent hashing well enough to build it. You will implement a hash ring with virtual nodes.</p>
+
+  <h2>1. The problem: one database, five kinds of data</h2>
+  <p>PageTurn is in year three. It now serves <b>2 million students</b> across 40 districts, and everything still lives in one Postgres database. Look at what&#39;s in it:</p>
+  <ul>
+    <li><b>Rosters</b>: districts, schools, classes, students, teachers, assignments. Lots of relationships, must be correct. About 20 GB.</li>
+    <li><b>Reading events</b>: every page turn, highlight and pause. About 60 million new rows per school day, <b>3 billion+ rows</b> so far. Almost never updated, mostly read in aggregate.</li>
+    <li><b>Book search</b>: &quot;books about dogs at reading level 3&quot;, with typo tolerance. Currently a slow <code>LIKE '%dog%'</code> scan.</li>
+    <li><b>Book files and audio</b>: 600 GB of blobs stored as <code>bytea</code> columns, bloating backups.</li>
+    <li><b>AI tutor context</b>: the tutor should find passages similar in meaning to a student&#39;s question (&quot;the part where Stanley finds the lipstick tube&quot;). Nothing in Postgres does that today.</li>
+  </ul>
+  <p>Backups take 9 hours, the events table slows every query that touches it, and search is unusable. The fix is not &quot;a bigger database&quot;. Each kind of data has a different shape and access pattern, and there&#39;s a kind of store built for each.</p>
+
+  <h2>2. The menu of datastores</h2>
+  <p><b>Relational (SQL)</b>: Postgres, MySQL. Tables with a fixed schema, joins, and <b>transactions</b> (several changes that all happen or none do). The default for core business data where correctness and relationships matter. Rosters stay here.</p>
+  <p><b>Document</b>: MongoDB, Firestore, or Postgres&#39;s <code>jsonb</code>. Stores JSON-like documents; each can have a different shape. Good when you read and write a whole nested object at once (a book&#39;s metadata with chapters and vocabulary lists). Weaker at joins across documents.</p>
+  <p><b>Key-value</b>: Redis, DynamoDB (also more than this), Memcached. Get and set by key, very fast, little else. Sessions, caches, rate-limit counters, presence.</p>
+  <p><b>Wide-column</b>: Cassandra, ScyllaDB, Bigtable, HBase. Rows grouped by a <b>partition key</b> and sorted within it by a clustering key; built for huge write volumes spread across many machines. You design tables around the queries you&#39;ll run, since there are no joins. Reading events fit well: partition by student, sorted by time.</p>
+  <p><b>Search index</b>: Elasticsearch, OpenSearch, Typesense. An <b>inverted index</b> (word → list of documents containing it) with ranking, typo tolerance and filters. Book search moves here. It&#39;s a copy of data from the source of truth, kept in sync, not the source itself.</p>
+  <p><b>Object storage</b>: Amazon S3, Google Cloud Storage. Stores files (&quot;objects&quot;) of any size by key, very cheaply and durably, served over HTTP and easily put behind a CDN. Book files and audio go here; the database keeps only the key (<code>books/311/v2/book.epub</code>).</p>
+  <p><b>Vector database</b>: pgvector (a Postgres extension), Pinecone, Weaviate, Qdrant. Stores <b>embeddings</b>: lists of numbers produced by an ML model so that texts with similar meaning get nearby vectors. Answers &quot;find the 5 passages nearest this question&quot; using approximate nearest-neighbor indexes. The AI tutor&#39;s retrieval goes here.</p>
+  <table class="tbl">
+    <thead><tr><th>Store</th><th>Gives you</th><th>Costs you</th><th>PageTurn data</th></tr></thead>
+    <tbody>
+      <tr><td>Relational</td><td>Joins, transactions, constraints, flexible queries</td><td>Harder to scale writes past one primary</td><td>Rosters, assignments, XP</td></tr>
+      <tr><td>Document</td><td>Flexible nested records, read in one go</td><td>Weak joins; consistency across documents is on you</td><td>Book metadata, chapter structure</td></tr>
+      <tr><td>Key-value</td><td>Sub-millisecond by key</td><td>No queries beyond the key</td><td>Sessions, cache, presence</td></tr>
+      <tr><td>Wide-column</td><td>Massive write throughput, scales out linearly</td><td>Query-first table design, no joins, limited transactions</td><td>Reading events</td></tr>
+      <tr><td>Search index</td><td>Full-text, ranking, typo tolerance, facets</td><td>A second copy to keep in sync; not a source of truth</td><td>Book search</td></tr>
+      <tr><td>Object storage</td><td>Cheap, durable, huge files, CDN-friendly</td><td>Whole-object reads/writes; no queries</td><td>EPUBs, audio, uploads</td></tr>
+      <tr><td>Vector DB</td><td>Similarity search by meaning</td><td>Approximate results; embeddings to compute and refresh</td><td>Tutor passage retrieval</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Adding a new datastore for every feature. Each one is another system to run, back up, secure, monitor and keep in sync. Postgres alone can cover documents (<code>jsonb</code>), basic search (full-text search), vectors (pgvector) and a lot of event volume with partitioned tables. A strong answer starts with &quot;Postgres for most of it&quot; and adds a specialized store only where the numbers or features demand it, naming the trigger: &quot;once events pass a few billion rows, or search needs typo tolerance and ranking.&quot;</p></div>
+
+  <h2>3. Replication and read replicas</h2>
+  <p><b>Replication</b> means keeping copies of the same data on several machines. In the common <b>primary/replica</b> setup (also called leader/follower), all writes go to the <b>primary</b>. The primary streams its change log to one or more <b>replicas</b>, which apply the same changes in the same order. Replicas can serve reads.</p>
+  <p>Replication buys you two things: <b>read scaling</b> (PageTurn&#39;s reads outnumber writes about 10 to 1, so three replicas take most of the read load) and <b>availability</b> (if the primary dies, a replica can be promoted to primary).</p>
+  <p>The key choice is when the primary says &quot;done&quot;:</p>
+  <ul>
+    <li><b>Asynchronous</b>: the primary commits and replies right away; replicas catch up shortly after. Fast writes, but replicas lag behind (usually milliseconds, sometimes seconds under load), and if the primary dies, the last few writes may not have reached any replica.</li>
+    <li><b>Synchronous</b>: the primary waits until at least one replica confirms. No data loss on failover, but every write pays a network round-trip, and a slow replica slows all writes.</li>
+  </ul>
+  <p>Most setups use async replicas for reads, often with one synchronous (or semi-synchronous) standby for safe failover.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 240" width="100%" role="img" aria-label="Writes go to the primary, which streams changes to two replicas; reads go to replicas; replica 2 is 800 ms behind" style="font-family:inherit">
+      <defs><marker id="stor-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="10" y="94" width="130" height="52" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="75" y="118" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">App servers</text>
+      <text x="75" y="135" text-anchor="middle" style="fill:var(--muted);font-size:12px">router: write vs read</text>
+      <rect x="250" y="20" width="150" height="58" rx="8" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="325" y="45" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Primary</text>
+      <text x="325" y="63" text-anchor="middle" style="fill:var(--muted);font-size:12px">all writes</text>
+      <line x1="140" y1="108" x2="246" y2="56" style="stroke:var(--accent);stroke-width:1.5" marker-end="url(#stor-arr)"/>
+      <text x="168" y="70" style="fill:currentColor;font-size:12px">writes</text>
+      <rect x="250" y="130" width="150" height="46" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="325" y="152" text-anchor="middle" style="fill:currentColor;font-size:13px">Replica 1</text>
+      <text x="325" y="168" text-anchor="middle" style="fill:var(--muted);font-size:12px">lag 15 ms</text>
+      <rect x="250" y="186" width="150" height="46" rx="8" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:5 4"/>
+      <text x="325" y="208" text-anchor="middle" style="fill:currentColor;font-size:13px">Replica 2</text>
+      <text x="325" y="224" text-anchor="middle" style="fill:var(--muted);font-size:12px">lag 800 ms (busy)</text>
+      <line x1="140" y1="126" x2="246" y2="152" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#stor-arr)"/>
+      <line x1="140" y1="134" x2="246" y2="206" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#stor-arr)"/>
+      <text x="150" y="190" style="fill:currentColor;font-size:12px">reads</text>
+      <path d="M400,50 C470,50 470,150 404,153" style="fill:none;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3" marker-end="url(#stor-arr)"/>
+      <path d="M400,60 C500,60 500,208 404,209" style="fill:none;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3" marker-end="url(#stor-arr)"/>
+      <text x="505" y="110" style="fill:var(--muted);font-size:12px">change log streamed</text>
+      <text x="505" y="126" style="fill:var(--muted);font-size:12px">asynchronously</text>
+    </svg>
+    <figcaption>Primary/replica replication. Replicas apply the primary&#39;s changes in order, a little later. How much later is the replication lag.</figcaption>
+  </figure>
+  <p><b>Replication lag</b> causes a classic bug:</p>
+  <div class="trace">
+    <p><b>Trace: Maya&#39;s page jumps backwards</b></p>
+    <ol>
+      <li><b>10:00:00.000.</b> Maya reaches page 47. <code>PUT /api/progress</code> writes <code>page = 47</code> on the <b>primary</b>. Committed.</li>
+      <li><b>10:00:00.050.</b> She closes the book and reopens it. <code>GET /api/books/311/open</code> is a read, so it goes to <b>replica 2</b>.</li>
+      <li>Replica 2 is 800 ms behind. It hasn&#39;t applied the change yet and returns <b>page 46</b>.</li>
+      <li>The app opens at page 46. Maya thinks her progress was lost. Worse, her tablet may save &quot;46&quot; back and overwrite the real value.</li>
+      <li><b>10:00:00.800.</b> Replica 2 catches up to 47. Too late.</li>
+    </ol>
+  </div>
+  <p>The guarantee Maya needed is <b>read-your-writes</b> consistency: after you write something, your own reads see it. Ways to get it:</p>
+  <ul>
+    <li><b>Read your own recent data from the primary.</b> For a short window after a user writes (say 5 seconds, tracked in their session), route their reads of that data to the primary.</li>
+    <li><b>Always read user-owned, just-written data from the primary</b> (progress, settings), and use replicas for shared, slow-changing data (catalogs, reports).</li>
+    <li><b>Version tokens.</b> The write returns the primary&#39;s log position; the read waits until the replica has reached it, or falls back to the primary.</li>
+  </ul>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;Rosters and progress stay in Postgres with async read replicas for reports and catalogs. Replication lag would break read-your-writes for progress, so a student&#39;s own progress reads go to the primary. Book files go to object storage behind a CDN, search goes to an index fed from the database, and reading events go to a partitioned table now, or a wide-column store once volume demands it, keyed by student and time.&quot;</p></div>
+
+  <h2>4. Partitioning and sharding</h2>
+  <p>Replicas scale <b>reads</b>, but every write still goes through one primary, and every replica stores <b>all</b> the data. When either the write rate or the data size outgrows one machine, you split the data.</p>
+  <p><b>Partitioning</b> splits one big table into pieces by a key. When the pieces live on different machines, it&#39;s called <b>sharding</b>, and each machine is a <b>shard</b>. Each row lives on exactly one shard, chosen by its <b>shard key</b>.</p>
+  <p>Two ways to map keys to shards:</p>
+  <ul>
+    <li><b>Range partitioning</b>: shard 1 holds districts A–F, shard 2 G–M, and so on, or one partition per month of events. Range queries (&quot;all of October&quot;) are efficient. Risk: hot ranges, since all of today&#39;s writes hit the newest partition.</li>
+    <li><b>Hash partitioning</b>: shard = hash(key) mapped to a shard. Spreads load evenly. Cost: range queries must ask every shard.</li>
+  </ul>
+  <p>The <b>shard key</b> is the most important decision, because changing it later means moving all your data. A good key: (1) spreads writes evenly, (2) lets the most common queries hit <b>one</b> shard, and (3) doesn&#39;t create giant individual keys.</p>
+  <div class="trace">
+    <p><b>Trace: choosing a shard key for reading events (60M rows/day, 8 shards)</b></p>
+    <ol>
+      <li><b>Option: <code>event_date</code>.</b> Every write today goes to the one shard that owns today. 1 shard at 100% and 7 idle. Rejected: a hot partition.</li>
+      <li><b>Option: <code>district_id</code>.</b> Most queries are &quot;this district&#39;s report&quot;, so they hit one shard. But the largest district has 400,000 students and the smallest 2,000: one shard holds 20% of all data. Uneven, and a big district can&#39;t be split later.</li>
+      <li><b>Option: <code>student_id</code></b> (hashed). Writes spread evenly across 2 million students. The most frequent query, &quot;this student&#39;s history&quot; (teacher view, tutor context), hits one shard. Chosen.</li>
+      <li><b>The cost:</b> &quot;all events for class 7 this week&quot; touches 28 students, potentially on all 8 shards: a <b>scatter-gather</b> query. Fix: don&#39;t run it on raw events. Maintain a per-class daily summary table (written by a background job), and serve reports from that.</li>
+    </ol>
+  </div>
+  <p>What sharding costs you, beyond the obvious: cross-shard joins become application code, transactions across shards are hard (you&#39;ll meet sagas and the outbox in Part 3), unique constraints across shards need care, and rebalancing data when you add shards must happen while the system is live. That&#39;s why you shard last, not first.</p>
+
+  <h2>5. Consistent hashing</h2>
+  <p>The simplest hash partitioning is <code>shard = hash(key) % N</code>. It spreads keys evenly. The trouble starts when <b>N changes</b>.</p>
+  <p>Say PageTurn&#39;s progress cache runs on 3 Redis nodes using <code>% 3</code>. You add a 4th node. Now it&#39;s <code>% 4</code>. A key stays on the same node only if <code>hash % 3</code> equals <code>hash % 4</code>, which is true for about <b>1 key in 4</b>. So <b>about 75% of keys move</b>. For a cache, that means 75% of lookups miss at once and fall through to the database: you&#39;ve caused a stampede by adding capacity. For a database, it means moving 75% of the data.</p>
+  <p><b>Consistent hashing</b> fixes this. Imagine the hash space (0 to 2<sup>32</sup>−1) bent into a circle, the <b>ring</b>. Each node is hashed to a point on the ring. To find a key&#39;s node, hash the key to a point and walk <b>clockwise</b> to the first node.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 310" width="100%" role="img" aria-label="Hash ring with nodes A, B, C and new node D; keys walk clockwise to the next node; adding D only takes keys in the arc between C and D" style="font-family:inherit">
+      <circle cx="170" cy="155" r="100" style="fill:none;stroke:var(--line);stroke-width:2"/>
+      <path d="M105.7,231.6 A100,100 0 0,1 83.4,105" style="fill:none;stroke:var(--accent);stroke-width:6;opacity:0.5"/>
+      <g style="stroke:var(--surface);stroke-width:2">
+        <circle cx="204.2" cy="61" r="9" style="fill:currentColor"/>
+        <circle cx="268.5" cy="172.4" r="9" style="fill:currentColor"/>
+        <circle cx="105.7" cy="231.6" r="9" style="fill:currentColor"/>
+        <circle cx="83.4" cy="105" r="9" style="fill:var(--accent)"/>
+      </g>
+      <text x="214" y="42" style="fill:currentColor;font-size:13px;font-weight:600">A</text>
+      <text x="284" y="180" style="fill:currentColor;font-size:13px;font-weight:600">B</text>
+      <text x="80" y="262" style="fill:currentColor;font-size:13px;font-weight:600">C</text>
+      <text x="44" y="96" style="fill:var(--accent);font-size:13px;font-weight:600">D (new)</text>
+      <g style="fill:var(--surface);stroke:currentColor;stroke-width:1.5">
+        <rect x="252" y="96" width="9" height="9"/>
+        <rect x="200" y="245" width="9" height="9"/>
+        <rect x="66" y="146" width="9" height="9"/>
+      </g>
+      <text x="268" y="98" style="fill:currentColor;font-size:12px">k1 → B</text>
+      <text x="214" y="270" style="fill:currentColor;font-size:12px">k2 → C</text>
+      <text x="16" y="172" style="fill:currentColor;font-size:12px">k3: A → D</text>
+      <text x="170" y="150" text-anchor="middle" style="fill:var(--muted);font-size:12px">clockwise</text>
+      <text x="170" y="166" text-anchor="middle" style="fill:var(--muted);font-size:12px">↻</text>
+      <text x="350" y="60" style="fill:currentColor;font-size:13px;font-weight:600">Lookup</text>
+      <text x="350" y="80" style="fill:currentColor;font-size:12px">hash the key, walk clockwise to the first node.</text>
+      <text x="350" y="112" style="fill:currentColor;font-size:13px;font-weight:600">Adding D</text>
+      <text x="350" y="132" style="fill:currentColor;font-size:12px">only keys in the highlighted arc (C → D) move,</text>
+      <text x="350" y="150" style="fill:currentColor;font-size:12px">and they move to D. k1 and k2 stay put.</text>
+      <text x="350" y="182" style="fill:currentColor;font-size:13px;font-weight:600">Virtual nodes</text>
+      <text x="350" y="202" style="fill:currentColor;font-size:12px">each server gets ~100 points (A#0 … A#99),</text>
+      <text x="350" y="220" style="fill:currentColor;font-size:12px">so arcs even out and a new server takes</text>
+      <text x="350" y="238" style="fill:currentColor;font-size:12px">a little from everyone (~1/N of keys).</text>
+    </svg>
+    <figcaption>A hash ring. Keys (squares) belong to the next node clockwise. Adding node D moves only the keys between C and D.</figcaption>
+  </figure>
+  <p>When node D joins, it takes only the keys in the arc just before it, which used to belong to the next node clockwise. Every other key stays where it was. When a node leaves, only its keys move, to the next node clockwise. On average, adding or removing a node moves about <b>1/N</b> of the keys instead of nearly all of them.</p>
+  <p>One point per node gives very uneven arcs: by bad luck one node might own 50% of the ring. The fix is <b>virtual nodes</b>: each physical node is placed at many points (say 100 to 200, by hashing <code>A#0</code>, <code>A#1</code>, ...). The many small arcs average out, so each node owns close to 1/N of the ring. When a node joins, its points are scattered, so it takes a small slice from every existing node instead of a big slice from one neighbor. A bigger machine can simply get more points.</p>
+  <div class="trace">
+    <p><b>Trace: 3 → 4 cache nodes, 1 million cached keys</b></p>
+    <ol>
+      <li><b>Modulo:</b> about 750,000 keys now map to a different node. Hit ratio drops from 98% to roughly 25% for a while; the database sees a flood of misses.</li>
+      <li><b>Ring with 100 virtual nodes each:</b> the new node takes about 1/4 of the ring, about 250,000 keys, taken roughly evenly from A, B and C. The other 750,000 keys still hit. Hit ratio dips to about 73% and recovers as the new node fills.</li>
+    </ol>
+  </div>
+  <p>Where you&#39;ll see it: Amazon&#39;s Dynamo paper popularized it, and Cassandra, Riak, many memcached client libraries, and some load balancers use it. Redis Cluster uses a related design: 16,384 fixed <b>hash slots</b>, with slots assigned to nodes and moved individually when you rebalance.</p>
+  <div data-lab="consistent-hashing"></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q": "Where should PageTurn store 600 GB of EPUB files and audio narration?", "o": ["Object storage like S3 behind a CDN, with the key stored in Postgres", "Postgres bytea columns", "Redis", "A vector database"], "a": 0, "why": "Object storage is cheap and durable for large files and works naturally with a CDN. The database keeps only the object key and metadata."},
+    {"q": "A student saves page 47, reopens the book 50 ms later and sees page 46. What is the cause, and the fix?", "o": ["A cache stampede; add jitter", "Replication lag on a read replica; read the student&#39;s own recent writes from the primary", "A missing index; add one on page", "Clock drift; use NTP"], "a": 1, "why": "The read went to an async replica that had not applied the write yet. Read-your-writes needs the user&#39;s own just-written data to come from the primary or a caught-up replica."},
+    {"q": "Which shard key is best for 60M reading events per day, where the most common query is one student&#39;s history?", "o": ["event_date", "district_id", "student_id (hashed)", "A random UUID per event"], "a": 2, "why": "Hashed student_id spreads writes evenly and keeps each student&#39;s history on one shard. Date creates a hot shard; district is uneven; random UUIDs scatter one student&#39;s events across every shard."},
+    {"q": "With hash(key) % N, roughly what fraction of keys move when going from 3 to 4 nodes?", "o": ["About 25%", "About 33%", "About 50%", "About 75%"], "a": 3, "why": "A key stays only if hash % 3 equals hash % 4, which holds for about 1 in 4 keys. Consistent hashing moves about 1/N instead."},
+    {"q": "Why use virtual nodes on a consistent hash ring?", "o": ["To encrypt keys", "To make lookups O(1)", "To even out how much of the ring each server owns and spread moved keys across all servers", "To guarantee no key ever moves"], "a": 2, "why": "With one point per server, arcs are very uneven. Many points per server average out, and a joining server takes a small slice from each existing one."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Match data to stores: <b>relational</b> for core records, <b>key-value</b> for fast lookups, <b>wide-column</b> for huge write volumes, <b>search index</b> for text, <b>object storage</b> for files, <b>vector DB</b> for similarity. Start with Postgres and add stores only when numbers demand it.</li>
+    <li><b>Replicas</b> scale reads and enable failover; async replicas <b>lag</b>, so protect <b>read-your-writes</b> by reading a user&#39;s fresh data from the primary.</li>
+    <li><b>Sharding</b> splits data across machines to scale writes and size; the <b>shard key</b> must spread load and keep common queries on one shard.</li>
+    <li>Range partitioning helps range queries but risks hot ranges; hash partitioning spreads load but scatters range queries.</li>
+    <li><b>Consistent hashing</b> moves ~1/N of keys when nodes change instead of ~all; <b>virtual nodes</b> keep load even.</li>
+  </ul>
+</template>

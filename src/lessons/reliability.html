@@ -1,0 +1,201 @@
+<template id="tpl-reliability" data-title="Reliability" data-part="Part 3 · Distributed systems" data-order="120">
+  <h1>Reliability: timeouts, retries, breakers and SLOs</h1>
+  <p class="lede">By the end of this lesson you will be able to walk through a real-shaped outage (a slow vendor that takes down a whole app through retries), explain each defense that would have stopped it (timeouts, disciplined retries, circuit breakers, bulkheads, graceful degradation, load shedding), set an SLO with an error budget using real numbers, and debug an incident with logs, metrics and traces. You&#39;ll also build a circuit breaker.</p>
+
+  <h2>1. The running example: PageTurn&#39;s Monday morning</h2>
+  <p>PageTurn is a reading app for schools with 200,000 students. Its backend is a handful of services:</p>
+  <ul>
+    <li><b>API</b>: the front door. The mobile and web apps call it.</li>
+    <li><b>Lesson service</b>: builds a reading lesson (text, questions, and read-aloud audio).</li>
+    <li><b>TTS vendor</b>: a third-party text-to-speech API that turns a passage into audio. Normally ~300&nbsp;ms.</li>
+    <li><b>Progress service</b> and <b>Postgres</b>: saves where each student is.</li>
+  </ul>
+  <p>Read-aloud is a nice feature. It is not the product. The product is &quot;a student can open a lesson and read&quot;. Keep that distinction in mind; it&#39;s the whole lesson.</p>
+
+  <h2>2. The incident</h2>
+  <p>Here is how a vendor&#39;s bad morning became PageTurn&#39;s outage. Every number is plausible for a system this size.</p>
+  <div class="trace"><b>Incident timeline: Monday, school starts at 08:00</b>
+    <ol>
+      <li><p><b>08:02</b> The TTS vendor has an internal problem. Their responses go from ~300&nbsp;ms to ~8 seconds, and some never return.</p></li>
+      <li><p><b>08:03</b> The lesson service calls TTS with its HTTP client&#39;s default timeout: 30 seconds. Each waiting call holds a worker slot. The lesson service has 10 instances × 200 concurrent requests = <b>2,000 slots</b>.</p></li>
+      <li><p><b>08:04</b> Traffic is ~400 lesson opens per second. Requests in flight = arrival rate × time each one takes (this is <b>Little&#39;s law</b>). Normally 400/s × 0.3&nbsp;s = 120 in flight. Now 400/s × 8&nbsp;s = <b>3,200</b>. All 2,000 slots fill. New requests queue, including ones that don&#39;t need audio at all.</p></li>
+      <li><p><b>08:05</b> The API gives up on the lesson service after 10 seconds and <b>retries 3 times</b>. The mobile app, seeing errors, <b>also retries 3 times</b>. The lesson service itself retries TTS 3 times. One student tap can now produce 4 × 4 × 4 = <b>64 calls</b> to TTS.</p></li>
+      <li><p><b>08:07</b> TTS traffic from PageTurn is ~25× normal. The vendor starts rejecting with 503 and 429. PageTurn retries those too, immediately.</p></li>
+      <li><p><b>08:08</b> Progress saves, the assignments list and login all slow down, because they share the API&#39;s and lesson service&#39;s pools with the stuck calls. Error rate across the whole app: <b>~60%</b>.</p></li>
+      <li><p><b>08:11</b> The on-call engineer is paged by an alert: &quot;error budget burning 30× faster than sustainable&quot;.</p></li>
+      <li><p><b>08:19</b> She opens a <b>trace</b> of one failed request and sees the fan-out: dozens of <code>tts.synthesize</code> spans under one tap, each ~8–30 seconds.</p></li>
+      <li><p><b>08:24</b> Mitigation: she flips the <code>read_aloud</code> feature flag off. Lessons now load without audio. Slots drain; error rate is back under 1% by 08:27.</p></li>
+      <li><p><b>08:41</b> The vendor recovers. Read-aloud is re-enabled at 08:50.</p></li>
+    </ol>
+  </div>
+  <p>Notice what happened. A <i>non-critical</i> dependency got <i>slow</i> (not even down), and the system amplified that into a total outage. Slow is worse than down: a dead dependency fails in milliseconds, a slow one holds your resources hostage. The retries, meant to help, multiplied the load on the struggling vendor. This pattern is called a <b>retry storm</b>, and the general failure is a <b>cascading failure</b>.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 250" width="100%" role="img" aria-label="Retry amplification: 1 tap becomes 4 app attempts, 16 API attempts and 64 TTS calls" style="font-family:inherit">
+      <defs><marker id="rel-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="20" y="95" width="110" height="60" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="75" y="120" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Mobile app</text>
+      <text x="75" y="140" text-anchor="middle" style="fill:var(--muted);font-size:12px">1 tap</text>
+      <rect x="190" y="95" width="110" height="60" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="245" y="120" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">API</text>
+      <text x="245" y="140" text-anchor="middle" style="fill:var(--muted);font-size:12px">4 requests</text>
+      <rect x="360" y="95" width="130" height="60" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="425" y="120" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Lesson service</text>
+      <text x="425" y="140" text-anchor="middle" style="fill:var(--muted);font-size:12px">16 requests</text>
+      <rect x="550" y="95" width="110" height="60" rx="10" style="fill:var(--bad-soft);stroke:var(--bad);stroke-width:2"/>
+      <text x="605" y="120" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">TTS vendor</text>
+      <text x="605" y="140" text-anchor="middle" style="fill:var(--bad);font-size:12px;font-weight:600">64 calls</text>
+      <line x1="130" y1="125" x2="186" y2="125" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rel-arr)"/>
+      <line x1="300" y1="125" x2="356" y2="125" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rel-arr)"/>
+      <line x1="490" y1="125" x2="546" y2="125" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rel-arr)"/>
+      <text x="158" y="85" text-anchor="middle" style="fill:currentColor;font-size:12px">×4</text>
+      <text x="328" y="85" text-anchor="middle" style="fill:currentColor;font-size:12px">×4</text>
+      <text x="518" y="85" text-anchor="middle" style="fill:currentColor;font-size:12px">×4</text>
+      <text x="340" y="200" text-anchor="middle" style="fill:currentColor;font-size:13px">Each layer: 1 try + 3 retries. Multiply down the stack: 4 × 4 × 4 = 64.</text>
+      <text x="340" y="222" text-anchor="middle" style="fill:var(--muted);font-size:12px">The vendor was struggling at 1× load. You sent it up to 64× per user.</text>
+    </svg>
+    <figcaption>Retry amplification. Retries at every layer multiply, and they arrive exactly when the bottom layer is weakest.</figcaption>
+  </figure>
+
+  <h2>3. Defense 1: timeouts that fit the dependency</h2>
+  <p>A <b>timeout</b> caps how long you wait. Without one, a stuck dependency holds a slot forever. Many HTTP clients and database drivers default to no timeout or to minutes, so &quot;we use the defaults&quot; usually means &quot;we wait far too long&quot;.</p>
+  <p>Pick timeouts from data: look at the dependency&#39;s latency distribution and set the timeout a bit above its p99 or p99.9 (the latency that 99% or 99.9% of calls beat). TTS p99 is ~600&nbsp;ms, so a 1-second timeout fails the 1-in-1,000 slow calls fast, instead of letting 8-second calls pile up.</p>
+  <pre><code class="lang-js">async function synthesize(text, { timeoutMs = 1000 } = {}) {
+  // AbortSignal.timeout cancels the request (and frees the socket) after timeoutMs.
+  const res = await fetch(TTS_URL, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error('tts ' + res.status);
+  return res.arrayBuffer();
+}</code></pre>
+  <p>Better still is a <b>deadline</b> that travels with the request. The app says &quot;I&#39;ll wait 5 seconds total&quot;. The API, after spending 200&nbsp;ms, tells the lesson service &quot;you have 4.8 seconds&quot;, and so on down. A layer with no time left doesn&#39;t start work nobody will wait for. gRPC propagates deadlines automatically; with HTTP you pass a header.</p>
+  <p>Back to Little&#39;s law: with a 1-second TTS timeout, the worst case in flight is 400/s × 1&nbsp;s = 400, comfortably under 2,000 slots. Same incident, no outage.</p>
+
+  <h2>4. Defense 2: retries with discipline</h2>
+  <p>Retries are good: most network blips are transient, and one retry hides them from users. Retries are also how you turned 1× load into 64×. The rules that keep the good and drop the bad:</p>
+  <ol>
+    <li><b>Retry at one layer only</b>, usually the one closest to the failing dependency (or the client at the edge). Other layers fail fast and pass the error up.</li>
+    <li><b>Only retry what is safe and transient.</b> Timeouts, connection resets, 503, 429 (honoring <code>Retry-After</code>). Never 400 or 404: they will fail the same way again. Only retry writes that are idempotent (see idempotency keys in the queues lesson).</li>
+    <li><b>Back off exponentially, with jitter.</b> Wait 100&nbsp;ms, then 200, then 400... capped, and pick a random point in each window. Without jitter, thousands of clients that failed together retry together, in synchronized waves.</li>
+    <li><b>Cap attempts</b> (2–3 total is plenty for interactive requests) and <b>use a retry budget</b>: retries may add at most ~10% to normal traffic. When the budget is spent, stop retrying. Google&#39;s SRE practices and gRPC&#39;s retry throttling both work this way.</li>
+  </ol>
+  <pre><code class="lang-js">// Full jitter: random delay between 0 and the exponential cap.
+function backoffMs(attempt, random, baseMs = 100, capMs = 2000) {
+  const ceiling = Math.min(capMs, baseMs * 2 ** attempt); // 100, 200, 400, 800, 1600, 2000...
+  return Math.floor(random() * ceiling);
+}</code></pre>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Adding &quot;retry 3 times&quot; to every client in every service because each one, viewed alone, looks more robust. Retries compose by <i>multiplication</i>. Three layers of 3 retries is 64× amplification, delivered to the one component that is already failing. Retry in one place, with backoff, jitter and a budget, and make every other layer fail fast.</p></div>
+
+  <h2>5. Defense 3: circuit breakers</h2>
+  <p>Even with good timeouts, if TTS is failing 100% of the time, every request still waits a full second to learn what the last thousand requests already learned. A <b>circuit breaker</b> remembers. It wraps calls to a dependency and has three states:</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 230" width="100%" role="img" aria-label="Circuit breaker state machine: CLOSED to OPEN on too many failures, OPEN to HALF_OPEN after cooldown, HALF_OPEN to CLOSED on success or back to OPEN on failure" style="font-family:inherit">
+      <defs><marker id="rel-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="30" y="80" width="150" height="70" rx="12" style="fill:var(--ok-soft);stroke:var(--ok);stroke-width:2"/>
+      <text x="105" y="110" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">CLOSED</text>
+      <text x="105" y="130" text-anchor="middle" style="fill:var(--muted);font-size:12px">calls go through</text>
+      <rect x="500" y="80" width="150" height="70" rx="12" style="fill:var(--bad-soft);stroke:var(--bad);stroke-width:2"/>
+      <text x="575" y="110" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">OPEN</text>
+      <text x="575" y="130" text-anchor="middle" style="fill:var(--muted);font-size:12px">fail fast, no calls</text>
+      <rect x="265" y="160" width="150" height="62" rx="12" style="fill:var(--warn-soft);stroke:var(--warn);stroke-width:2"/>
+      <text x="340" y="186" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">HALF_OPEN</text>
+      <text x="340" y="205" text-anchor="middle" style="fill:var(--muted);font-size:12px">one trial call</text>
+      <path d="M180,95 C300,40 380,40 496,95" style="fill:none;stroke:var(--muted);stroke-width:1.5" marker-end="url(#rel-arr2)"/>
+      <text x="340" y="38" text-anchor="middle" style="fill:currentColor;font-size:12px">N consecutive failures (or failure rate &gt; X%)</text>
+      <path d="M560,150 C540,190 470,195 419,192" style="fill:none;stroke:var(--muted);stroke-width:1.5" marker-end="url(#rel-arr2)"/>
+      <text x="560" y="210" style="fill:currentColor;font-size:12px">cooldown passed</text>
+      <path d="M265,192 C190,195 120,185 105,154" style="fill:none;stroke:var(--ok);stroke-width:1.5" marker-end="url(#rel-arr2)"/>
+      <text x="120" y="210" text-anchor="middle" style="fill:var(--ok);font-size:12px">trial succeeds</text>
+      <path d="M415,170 C450,150 480,140 498,134" style="fill:none;stroke:var(--bad);stroke-width:1.5" marker-end="url(#rel-arr2)"/>
+      <text x="432" y="146" text-anchor="middle" style="fill:var(--bad);font-size:12px">fails</text>
+    </svg>
+    <figcaption>A circuit breaker. While OPEN, callers get an instant error (and a fallback) instead of waiting on a dependency that is known to be sick.</figcaption>
+  </figure>
+  <div class="trace"><b>Trace: the breaker during the incident (threshold 5 failures, cooldown 10 s)</b>
+    <ol>
+      <li><p><b>08:02:00.0</b> TTS starts timing out. Calls 1–5 each wait 1&nbsp;s and fail. Breaker: CLOSED, failures 5 → <b>OPEN</b> at 08:02:01.</p></li>
+      <li><p><b>08:02:01 to 08:02:11</b> ~4,000 lesson opens arrive. Each TTS call fails in under 1&nbsp;ms with <code>CIRCUIT_OPEN</code>; the lesson service catches it and returns the lesson <i>without audio</i>. The vendor gets zero traffic from you, which helps it recover.</p></li>
+      <li><p><b>08:02:11</b> Cooldown over: <b>HALF_OPEN</b>. One trial call goes through and times out. Back to OPEN for another 10&nbsp;s.</p></li>
+      <li><p><b>08:41:05</b> The vendor has recovered. A trial call succeeds in 280&nbsp;ms. Breaker: <b>CLOSED</b>. Audio is back, nobody touched a feature flag.</p></li>
+    </ol>
+  </div>
+  <p>Production breakers usually trip on a <b>failure rate</b> over a sliding window (e.g. more than 50% of the last 100 calls, minimum 20 calls) and count slow calls as failures. Libraries: Resilience4j (Java), Polly (.NET), opossum (Node); service meshes like Envoy do similar things at the network layer.</p>
+
+  <h2>6. Defense 4: bulkheads, degradation and load shedding</h2>
+  <p><b>Bulkheads</b>, named after the walls that stop one flooded compartment from sinking a ship, give each dependency its own limited pool. The lesson service gets at most 100 concurrent TTS calls per instance; the other 100 slots are reserved for everything else. When TTS floods, only the TTS compartment fills. Progress saves and logins keep working.</p>
+  <p><b>Graceful degradation</b> means deciding in advance what a degraded but useful answer looks like:</p>
+  <table class="tbl">
+    <thead><tr><th>Dependency down</th><th>Degraded behavior</th><th>Users notice?</th></tr></thead>
+    <tbody>
+      <tr><td>TTS vendor</td><td>Lesson without read-aloud; &quot;Audio is unavailable right now&quot;</td><td>A little</td></tr>
+      <tr><td>Recommendations</td><td>Show a static &quot;popular this week&quot; list from cache</td><td>Barely</td></tr>
+      <tr><td>Progress service</td><td>Save progress on the device, sync later</td><td>No</td></tr>
+      <tr><td>Postgres primary</td><td>Read-only mode: students can read, not submit</td><td>Yes, but they can still read</td></tr>
+    </tbody>
+  </table>
+  <p><b>Load shedding</b> is the last line: when a server is over capacity, it rejects some requests immediately (HTTP 503 with <code>Retry-After</code>) rather than accepting everything and serving everyone slowly. Shed the least important traffic first (analytics pings before lesson opens), and shed at the edge, before work is done.</p>
+  <p>Each one is a trade-off. Bulkheads give you isolation at the cost of some idle capacity in each pool; choose them for any dependency that can be slow. Degradation gives you uptime at the cost of designing and testing a second code path; choose it for non-core features. Load shedding gives you a fast &quot;no&quot; instead of a slow death at the cost of some users seeing errors; choose it at every entry point.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;Every remote call gets a timeout sized from the dependency&#39;s p99, and deadlines propagate. Retries happen at one layer only, with exponential backoff, jitter and a retry budget. Non-critical dependencies like text-to-speech sit behind a circuit breaker and their own bulkhead, with a defined fallback, so a slow vendor degrades one feature instead of the whole product. At the edge we shed load with 503 and Retry-After before we accept more than we can serve.&quot;</p></div>
+
+  <h2>7. SLIs, SLOs and error budgets</h2>
+  <p>&quot;Is PageTurn reliable?&quot; needs a number, and the number should measure what students feel.</p>
+  <ul>
+    <li>An <b>SLI</b> (service level indicator) is a measurement: <i>the fraction of lesson-open requests that succeed in under 1 second</i>, measured at the load balancer.</li>
+    <li>An <b>SLO</b> (service level objective) is the target for it: <i>99.9% over a rolling 30 days</i>.</li>
+    <li>The <b>error budget</b> is what&#39;s left: 100% − 99.9% = 0.1% of requests may be slow or failed.</li>
+    <li>An <b>SLA</b> (agreement) is a contract with consequences (credits) and is set looser than the SLO, so you hear the alarm before you owe money.</li>
+  </ul>
+  <div class="trace"><b>Worked numbers: PageTurn&#39;s budget</b>
+    <ol>
+      <li><p>PageTurn serves ~40 million qualifying requests in 30 days. Budget = 0.1% × 40M = <b>40,000 bad requests</b>. In time terms, 99.9% of 30 days is about <b>43 minutes</b> of full outage.</p></li>
+      <li><p>The incident: from 08:04 to 08:27 (23 minutes), traffic averaged ~300 requests/s with ~55% failing. 23 × 60 × 300 × 0.55 ≈ <b>228,000 bad requests</b>.</p></li>
+      <li><p>That is ~5.7× the whole month&#39;s budget in 23 minutes. Per the team&#39;s error budget policy, feature launches pause and the next sprint goes to the postmortem actions (timeouts, single-layer retries, breaker and bulkhead around TTS).</p></li>
+      <li><p>Alerting on burn rate: spending budget at exactly 1× would use it all in 30 days. A common page rule (from Google&#39;s SRE workbook) is a burn rate above ~14× sustained over an hour, confirmed over the last 5 minutes, meaning 2% of the month&#39;s budget is gone in that hour. The 08:11 page fired on a much faster burn.</p></li>
+    </ol>
+  </div>
+  <p>The error budget turns arguments into arithmetic. Budget left? Ship faster, take risks. Budget gone? Slow down and fix reliability. A product leader and an engineering lead can agree on that rule in advance, which is the real point.</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Setting the SLO to 100% (or 99.999% for a product that doesn&#39;t need it). Every extra nine roughly multiplies cost and slows shipping, and your users&#39; own Wi-Fi in a classroom is far less reliable than that. Pick the lowest target users won&#39;t notice, and measure it where users are (the load balancer or the client), not CPU on one server.</p></div>
+
+  <h2>8. Observability: logs, metrics, traces</h2>
+  <p><b>Observability</b> is how well you can answer new questions about your system from the outside, without shipping new code. Three signal types do most of the work:</p>
+  <table class="tbl">
+    <thead><tr><th>Signal</th><th>What it is</th><th>Answers</th><th>Cost / limit</th></tr></thead>
+    <tbody>
+      <tr><td>Metrics</td><td>Numbers aggregated over time: request rate, error rate, latency percentiles (the <b>RED</b> metrics: Rate, Errors, Duration)</td><td>&quot;Is something wrong, and since when?&quot;</td><td>Cheap; loses per-request detail; beware high-cardinality labels like student id</td></tr>
+      <tr><td>Traces</td><td>One request&#39;s path across services as a tree of timed <b>spans</b>, linked by a trace id passed in a header (W3C <code>traceparent</code>; OpenTelemetry is the standard SDK)</td><td>&quot;Where did this request spend its time?&quot;</td><td>Usually sampled (e.g. 1–10%, plus all errors)</td></tr>
+      <tr><td>Logs</td><td>Timestamped events, ideally structured JSON with the trace id, tenant and request id</td><td>&quot;What exactly happened in this one case?&quot;</td><td>Expensive at volume; keep personal data out</td></tr>
+    </tbody>
+  </table>
+  <div class="trace"><b>Trace: debugging the 08:11 page</b>
+    <ol>
+      <li><p><b>Metrics</b>: the API dashboard shows error rate 0.2% → 60% at 08:05, and p99 latency 400&nbsp;ms → 30&nbsp;s. Every endpoint is affected, even <code>GET /assignments</code>, which doesn&#39;t touch TTS. That points to shared resources (pools), not one broken endpoint.</p></li>
+      <li><p><b>Traces</b>: filter traces with errors since 08:05. One failed lesson open shows <code>api</code> 30.1&nbsp;s → <code>lesson-service</code> 4 attempts → each with 4 <code>tts.synthesize</code> spans of 8&nbsp;s or 30&nbsp;s. The fan-out is visible in one picture.</p></li>
+      <li><p><b>Logs</b>: search by that trace id: <code>{&quot;level&quot;:&quot;warn&quot;,&quot;msg&quot;:&quot;tts retry&quot;,&quot;attempt&quot;:3,&quot;status&quot;:503,&quot;trace_id&quot;:&quot;4bf9...&quot;}</code>. Confirms 503s from the vendor and that we are retrying them immediately.</p></li>
+      <li><p><b>Action</b>: turn off <code>read_aloud</code> (mitigate first, root-cause later). Then write a blameless postmortem: timeline, impact (228k failed requests), what made it worse (default timeouts, retries at 3 layers, shared pools), and owned action items.</p></li>
+    </ol>
+  </div>
+  <p>Metrics tell you <i>that</i> something is wrong, traces tell you <i>where</i>, logs tell you <i>why</i>. You want all three connected by the same trace id.</p>
+
+  <h2>9. Lab: build the circuit breaker</h2>
+  <p>Build the state machine from section 5 with an injected clock, including the subtle part: only one trial call while half-open.</p>
+  <div data-lab="circuit-breaker"></div>
+
+  <div data-quiz='[
+    {"q":"A non-critical vendor slows from 300 ms to 8 s. Why can that take down unrelated endpoints?","o":["Slow responses use more network bandwidth","Waiting requests hold shared worker slots and connections, so in-flight work grows with latency until pools are exhausted for everyone","The vendor sends errors to other endpoints","Load balancers stop routing when any dependency is slow"],"a":1,"why":"Little&#39;s law: in flight = rate times latency. 400 per second times 8 s is 3,200 in flight, more than the 2,000 shared slots, so unrelated requests queue and time out too. Timeouts and bulkheads stop this."},
+    {"q":"The app, the API and the lesson service each retry up to 3 times (4 attempts). How many calls can one user tap cause at the bottom dependency?","o":["4","12","16","64"],"a":3,"why":"Retries multiply across layers: 4 times 4 times 4 is 64. Retry at one layer only."},
+    {"q":"Which retry policy is best for an interactive request to a flaky dependency?","o":["Retry immediately up to 10 times on any error","Retry at every layer so each one is robust","Retry transient errors (timeouts, 503, 429) at one layer, 2 to 3 attempts, exponential backoff with jitter, within a retry budget","Never retry; retries cause storms"],"a":2,"why":"One retry hides most blips. Backoff with jitter avoids synchronized waves, the budget caps extra load, and 4xx errors like 400 are not retried because they will fail again."},
+    {"q":"A circuit breaker is OPEN and its cooldown has just passed. What should happen next?","o":["Close the circuit and send all traffic","Stay open until an engineer resets it","Go half-open and let a single trial call through; close on success, reopen on failure","Send half the traffic as a test"],"a":2,"why":"Half-open probes recovery with one request, so a recovering vendor is not instantly stampeded by full traffic."},
+    {"q":"PageTurn has an SLO of 99.9% of requests succeeding in under 1 s, over 30 days, with 40 million requests. What is the error budget?","o":["40 bad requests","4,000 bad requests","40,000 bad requests","400,000 bad requests"],"a":2,"why":"0.1% of 40,000,000 is 40,000. In time terms, 99.9% of 30 days allows about 43 minutes of full outage."},
+    {"q":"Error rate jumped on every endpoint at 08:05. Which signal shows you WHERE one failing request spent its 30 seconds?","o":["A CPU metric","A distributed trace","The SLA","An uptime check"],"a":1,"why":"A trace shows one request as a tree of timed spans across services, which is exactly where the 64-call fan-out became visible. Metrics said that it was broken; logs then explained why."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Slow is worse than down: in-flight work = rate × latency, so a slow dependency exhausts shared pools and takes unrelated features with it.</li>
+    <li>Timeouts sized from real latency (and propagated deadlines) cap the damage; default timeouts are usually far too long.</li>
+    <li>Retry at one layer, only transient errors, with exponential backoff, jitter and a retry budget. Retries at every layer multiply into retry storms.</li>
+    <li>Circuit breakers fail fast and probe recovery; bulkheads isolate pools; graceful degradation and load shedding keep the core product alive.</li>
+    <li>SLI = what you measure, SLO = the target, error budget = the allowed failure. Alert on burn rate, and debug with metrics (that), traces (where) and logs (why).</li>
+  </ul>
+</template>

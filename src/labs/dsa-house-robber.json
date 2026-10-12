@@ -1,0 +1,40 @@
+{
+  "id": "dsa-house-robber",
+  "title": "House Robber",
+  "minutes": 20,
+  "prompt": "<p>Houses along a street hold some money each: <code>houses[i]</code>. You want the <b>maximum total</b> you can collect, but you can never take from <b>two adjacent houses</b> (the alarms are linked).</p>\n<p>Write <code>rob(houses)</code>.</p>\n<pre><code>rob([1, 2, 3, 1]);      // 4   (house 0 + house 2 = 1 + 3)\nrob([2, 7, 9, 3, 1]);   // 12  (2 + 9 + 1)\nrob([2, 1, 1, 2]);      // 4   (house 0 + house 3: skipping two in a row is allowed)</code></pre>\n<p>Constraints: 0 to 100 houses, each holding 0 to 400. An empty street gives 0.</p>\n<p>(Same shape, friendlier story: a reading tutor can take at most one session a day, cannot work two days in a row, and each day pays a different amount.)</p>",
+  "starter": "function rob(houses) {\n  // TODO: for each house decide: take it (plus best up to two houses back)\n  // or skip it (best up to the previous house).\n  return 0;\n}",
+  "solution": "function rob(houses) {\n  let bestTwoBack = 0;                     // best total up to house i - 2\n  let bestOneBack = 0;                     // best total up to house i - 1\n  for (const money of houses) {\n    const take = bestTwoBack + money;      // rob this house: previous one must be skipped\n    const skip = bestOneBack;              // skip this house: keep the best so far\n    const best = Math.max(take, skip);\n    bestTwoBack = bestOneBack;\n    bestOneBack = best;\n  }\n  return bestOneBack;\n}",
+  "tests": [
+    {
+      "name": "examples from the prompt",
+      "code": "assertEqual(rob([1,2,3,1]), 4);\nassertEqual(rob([2,7,9,3,1]), 12);"
+    },
+    {
+      "name": "skipping two houses in a row can be best (greedy every-other fails)",
+      "code": "assertEqual(rob([2,1,1,2]), 4);"
+    },
+    {
+      "name": "empty street and a single house",
+      "code": "assertEqual(rob([]), 0);\nassertEqual(rob([5]), 5);"
+    },
+    {
+      "name": "two houses: take the richer one",
+      "code": "assertEqual(rob([3, 10]), 10);\nassertEqual(rob([10, 3]), 10);"
+    },
+    {
+      "name": "zeros and equal values",
+      "code": "assertEqual(rob([0,0,0]), 0);\nassertEqual(rob([4,4,4,4,4]), 12);"
+    },
+    {
+      "name": "100 houses (needs DP, not plain recursion)",
+      "code": "const houses = [];\nfor (let i = 0; i < 100; i++) houses.push((i * 37) % 11);\nassertEqual(rob(houses), 306);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: &quot;maximum total&quot; with a <b>choice at each item</b> (take or skip) and a rule that couples neighbours. Max/min over choices that repeat is DP.</p>",
+    "<p>Idea: let <code>best(i)</code> be the most you can collect from houses 0..i. For house i you either skip it (<code>best(i-1)</code>) or take it (<code>houses[i] + best(i-2)</code>). So <code>best(i) = max(best(i-1), houses[i] + best(i-2))</code>.</p>",
+    "<p>Code shape: you only ever look back two places, so keep two variables: <code>let bestTwoBack = 0, bestOneBack = 0; for (const money of houses) { const best = Math.max(bestOneBack, bestTwoBack + money); bestTwoBack = bestOneBack; bestOneBack = best; } return bestOneBack;</code></p>"
+  ],
+  "explain": "<p><b>Time O(n)</b>, <b>space O(1)</b>. The plain recursion tries every take/skip combination, about O(1.6<sup>n</sup>) calls, because <code>best(i-2)</code> is recomputed under both branches.</p><p><b>Say it:</b> &quot;At each house I either take it, plus the best up to two houses back, or skip it and keep the best up to the previous house. That recurrence only looks two steps back, so I can do it in one pass with two variables: O(n) time, O(1) space.&quot;</p>"
+}

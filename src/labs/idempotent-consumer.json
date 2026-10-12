@@ -1,0 +1,44 @@
+{
+  "id": "idempotent-consumer",
+  "title": "An idempotent queue consumer",
+  "minutes": 25,
+  "prompt": "<p>When a student finishes a book, the app publishes a <code>book.completed</code> message, and a worker awards 10 XP. The queue delivers <b>at least once</b>: after a timeout or a worker crash the same message can arrive again, possibly at a second worker. Without protection, students get 20 or 30 XP. Wrap the handler so its effect happens <b>once per idempotency key</b>.</p>\n<p>API: <code>new IdempotentConsumer(handler, store = new Map())</code>. The <code>store</code> can be shared between consumer instances (think: a Redis or a database table both workers can see).</p>\n<p><code>async handle(msg)</code> where <code>msg = { id, idempotencyKey?, body }</code>. The dedupe key is <code>msg.idempotencyKey</code> if present, otherwise <code>msg.id</code>. Returns:</p>\n<ul>\n<li><code>{ status: &#39;processed&#39;, result }</code> the first time, after <code>await handler(msg)</code> succeeds.</li>\n<li><code>{ status: &#39;duplicate&#39;, result }</code> for a key already processed, returning the <b>stored</b> result without calling the handler.</li>\n<li><code>{ status: &#39;in_progress&#39; }</code> if another delivery with the same key is being handled right now (don&#39;t run the handler twice in parallel).</li>\n<li>If the handler throws, rethrow the error and <b>forget</b> the key so a redelivery can try again.</li>\n</ul>",
+  "starter": "class IdempotentConsumer {\n  constructor(handler, store = new Map()) {\n    this.handler = handler;\n    this.store = store; // key -> { state: 'in_progress' } | { state: 'done', result }\n  }\n\n  async handle(msg) {\n    // TODO: dedupe by idempotency key\n    const result = await this.handler(msg);\n    return { status: 'processed', result };\n  }\n}",
+  "solution": "class IdempotentConsumer {\n  constructor(handler, store = new Map()) {\n    this.handler = handler;\n    this.store = store; // key -> { state: 'in_progress' } | { state: 'done', result }\n  }\n\n  async handle(msg) {\n    const key = msg.idempotencyKey ?? msg.id;\n    const seen = this.store.get(key);\n    if (seen && seen.state === 'done') return { status: 'duplicate', result: seen.result };\n    if (seen && seen.state === 'in_progress') return { status: 'in_progress' };\n\n    // Claim the key BEFORE awaiting, so a concurrent duplicate sees it.\n    this.store.set(key, { state: 'in_progress' });\n    try {\n      const result = await this.handler(msg);\n      this.store.set(key, { state: 'done', result });\n      return { status: 'processed', result };\n    } catch (err) {\n      this.store.delete(key); // let a redelivery retry\n      throw err;\n    }\n  }\n}",
+  "tests": [
+    {
+      "name": "processes a new message and returns the handler result",
+      "code": "let xp = 0;\nconst c = new IdempotentConsumer(async (m) => { xp += m.body.xp; return { total: xp }; });\nconst r = await c.handle({ id: 'm1', body: { student: 's42', xp: 10 } });\nassertEqual(r, { status: 'processed', result: { total: 10 } });\nassertEqual(xp, 10);"
+    },
+    {
+      "name": "a redelivered message is not applied twice",
+      "code": "let xp = 0, calls = 0;\nconst c = new IdempotentConsumer(async (m) => { calls++; xp += m.body.xp; return xp; });\nconst msg = { id: 'm1', body: { xp: 10 } };\nawait c.handle(msg);\nconst r2 = await c.handle(msg);\nconst r3 = await c.handle(msg);\nassertEqual(r2, { status: 'duplicate', result: 10 });\nassertEqual(r3.status, 'duplicate');\nassertEqual(calls, 1);\nassertEqual(xp, 10);"
+    },
+    {
+      "name": "different messages are each processed",
+      "code": "let xp = 0;\nconst c = new IdempotentConsumer(async (m) => { xp += m.body.xp; return xp; });\nawait c.handle({ id: 'm1', body: { xp: 10 } });\nawait c.handle({ id: 'm2', body: { xp: 5 } });\nassertEqual(xp, 15);"
+    },
+    {
+      "name": "dedupes on idempotencyKey when present, not on message id",
+      "code": "let calls = 0;\nconst c = new IdempotentConsumer(async () => { calls++; return 'ok'; });\nawait c.handle({ id: 'm1', idempotencyKey: 'complete:s42:book7', body: {} });\nconst r = await c.handle({ id: 'm2', idempotencyKey: 'complete:s42:book7', body: {} });\nassertEqual(r.status, 'duplicate', 'same business event re-published with a new message id');\nassertEqual(calls, 1);"
+    },
+    {
+      "name": "a failed attempt can be retried by redelivery",
+      "code": "let calls = 0;\nconst c = new IdempotentConsumer(async () => { calls++; if (calls === 1) throw new Error('db timeout'); return 'saved'; });\nlet threw = false;\ntry { await c.handle({ id: 'm1', body: {} }); } catch (e) { threw = e.message === 'db timeout'; }\nassert(threw, 'handler error should be rethrown');\nconst r = await c.handle({ id: 'm1', body: {} });\nassertEqual(r, { status: 'processed', result: 'saved' });\nassertEqual(calls, 2);"
+    },
+    {
+      "name": "concurrent duplicate delivery runs the handler once",
+      "code": "let calls = 0, release;\nconst gate = new Promise(r => { release = r; });\nconst c = new IdempotentConsumer(async () => { calls++; await gate; return 'done'; });\nconst p1 = c.handle({ id: 'm1', body: {} });\nconst r2 = await c.handle({ id: 'm1', body: {} });\nassertEqual(r2, { status: 'in_progress' });\nrelease();\nassertEqual(await p1, { status: 'processed', result: 'done' });\nassertEqual(calls, 1);"
+    },
+    {
+      "name": "two workers sharing a store process a message once",
+      "code": "let xp = 0;\nconst store = new Map();\nconst handler = async (m) => { xp += m.body.xp; return xp; };\nconst workerA = new IdempotentConsumer(handler, store);\nconst workerB = new IdempotentConsumer(handler, store);\nawait workerA.handle({ id: 'm1', body: { xp: 10 } });\nconst r = await workerB.handle({ id: 'm1', body: { xp: 10 } });\nassertEqual(r.status, 'duplicate');\nassertEqual(xp, 10);"
+    }
+  ],
+  "hints": [
+    "<p>Compute the key first: <code>const key = msg.idempotencyKey ?? msg.id</code>. Then look it up in <code>this.store</code> before calling the handler.</p>",
+    "<p>To stop a parallel duplicate, write <code>{ state: &#39;in_progress&#39; }</code> to the store <i>before</i> you <code>await</code> the handler. Anything that runs during the await will see that marker.</p>",
+    "<p>Wrap the handler call in <code>try/catch</code>: on success store <code>{ state: &#39;done&#39;, result }</code>; on failure <code>this.store.delete(key)</code> and rethrow.</p>"
+  ],
+  "explain": "<p>Queues like SQS, RabbitMQ and Kafka (by default) give you <b>at-least-once</b> delivery, so &quot;exactly once&quot; is something the consumer builds: <i>at-least-once delivery + idempotent processing = effectively once</i>. In production the store is a database table with a unique constraint on the key (ideally written in the <b>same transaction</b> as the XP update, so the two can never disagree), or a Redis <code>SET key NX EX 86400</code>. The in-progress marker needs a timeout too, or a worker that crashes mid-handler would block the key forever.</p>\n<p><b>In an interview:</b> &quot;Delivery is at-least-once, so every consumer is idempotent. I dedupe on a business key like <code>complete:student:book</code>, recorded in the same transaction as the side effect, and I return the stored result for duplicates.&quot;</p>"
+}

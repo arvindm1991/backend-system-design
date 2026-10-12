@@ -1,0 +1,40 @@
+{
+  "id": "dsa-level-order",
+  "title": "Binary Tree Level Order Traversal",
+  "minutes": 20,
+  "prompt": "<p>Return the values of a binary tree <b>level by level</b>, left to right, as an array of arrays.</p>\n<p>Think of a district org chart: level 0 is the district, level 1 its schools, level 2 their classes. A report that lists \"everyone at each level\" is exactly this.</p>\n<p>Write <code>levelOrder(root)</code>. Helpers <code>TreeNode</code>, <code>fromArray</code>, <code>toArray</code> are at the top; keep them.</p>\n<ul>\n<li><code>levelOrder(fromArray([3, 9, 20, null, null, 15, 7]))</code> returns <code>[[3], [9, 20], [15, 7]]</code></li>\n<li><code>levelOrder(fromArray([1]))</code> returns <code>[[1]]</code></li>\n<li><code>levelOrder(null)</code> returns <code>[]</code></li>\n</ul>\n<p>Constraints: 0 to 2,000 nodes. Target: O(n).</p>",
+  "starter": "// ---- Helpers: keep these. The tests use TreeNode and fromArray. ----\nclass TreeNode {\n  constructor(val, left = null, right = null) {\n    this.val = val;\n    this.left = left;\n    this.right = right;\n  }\n}\n\n// fromArray([3, 9, 20, null, null, 15, 7]) builds a tree from level order (LeetCode style).\n// null means \"no child here\". Returns the root (null for []).\nfunction fromArray(values) {\n  if (values.length === 0 || values[0] === null) return null;\n  const root = new TreeNode(values[0]);\n  const queue = [root];\n  let front = 0;\n  let i = 1;\n  while (i < values.length) {\n    const parent = queue[front];\n    front++;\n    if (i < values.length && values[i] !== null) {\n      parent.left = new TreeNode(values[i]);\n      queue.push(parent.left);\n    }\n    i++;\n    if (i < values.length && values[i] !== null) {\n      parent.right = new TreeNode(values[i]);\n      queue.push(parent.right);\n    }\n    i++;\n  }\n  return root;\n}\n\n// toArray(root) is the reverse: level order with nulls for gaps, trailing nulls removed.\nfunction toArray(root) {\n  const values = [];\n  const queue = [root];\n  let front = 0;\n  while (front < queue.length) {\n    const node = queue[front];\n    front++;\n    if (node === null) {\n      values.push(null);\n      continue;\n    }\n    values.push(node.val);\n    queue.push(node.left, node.right);\n  }\n  while (values.length > 0 && values[values.length - 1] === null) values.pop();\n  return values;\n}\n// ---- End of helpers ----\n\nfunction levelOrder(root) {\n  // TODO: BFS with a queue. Process one whole level per round.\n  return [];\n}",
+  "solution": "// ---- Helpers: keep these. The tests use TreeNode and fromArray. ----\nclass TreeNode {\n  constructor(val, left = null, right = null) {\n    this.val = val;\n    this.left = left;\n    this.right = right;\n  }\n}\n\n// fromArray([3, 9, 20, null, null, 15, 7]) builds a tree from level order (LeetCode style).\n// null means \"no child here\". Returns the root (null for []).\nfunction fromArray(values) {\n  if (values.length === 0 || values[0] === null) return null;\n  const root = new TreeNode(values[0]);\n  const queue = [root];\n  let front = 0;\n  let i = 1;\n  while (i < values.length) {\n    const parent = queue[front];\n    front++;\n    if (i < values.length && values[i] !== null) {\n      parent.left = new TreeNode(values[i]);\n      queue.push(parent.left);\n    }\n    i++;\n    if (i < values.length && values[i] !== null) {\n      parent.right = new TreeNode(values[i]);\n      queue.push(parent.right);\n    }\n    i++;\n  }\n  return root;\n}\n\n// toArray(root) is the reverse: level order with nulls for gaps, trailing nulls removed.\nfunction toArray(root) {\n  const values = [];\n  const queue = [root];\n  let front = 0;\n  while (front < queue.length) {\n    const node = queue[front];\n    front++;\n    if (node === null) {\n      values.push(null);\n      continue;\n    }\n    values.push(node.val);\n    queue.push(node.left, node.right);\n  }\n  while (values.length > 0 && values[values.length - 1] === null) values.pop();\n  return values;\n}\n// ---- End of helpers ----\n\nfunction levelOrder(root) {\n  const levels = [];\n  if (root === null) return levels;\n  let queue = [root];\n  while (queue.length > 0) {\n    const values = [];\n    const nextQueue = [];\n    for (const node of queue) {          // everything in queue is on the same level\n      values.push(node.val);\n      if (node.left !== null) nextQueue.push(node.left);\n      if (node.right !== null) nextQueue.push(node.right);\n    }\n    levels.push(values);\n    queue = nextQueue;\n  }\n  return levels;\n}",
+  "tests": [
+    {
+      "name": "classic example",
+      "code": "assertEqual(levelOrder(fromArray([3, 9, 20, null, null, 15, 7])), [[3], [9, 20], [15, 7]]);"
+    },
+    {
+      "name": "single node",
+      "code": "assertEqual(levelOrder(fromArray([1])), [[1]]);"
+    },
+    {
+      "name": "empty tree",
+      "code": "assertEqual(levelOrder(null), []);"
+    },
+    {
+      "name": "full tree of three levels",
+      "code": "assertEqual(levelOrder(fromArray([1, 2, 3, 4, 5, 6, 7])), [[1], [2, 3], [4, 5, 6, 7]]);"
+    },
+    {
+      "name": "gaps: left to right order within a level",
+      "code": "assertEqual(levelOrder(fromArray([1, 2, 3, null, 4, null, 5])), [[1], [2, 3], [4, 5]]);"
+    },
+    {
+      "name": "duplicates and negatives",
+      "code": "assertEqual(levelOrder(fromArray([0, -1, -1, 2, null, null, 2])), [[0], [-1, -1], [2, 2]]);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: \"level by level\", \"minimum depth\", \"nearest\", \"row by row\" = <b>BFS with a queue</b>, not DFS.</p>",
+    "<p>Keep a queue holding exactly one level. Each round: read all those nodes' values into one array, and collect their children into the next level's queue. Stop when the queue is empty.</p>",
+    "<p>Shape:</p><pre><code>let queue = [root];\nwhile (queue.length &gt; 0) {\n  const values = [], nextQueue = [];\n  for (const node of queue) {\n    values.push(node.val);\n    if (node.left) nextQueue.push(node.left);\n    if (node.right) nextQueue.push(node.right);\n  }\n  levels.push(values);\n  queue = nextQueue;\n}</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n)</b>: each node enters the queue once. <b>Space O(w)</b> where w is the widest level (up to about n/2 for a full tree). Swapping in a fresh array per level avoids <code>queue.shift()</code>, which is O(n) per call on a JS array.</p>\n<p><b>Say it:</b> \"Level by level means BFS. I keep one level in a queue, read its values, and build the next level from the children. O(n) time, O(width) space.\"</p>"
+}

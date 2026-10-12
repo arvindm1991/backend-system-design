@@ -1,0 +1,187 @@
+<template id="tpl-sd-framework" data-title="The system design interview" data-part="Part 4 · System design" data-order="150">
+  <h1>The system design interview</h1>
+  <p class="lede">A system design interview is 45 minutes of designing something big out loud, with someone who keeps asking "why?". By the end of this lesson you will have a six-step routine you can run on any prompt, a minute-by-minute plan for the 45 minutes, a feel for what the interviewer is actually writing down, and a way to lead with your product and leadership strengths without looking like you can't go deep.</p>
+
+  <h2>1. What the interview really is</h2>
+  <p>The interviewer says: "Design a leaderboard for a reading app. Students in a district earn points for minutes read." Then they go quiet.</p>
+  <p>There is no correct answer they are waiting for. They want to watch you do the job of a senior engineer or engineering leader in a design review: turn a vague ask into a crisp problem, make reasonable decisions quickly, notice where the hard parts are, and explain what each choice costs. The diagram you end with matters less than the path you took to it.</p>
+  <p>Two words you will hear all course:</p>
+  <ul>
+    <li><b>Functional requirements</b>: what the system does ("a student sees their rank in their class").</li>
+    <li><b>Non-functional requirements</b>: how well it does it: latency (how long one request takes), availability (what fraction of the time it works), consistency (whether everyone sees the same data at the same moment), cost, privacy.</li>
+  </ul>
+
+  <h2>2. The six steps</h2>
+  <p>Every case study in this part follows the same six steps. Doing them in order is what makes you look calm and senior, because each step feeds the next.</p>
+  <table class="tbl">
+    <thead><tr><th>Step</th><th>Question you answer</th><th>Output on the whiteboard</th></tr></thead>
+    <tbody>
+      <tr><td>1. Clarify requirements</td><td>Who uses it, for what, how well must it work, what's out of scope?</td><td>3–5 functional bullets, 3–4 non-functional bullets, an "out of scope" line</td></tr>
+      <tr><td>2. Estimate</td><td>How big is it? Reads or writes heavy? Does it fit on one machine?</td><td>QPS (queries per second), storage, maybe bandwidth, each with the arithmetic shown</td></tr>
+      <tr><td>3. API</td><td>What do clients call?</td><td>3–6 endpoints with request and response shapes</td></tr>
+      <tr><td>4. Data model</td><td>What do we store and how is it keyed?</td><td>2–4 tables with key fields and the access pattern for each</td></tr>
+      <tr><td>5. High-level design</td><td>What boxes, and how does one request flow through them?</td><td>A diagram, then a walk through the write path and the read path</td></tr>
+      <tr><td>6. Deep dives and trade-offs</td><td>Where will this break, and what are the options?</td><td>2–3 focused deep dives, each ending in a named trade-off</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. A worked run: the reading leaderboard</h2>
+  <p>Here is the whole routine on one small prompt, compressed. Notice that every step produces something concrete you could point at.</p>
+  <div class="trace">
+    <ol>
+      <li><b>Clarify.</b> "Is the leaderboard per class, per school, or district-wide? Real-time or daily? Do students see other students' names?" Interviewer: per class and per school, updates within a minute, first names only. You add: "Privacy matters here because these are minors, so I'll show first name plus last initial and let teachers turn it off. Out of scope: anti-cheating, rewards."</li>
+      <li><b>Estimate.</b> 500,000 students in the district. 40% read on a school day = 200,000. A reading session sends a progress event every 30 seconds for about 20 minutes, so 40 events per student per day. 200,000 × 40 = 8,000,000 events/day. Spread over a 7-hour school day (about 25,000 seconds) that is 320 events/second on average; peaks are maybe 5× when whole classes start together, so plan for about 1,600/second. That is small. One Redis node (an in-memory store that handles roughly 100,000 simple operations per second) is plenty.</li>
+      <li><b>API.</b> <code>POST /v1/reading-events</code> (minutes read, idempotency key) and <code>GET /v1/leaderboards/class/{classId}?week=2026-W41</code> returns the top 30 plus "your rank".</li>
+      <li><b>Data model.</b> Durable table <code>reading_events(event_id PK, student_id, class_id, minutes, occurred_at)</code>; derived structure: one Redis sorted set per class per week, member = student_id, score = minutes.</li>
+      <li><b>High-level design.</b> App → API → write event row → increment sorted set (<code>ZINCRBY</code>). Reads go straight to the sorted set (<code>ZREVRANGE</code> for top 30, <code>ZREVRANK</code> for your rank).</li>
+      <li><b>Deep dive.</b> "What if Redis loses data?" The sorted sets are derived, so we rebuild them from <code>reading_events</code>. "Duplicate events from flaky school Wi-Fi?" The idempotency key on <code>event_id</code> means a retry is inserted once and incremented once. Trade-off named: "Redis sorted sets give O(log n) rank updates and instant reads, at the cost of being a second copy that can drift; I accept that because I can rebuild it, and a nightly job reconciles it."</li>
+    </ol>
+  </div>
+  <p>That is the shape of a strong answer: small, concrete, numbers shown, and one honest trade-off that the interviewer can poke at.</p>
+
+  <h2>4. The 45-minute plan, minute by minute</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 800 190" width="100%" role="img" aria-label="45-minute system design interview timeline" xmlns="http://www.w3.org/2000/svg" style="max-width:800px;font-family:inherit">
+
+<rect x="20.0" y="50" width="84.4" height="64" fill="var(--accent)" fill-opacity=".10" stroke="currentColor" stroke-width="1"/>
+<line x1="20.0" y1="114" x2="20.0" y2="122" stroke="currentColor"/>
+<rect x="104.4" y="50" width="67.6" height="64" fill="var(--accent)" fill-opacity=".10" stroke="currentColor" stroke-width="1"/>
+<line x1="104.4" y1="114" x2="104.4" y2="122" stroke="currentColor"/>
+<rect x="172.0" y="50" width="67.6" height="64" fill="var(--accent)" fill-opacity=".10" stroke="currentColor" stroke-width="1"/>
+<line x1="172.0" y1="114" x2="172.0" y2="122" stroke="currentColor"/>
+<rect x="239.6" y="50" width="67.6" height="64" fill="var(--accent)" fill-opacity=".10" stroke="currentColor" stroke-width="1"/>
+<line x1="239.6" y1="114" x2="239.6" y2="122" stroke="currentColor"/>
+<rect x="307.1" y="50" width="168.9" height="64" fill="var(--accent)" fill-opacity=".28" stroke="currentColor" stroke-width="1"/>
+<line x1="307.1" y1="114" x2="307.1" y2="122" stroke="currentColor"/>
+<rect x="476.0" y="50" width="219.6" height="64" fill="var(--accent)" fill-opacity=".28" stroke="currentColor" stroke-width="1"/>
+<line x1="476.0" y1="114" x2="476.0" y2="122" stroke="currentColor"/>
+<rect x="695.6" y="50" width="84.4" height="64" fill="var(--accent)" fill-opacity=".10" stroke="currentColor" stroke-width="1"/>
+<line x1="695.6" y1="114" x2="695.6" y2="122" stroke="currentColor"/>
+<line x1="780" y1="114" x2="780" y2="122" stroke="currentColor"/>
+<text x="20" y="30" text-anchor="start" font-size="12" fill="var(--muted)">Minute</text>
+<text x="62.22222222222222" y="78" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">Clarify</text>
+<text x="62.22222222222222" y="96" text-anchor="middle" font-size="12" fill="var(--muted)">5 min</text>
+<text x="20.0" y="138" text-anchor="middle" font-size="12" fill="var(--muted)">0</text>
+<text x="138.22222222222223" y="78" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">Estimate</text>
+<text x="138.22222222222223" y="96" text-anchor="middle" font-size="12" fill="var(--muted)">4 min</text>
+<text x="104.44444444444444" y="138" text-anchor="middle" font-size="12" fill="var(--muted)">5</text>
+<text x="205.77777777777777" y="78" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">API</text>
+<text x="205.77777777777777" y="96" text-anchor="middle" font-size="12" fill="var(--muted)">4 min</text>
+<text x="172.0" y="138" text-anchor="middle" font-size="12" fill="var(--muted)">9</text>
+<text x="273.33333333333337" y="78" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">Data</text>
+<text x="273.33333333333337" y="96" text-anchor="middle" font-size="12" fill="var(--muted)">4 min</text>
+<text x="239.55555555555557" y="138" text-anchor="middle" font-size="12" fill="var(--muted)">13</text>
+<text x="391.5555555555556" y="78" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">High-level design</text>
+<text x="391.5555555555556" y="96" text-anchor="middle" font-size="12" fill="var(--muted)">10 min</text>
+<text x="307.11111111111114" y="138" text-anchor="middle" font-size="12" fill="var(--muted)">17</text>
+<text x="585.7777777777778" y="78" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">Deep dives + trade-offs</text>
+<text x="585.7777777777778" y="96" text-anchor="middle" font-size="12" fill="var(--muted)">13 min</text>
+<text x="476.0" y="138" text-anchor="middle" font-size="12" fill="var(--muted)">27</text>
+<text x="737.7777777777777" y="78" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">Wrap</text>
+<text x="737.7777777777777" y="96" text-anchor="middle" font-size="12" fill="var(--muted)">5 min</text>
+<text x="695.5555555555555" y="138" text-anchor="middle" font-size="12" fill="var(--muted)">40</text>
+<text x="780" y="138" text-anchor="middle" font-size="12" fill="var(--muted)">45</text>
+<text x="400" y="172" text-anchor="middle" font-size="12" fill="var(--muted)">Shaded = where you earn most of the score: the design and the deep dives (23 of 45 minutes).</text>
+</svg>
+    <figcaption>Budget your time. Most candidates spend 15 minutes on requirements and never reach the deep dives, which is where seniority shows.</figcaption>
+  </figure>
+  <table class="tbl">
+    <thead><tr><th>Minutes</th><th>What you do</th><th>What you say out loud</th></tr></thead>
+    <tbody>
+      <tr><td>0–1</td><td>Restate the prompt in one sentence</td><td>"So we're building X so that Y can Z. Let me ask a few questions before drawing anything."</td></tr>
+      <tr><td>1–4</td><td>Functional requirements, users, core flows</td><td>"Who are the users? What are the 2–3 things they must be able to do on day one?"</td></tr>
+      <tr><td>4–5</td><td>Non-functional + out of scope, written down</td><td>"I'll optimize for read latency and availability; strong consistency only for X. Out of scope: billing, admin UI."</td></tr>
+      <tr><td>5–9</td><td>Estimates: users → QPS → storage → peak</td><td>"Rough numbers so we know if this is a one-box or a many-box problem."</td></tr>
+      <tr><td>9–13</td><td>API sketch</td><td>"Here are the calls the client makes. I'll use cursor pagination and an idempotency key on the create."</td></tr>
+      <tr><td>13–17</td><td>Data model</td><td>"Three tables. Here's the key and the main query for each."</td></tr>
+      <tr><td>17–27</td><td>High-level diagram, then trace one write and one read through it</td><td>"Let me walk a request through it end to end."</td></tr>
+      <tr><td>27–28</td><td>Pick deep dives (offer a menu, let them choose)</td><td>"The hard parts are A, B and C. I'd start with A because it's where users feel pain. Does that match what you want to explore?"</td></tr>
+      <tr><td>28–40</td><td>2–3 deep dives, each ending in a trade-off</td><td>"Option 1 gives us... at the cost of... I'd choose it because..."</td></tr>
+      <tr><td>40–44</td><td>Failure modes, scaling 10×, observability, rollout</td><td>"If this box dies, here's what happens. At 10× the first thing to break is..."</td></tr>
+      <tr><td>44–45</td><td>Summary</td><td>"To recap: the design is..., the key trade-off is..., and next I'd..."</td></tr>
+    </tbody>
+  </table>
+  <p>Treat this as a budget, not a script. If the interviewer pulls you into a deep dive at minute 15, go: they are telling you what they want to score. Just say "I'll come back to the data model" so they see you're tracking it.</p>
+
+  <h2>5. Driving the conversation</h2>
+  <p>The single biggest difference between candidates is who is driving. Driving does not mean talking non-stop. It means you set the agenda and check in.</p>
+  <ul>
+    <li><b>Announce the plan.</b> "I'll do requirements, rough numbers, API, data model, a diagram, then go deep on the hardest two parts." Interviewers relax when they hear this.</li>
+    <li><b>Make assumptions out loud instead of asking permission for each.</b> "I'll assume 10 million daily users; tell me if you had something else in mind." This keeps momentum and still invites correction.</li>
+    <li><b>Checkpoint every 8–10 minutes.</b> "Does this level of detail work, or would you like me to go deeper anywhere?"</li>
+    <li><b>Write things down.</b> Requirements, numbers and decisions on the board become shared memory. When you later say "because reads are 100× writes", you can point at it.</li>
+    <li><b>Say what you're not doing.</b> "I'm skipping auth because it's standard; happy to go there." That reads as judgment, not ignorance.</li>
+  </ul>
+
+  <h2>6. How to talk about trade-offs</h2>
+  <p>Every interesting decision has a cost. A strong candidate names it before the interviewer does. Use one sentence shape every time:</p>
+  <div class="callout"><span class="callout-label">The trade-off sentence</span><p><b>X gives us A at the cost of B; I'd choose it when C.</b> Example: "Fan-out on write gives us fast feed reads at the cost of heavy writes for accounts with millions of followers; I'd choose it for normal users and switch to fan-out on read for celebrities."</p></div>
+  <p>Three things make the sentence land:</p>
+  <ol>
+    <li><b>Tie the cost to a number.</b> "...at the cost of 50 million cache writes for one celebrity post" beats "at the cost of more writes".</li>
+    <li><b>Tie the choice to a requirement.</b> "...and since we said feeds can be a few seconds stale, that's fine."</li>
+    <li><b>Say what would change your mind.</b> "If we needed strict ordering across devices, I'd revisit this." This shows you're not attached to your answer.</li>
+  </ol>
+
+  <h2>7. What interviewers score</h2>
+  <p>Rubrics differ by company, but almost all of them grade some version of these five dimensions. Knowing them tells you where to spend your minutes.</p>
+  <table class="tbl">
+    <thead><tr><th>Dimension</th><th>What "strong" looks like</th><th>What "weak" looks like</th></tr></thead>
+    <tbody>
+      <tr><td>Problem navigation</td><td>Asks questions that change the design; scopes ruthlessly; states assumptions</td><td>Starts drawing immediately, or asks 20 questions without deciding anything</td></tr>
+      <tr><td>Solution design</td><td>A coherent design that meets the stated requirements; can trace a request through it</td><td>A pile of buzzword boxes with no flow; requirements forgotten</td></tr>
+      <tr><td>Technical depth</td><td>Goes to mechanism in at least one area: the exact SQL, the key format, what happens on retry</td><td>"We'll use Kafka" with no idea what that buys or costs</td></tr>
+      <tr><td>Trade-offs</td><td>Names alternatives and costs unprompted; decisions tied to requirements</td><td>One option presented as obviously right</td></tr>
+      <tr><td>Communication</td><td>Structured, checks in, adapts to hints, summarizes</td><td>Monologue; ignores hints; gets defensive when challenged</td></tr>
+    </tbody>
+  </table>
+  <p>Notice that "picked the same database as the reference answer" is not on the list. Two candidates with opposite designs can both score highly if each justifies their choices.</p>
+
+  <h2>8. Playing to a product and engineering leader's strengths</h2>
+  <p>If you've run product and engineering, you have advantages most candidates don't: you naturally start from users, you've lived through outages and migrations, and you think about cost and rollout. Use them, but don't hide behind them.</p>
+  <h3>Lean into</h3>
+  <ul>
+    <li><b>Requirements that change architecture.</b> "Teachers need to see who hasn't started the assignment during class, so that view must be fresh within seconds; the district report can be a day old." That one sentence justifies two different read paths.</li>
+    <li><b>User impact of failure.</b> "If notifications are 10 minutes late, nobody notices. If a one-time login code is 10 minutes late, the user is locked out. So they get separate queues."</li>
+    <li><b>Operational reality.</b> Rollouts behind flags, backfills, migrations with dual writes, on-call load, cost per user. These are senior signals that pure coders often skip.</li>
+    <li><b>Prioritization.</b> "For v1 I'd ship the simple version and add the hybrid fan-out when we have accounts with over 100,000 followers." Interviewers like candidates who don't over-build.</li>
+  </ul>
+  <h3>But prove depth</h3>
+  <ul>
+    <li><b>Go to mechanism in at least one deep dive.</b> Write the conditional <code>UPDATE ... WHERE status = 'available'</code> that prevents double booking. Name the Redis command. Say what's in the idempotency key.</li>
+    <li><b>Show the arithmetic.</b> Numbers are the fastest way to show you're not hand-waving.</li>
+    <li><b>Never say "my team would figure that out."</b> In this room, you are the team. Say "here's how I'd do it, and here's what I'd want a specialist to double-check."</li>
+  </ul>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Before I draw anything, let me pin down who uses this and what 'working' means for them, because that decides most of the architecture. Then I'll do quick numbers, an API and data model, a diagram, and spend most of our time on the two or three parts most likely to break. I'll call out trade-offs as I go; push back anywhere."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Jumping to a diagram full of boxes (Kafka, Redis, Cassandra, Kubernetes) in minute two. It looks confident but it's unanchored: you can't explain why each box exists because you never established the requirements or numbers that justify it. A design with four boxes, each one justified by a requirement or an estimate, scores higher than one with twelve.</p></div>
+
+  <h2>9. A few habits that compound</h2>
+  <ul>
+    <li><b>Start simple, then evolve.</b> Draw the version that works at 1,000 users, then say "at our numbers, this part breaks first, so..." This shows you understand why the complex parts exist.</li>
+    <li><b>Separate the write path from the read path.</b> Most designs become clear when you trace them separately.</li>
+    <li><b>Name the source of truth.</b> For every piece of data, say which store is authoritative and which copies are derived (caches, search indexes, counters).</li>
+    <li><b>Handle the failure of each box.</b> For each arrow, ask: what if this call is slow, fails, or happens twice?</li>
+    <li><b>Use ranges when unsure.</b> "A single Postgres box does somewhere between 5,000 and 50,000 simple reads per second depending on hardware" is honest and still useful.</li>
+  </ul>
+
+  <h2>10. Your turn</h2>
+  <p>Without looking anything up, run steps 1 and 2 on this prompt in 7 minutes: <b>"Design a 'read-aloud' feature where K-2 students record themselves reading a page and the teacher listens later."</b></p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Clarify.</b> Users: students aged 5–8 on shared Chromebooks or iPads; teachers reviewing later. Functional: record up to 2 minutes per page, upload, teacher sees a list per class and plays recordings, teacher leaves a score or comment. Non-functional: recordings must never be lost once the child sees "done" (kids can't redo easily); playback within a couple of seconds; strict privacy (voice of minors is sensitive under FERPA/COPPA-style rules, so access limited to the class's teachers, retention limits). Out of scope: automatic speech scoring (v2).</p>
+    <p><b>Estimate.</b> 100,000 K-2 students; 30% record on a given day = 30,000; 3 recordings each = 90,000/day. Audio in a compressed format like Opus at ~24 kbps ≈ 3 KB/s, so a 60-second clip ≈ 180 KB. 90,000 × 180 KB ≈ 16 GB/day; over 180 school days ≈ 3 TB/year. Uploads are bursty when a class records together: 25 kids × 180 KB in the same minute is trivial for object storage. Conclusion: storage is the main cost, request rate is tiny, so the design centers on reliable uploads (retry, resumable) directly to object storage, not on scale.</p>
+  </details>
+
+  <div data-quiz='[{"q":"You are 6 minutes into the interview and still asking clarifying questions. What is the best move?","o":["Keep asking until every ambiguity is resolved","State your remaining assumptions out loud and move to estimates","Skip estimates entirely to save time","Ask the interviewer to pick the requirements for you"],"a":1,"why":"Requirements should take about 5 minutes. Stating assumptions keeps momentum and still lets the interviewer correct you."},{"q":"Which sentence best expresses a trade-off the way a strong candidate would?","o":["Kafka is the industry standard so we should use it","Caching is always good for performance","A cache gives us 1 ms reads at the cost of up to 60 seconds of staleness, which is fine because the leaderboard only needs minute-level freshness","We could use either SQL or NoSQL"],"a":2,"why":"It names the benefit, the cost with a number, and ties the choice to a stated requirement."},{"q":"In a 45-minute interview, roughly how much time should the deep dives and trade-offs get?","o":["About 2 minutes","About 12 to 15 minutes","About 30 minutes","None; they are optional"],"a":1,"why":"Deep dives are where technical depth and trade-off thinking are scored, so they deserve the largest single block after the high-level design."},{"q":"An interviewer asks how you would prevent two users from booking the same seat. As an engineering leader, the strongest answer is:","o":["My team would handle the locking details","Use a distributed system","Write the conditional UPDATE that only succeeds if the seat is still available, and explain what the API returns when it fails","Use microservices"],"a":2,"why":"Going to mechanism in at least one area is how leaders prove technical depth."},{"q":"Why do estimates come before the high-level design?","o":["They are required by every rubric","They tell you whether this is a one-machine or many-machine problem and which path (read or write) needs the most care","They make the interview longer","Interviewers only care about arithmetic"],"a":1,"why":"Numbers justify the boxes. 300 writes per second and 300,000 writes per second lead to very different designs."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Six steps, always in order: clarify, estimate, API, data model, high-level design, deep dives and trade-offs.</li>
+    <li>Budget the 45 minutes: about 17 minutes to reach a diagram, about 23 minutes on design and deep dives, 5 to wrap up.</li>
+    <li>Drive: announce the plan, state assumptions, checkpoint, and write decisions down.</li>
+    <li>Every trade-off as "X gives A at the cost of B; choose it when C", with a number attached.</li>
+    <li>Lead with requirements, user impact and operations, then prove depth by going to mechanism in at least one deep dive.</li>
+  </ul>
+</template>

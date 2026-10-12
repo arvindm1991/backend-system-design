@@ -1,0 +1,312 @@
+<template id="tpl-dsa-stack" data-title="Stacks" data-part="Part 5 · Coding patterns (DSA)" data-order="350">
+  <h1>Stacks</h1>
+  <p class="lede">After this lesson you will recognize the problems where "the most recent unfinished thing must be dealt with first": matching brackets, undo and backspace, and the monotonic stack trick behind "next greater element" and "how many days until a warmer day". You will be able to turn each of those O(n²) rescans into a single O(n) pass, and you will know when a queue is the right tool instead.</p>
+
+  <h2>1. What a stack is</h2>
+  <p>A <b>stack</b> is a pile where you only touch the top: you <b>push</b> a new item onto the top, and you <b>pop</b> the top item off. The last thing in is the first thing out, called <b>LIFO</b> (last in, first out). A pile of plates works this way, and so does the undo history in any editor: Ctrl+Z undoes the <i>most recent</i> change first.</p>
+  <p>In JavaScript a plain array is a perfectly good stack:</p>
+  <pre><code class="lang-js">const stack = [];
+stack.push('a');                      // ['a']
+stack.push('b');                      // ['a', 'b']
+const top = stack[stack.length - 1];  // peek: 'b' (doesn't remove it)
+stack.pop();                          // returns 'b'; stack is ['a']
+stack.length === 0;                   // is it empty?</code></pre>
+  <p><code>push</code>, <code>pop</code> and peeking at the last element are all <b>O(1)</b>: constant time, no matter how big the stack is (Big-O is introduced in the <code>dsa-approach</code> lesson; O(1) means "doesn't grow with n", O(n) means "grows in step with n"). Avoid <code>shift</code> and <code>unshift</code> for stacks: they work on the front of the array and have to move every other element.</p>
+
+  <h2>2. The trigger: when to think "stack"</h2>
+  <p>Ask yourself: <b>"When I see a new item, do I need to compare it with or resolve the most recent unfinished item?"</b> If yes, keep the unfinished items on a stack. Words that should set this off:</p>
+  <ul>
+    <li><b>"valid parentheses / brackets"</b>, <b>"balanced"</b>, <b>"nested"</b>, "matching tags".</li>
+    <li><b>"undo"</b>, <b>"backspace"</b>, "remove adjacent duplicates", "simplify a path like <code>/a/./b/../c</code>", "evaluate an expression".</li>
+    <li><b>"next greater / next smaller element"</b>, <b>"how many days until a warmer day"</b>, "stock span", "previous smaller": the <b>monotonic stack</b>.</li>
+  </ul>
+  <table class="tbl">
+    <thead><tr><th>Shape</th><th>What lives on the stack</th><th>Pop when</th><th>Classic problems</th></tr></thead>
+    <tbody>
+      <tr><td>Matching</td><td>Openers waiting for their closer</td><td>A closer arrives (it must match the top)</td><td>Valid brackets, HTML tag matching</td></tr>
+      <tr><td>Undo / cancel</td><td>The result built so far</td><td>An "undo" item arrives (<code>#</code>, <code>..</code>, a duplicate)</td><td>Backspace compare, simplify path, remove adjacent duplicates</td></tr>
+      <tr><td>Monotonic</td><td>Indexes still waiting for an answer, values sorted bottom→top</td><td>A new value beats the top (it is the answer for the top)</td><td>Next greater element, daily temperatures, stock span</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. Worked problem: valid brackets</h2>
+  <p>PageTurn's quiz builder lets teachers type math expressions like <code>{[(2+3)*4]-1}</code>. Before saving, the app should reject unbalanced ones like <code>([)]</code> or <code>((2+3)</code>. <b>Problem:</b> given a string of the characters <code>()[]{}</code> (ignore anything else), return whether every opener is closed by the matching closer in the right order.</p>
+  <p><b>Brute force.</b> Keep deleting adjacent pairs <code>()</code>, <code>[]</code>, <code>{}</code> until nothing changes; valid means you end with an empty string.</p>
+  <pre><code class="lang-js">// Brute force. In TypeScript you'd just add types.
+function isBalancedBrute(text) {
+  let s = text.replace(/[^()[\]{}]/g, '');   // keep only brackets
+  let previous = null;
+  while (s !== previous) {
+    previous = s;
+    s = s.replace('()', '').replace('[]', '').replace('{}', '');
+  }
+  return s.length === 0;
+}</code></pre>
+  <p>Each pass scans the whole string, and deeply nested input like <code>((((...))))</code> removes only one pair per bracket type per pass, so you need up to n/2 passes: <b>O(n²)</b>. The repeated work: rescanning the entire string to find the next pair, when the next pair is always "the newest opener plus the next closer".</p>
+  <p><b>With a stack.</b> Walk left to right. Push every opener. When a closer arrives, the <i>most recent</i> unclosed opener must be its partner: pop it and check. At the end, nothing may be left open.</p>
+  <pre><code class="lang-js">function isBalanced(text) {
+  const partner = { ')': '(', ']': '[', '}': '{' };
+  const open = [];                          // stack of openers waiting for a closer
+  for (const ch of text) {
+    if (ch === '(' || ch === '[' || ch === '{') {
+      open.push(ch);
+    } else if (ch in partner) {
+      if (open.length === 0) return false;  // closer with nothing to close
+      if (open.pop() !== partner[ch]) return false;
+    }
+    // any other character: ignore
+  }
+  return open.length === 0;                 // leftovers were never closed
+}</code></pre>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 250" width="100%" role="img" aria-label="Stack of openers while reading the string {[(2+3)*4]-1}; when ) arrives, the top ( is popped" style="font-family:inherit">
+      <defs><marker id="st-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+      <text x="40" y="34" style="fill:var(--muted);font-size:13px">reading left to right:</text>
+      <g class="mono" style="font-size:18px">
+        <text x="40" y="70" style="fill:currentColor">{</text>
+        <text x="60" y="70" style="fill:currentColor">[</text>
+        <text x="80" y="70" style="fill:currentColor">(</text>
+        <text x="100" y="70" style="fill:var(--muted)">2+3</text>
+        <text x="148" y="70" style="fill:var(--accent);font-weight:700">)</text>
+        <text x="168" y="70" style="fill:var(--muted)">*4]-1}</text>
+      </g>
+      <line x1="40" y1="82" x2="142" y2="82" style="stroke:var(--line);stroke-width:2"/>
+      <text x="40" y="104" style="fill:var(--muted);font-size:12px">already read</text>
+      <text x="152" y="104" text-anchor="middle" style="fill:var(--accent);font-size:12px;font-weight:600">now</text>
+      <rect x="430" y="40" width="130" height="180" rx="4" style="fill:none;stroke:var(--line);stroke-width:2"/>
+      <rect x="440" y="170" width="110" height="40" rx="6" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="495" y="196" text-anchor="middle" class="mono" style="fill:currentColor;font-size:16px">{</text>
+      <rect x="440" y="124" width="110" height="40" rx="6" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="495" y="150" text-anchor="middle" class="mono" style="fill:currentColor;font-size:16px">[</text>
+      <rect x="440" y="78" width="110" height="40" rx="6" style="fill:var(--accent-soft);stroke:var(--accent);stroke-width:2"/>
+      <text x="495" y="104" text-anchor="middle" class="mono" style="fill:currentColor;font-size:16px;font-weight:700">(</text>
+      <text x="580" y="103" style="fill:var(--accent);font-size:13px;font-weight:600">top</text>
+      <text x="495" y="238" text-anchor="middle" style="fill:var(--muted);font-size:12px">stack of open brackets</text>
+      <path d="M160,120 C220,190 330,100 432,98" style="fill:none;stroke:var(--accent);stroke-width:2" marker-end="url(#st-arr)"/>
+      <text x="250" y="180" text-anchor="middle" style="fill:currentColor;font-size:13px">")" must match the top:</text>
+      <text x="250" y="198" text-anchor="middle" style="fill:currentColor;font-size:13px">pop "(" → match, keep going</text>
+    </svg>
+    <figcaption>The stack holds exactly the brackets that are open right now, newest on top. A closer only ever needs to look at the top.</figcaption>
+  </figure>
+  <div class="trace">
+    <p><b>Trace: "{[(2+3)*4]-1}" then "([)]"</b></p>
+    <ol>
+      <li><code>{</code>, <code>[</code>, <code>(</code>: push, push, push. Stack <code>{ [ (</code>. The digits and <code>+</code> are ignored.</li>
+      <li><code>)</code>: pop <code>(</code>, matches. Stack <code>{ [</code>.</li>
+      <li><code>]</code>: pop <code>[</code>, matches. Stack <code>{</code>.</li>
+      <li><code>}</code>: pop <code>{</code>, matches. Stack empty at the end → <span class="yes">valid</span>.</li>
+      <li>Now <code>([)]</code>: push <code>(</code>, push <code>[</code>. Then <code>)</code> arrives, but the top is <code>[</code> → <span class="no">invalid</span>, stop immediately. (Counting brackets would wrongly say "2 opens, 2 closes, fine": the stack is what catches the wrong <i>order</i>.)</li>
+    </ol>
+  </div>
+  <p><b>O(n) time</b> (each character is pushed and popped at most once), <b>O(n) space</b> in the worst case (all openers). What removed the repeated work: the stack remembers exactly which opener is next in line, so you never rescan.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Every closer has to match the most recent unmatched opener, which is last-in-first-out, so I'll use a stack. Push openers; on a closer, pop and check it matches; at the end the stack must be empty. That's one pass: O(n) time, O(n) space for the stack."</p></div>
+
+  <h2>4. Worked problem: undo with backspace</h2>
+  <p>Young students type short answers in PageTurn, and the input log records a backspace as <code>#</code>. Two different logs can produce the same final text: <code>"cat#r"</code> deletes the <code>t</code> and becomes <code>"car"</code>, and <code>"cax#r"</code> deletes the <code>x</code> and also becomes <code>"car"</code>. <b>Problem:</b> given two logs, return whether they produce the same final text. A backspace on empty text does nothing.</p>
+  <p><b>Brute force.</b> Find the first <code>#</code>, delete it and the character before it (rebuilding the string), and repeat. Each deletion copies the string: <b>O(n²)</b> for many backspaces. The repeated work: rebuilding the whole string for every single backspace.</p>
+  <p><b>With a stack.</b> A backspace undoes the most recent character, so the characters typed so far are a stack: push letters, pop on <code>#</code>.</p>
+  <pre><code class="lang-js">function finalText(log) {
+  const typed = [];
+  for (const ch of log) {
+    if (ch === '#') {
+      if (typed.length &gt; 0) typed.pop();   // undo the most recent character
+    } else {
+      typed.push(ch);
+    }
+  }
+  return typed.join('');
+}
+
+function sameFinalText(logA, logB) {
+  return finalText(logA) === finalText(logB);
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: finalText("ab##c#d")</b></p>
+    <ol>
+      <li><code>a</code>, <code>b</code>: push, push. Stack <code>[a, b]</code>.</li>
+      <li><code>#</code>: pop <code>b</code>. <code>#</code>: pop <code>a</code>. Stack <code>[]</code>.</li>
+      <li><code>c</code>: push. <code>#</code>: pop. Stack <code>[]</code>.</li>
+      <li><code>d</code>: push. Stack <code>[d]</code>. <span class="yes">Result "d"</span>.</li>
+    </ol>
+  </div>
+  <p><b>O(n + m) time and space</b> for logs of length n and m. The same shape simplifies a file path: split <code>/a/./b/../c</code> on <code>/</code>, push folder names, ignore <code>.</code>, pop on <code>..</code>, and join what's left: <code>/a/c</code>. (There is also an O(1)-space version that walks both strings backward with two pointers, skipping characters that a later <code>#</code> cancels. It's a good follow-up answer, but lead with the stack.)</p>
+
+  <h2>5. The monotonic stack: "next greater"</h2>
+  <p>PageTurn shows each student a nudge: "for each day, how many days until you read <b>more</b> than you did that day?" Maya's minutes:</p>
+  <pre><code class="lang-js">const minutes = [30, 20, 25, 40, 10, 15, 50];
+// answer:     [ 3,  1,  1,  3,  1,  1,  0]   (0 = never)</code></pre>
+  <p>This is the classic <b>daily temperatures</b> problem (and its sibling, <b>next greater element</b>).</p>
+  <p><b>Brute force:</b> for each day, scan forward until you find a bigger value.</p>
+  <pre><code class="lang-js">function daysUntilMoreBrute(minutes) {
+  const answer = new Array(minutes.length).fill(0);
+  for (let i = 0; i &lt; minutes.length; i++) {
+    for (let j = i + 1; j &lt; minutes.length; j++) {
+      if (minutes[j] &gt; minutes[i]) {
+        answer[i] = j - i;
+        break;
+      }
+    }
+  }
+  return answer;
+}</code></pre>
+  <p>If the values go down for a long time and then jump (100, 99, 98, ..., 1, 200), every day scans almost to the end: <b>O(n²)</b>. The repeated work: the same future days are rescanned by every earlier day.</p>
+  <p><b>The insight.</b> Flip the question around. Instead of each day looking forward for its answer, let each <i>new</i> day ask: "which earlier days am I the answer for?" Keep a stack of the days that are <b>still waiting</b> for a bigger day. That stack is always in decreasing order from bottom to top (if a smaller day were below a bigger one, the bigger one would already have answered it). That's why it's called a <b>monotonic</b> stack: its values only go one direction.</p>
+  <p>When a new day arrives, it pops every waiting day smaller than itself, and it is their answer. Then it waits too.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 280" width="100%" role="img" aria-label="Bar chart of minutes per day; day 3 with 40 minutes resolves waiting days 2 and 0; the waiting stack holds indexes 0 and 2" style="font-family:inherit">
+      <defs><marker id="st-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+      <line x1="30" y1="230" x2="460" y2="230" style="stroke:var(--line);stroke-width:1.5"/>
+      <rect x="40" y="140" width="44" height="90" rx="3" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <rect x="100" y="170" width="44" height="60" rx="3" style="fill:var(--surface-2);stroke:var(--line)"/>
+      <rect x="160" y="155" width="44" height="75" rx="3" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <rect x="220" y="110" width="44" height="120" rx="3" style="fill:var(--accent);stroke:var(--accent)"/>
+      <rect x="280" y="200" width="44" height="30" rx="3" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:3 3"/>
+      <rect x="340" y="185" width="44" height="45" rx="3" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:3 3"/>
+      <rect x="400" y="80" width="44" height="150" rx="3" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:3 3"/>
+      <g class="mono" style="font-size:12px">
+        <text x="62" y="132" text-anchor="middle" style="fill:currentColor">30</text>
+        <text x="122" y="162" text-anchor="middle" style="fill:var(--muted)">20</text>
+        <text x="182" y="147" text-anchor="middle" style="fill:currentColor">25</text>
+        <text x="242" y="102" text-anchor="middle" style="fill:currentColor;font-weight:700">40</text>
+        <text x="302" y="192" text-anchor="middle" style="fill:var(--muted)">10</text>
+        <text x="362" y="177" text-anchor="middle" style="fill:var(--muted)">15</text>
+        <text x="422" y="72" text-anchor="middle" style="fill:var(--muted)">50</text>
+        <text x="62" y="248" text-anchor="middle" style="fill:var(--muted)">d0</text>
+        <text x="122" y="248" text-anchor="middle" style="fill:var(--muted)">d1</text>
+        <text x="182" y="248" text-anchor="middle" style="fill:var(--muted)">d2</text>
+        <text x="242" y="248" text-anchor="middle" style="fill:var(--accent);font-weight:700">d3</text>
+        <text x="302" y="248" text-anchor="middle" style="fill:var(--muted)">d4</text>
+        <text x="362" y="248" text-anchor="middle" style="fill:var(--muted)">d5</text>
+        <text x="422" y="248" text-anchor="middle" style="fill:var(--muted)">d6</text>
+      </g>
+      <path d="M224,104 C214,88 200,104 192,128" style="fill:none;stroke:var(--accent);stroke-width:1.5" marker-end="url(#st-arr2)"/>
+      <path d="M228,94 C200,44 110,52 72,114" style="fill:none;stroke:var(--accent);stroke-width:1.5" marker-end="url(#st-arr2)"/>
+      <text x="150" y="40" text-anchor="middle" style="fill:var(--accent);font-size:12px">d3 answers d2 (1 day) and d0 (3 days)</text>
+      <text x="350" y="272" text-anchor="middle" style="fill:var(--muted);font-size:12px">d1 was answered earlier by d2 · dashed days haven't arrived yet</text>
+      <rect x="530" y="60" width="130" height="150" rx="4" style="fill:none;stroke:var(--line);stroke-width:2"/>
+      <rect x="540" y="160" width="110" height="40" rx="6" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <text x="595" y="186" text-anchor="middle" class="mono" style="fill:currentColor;font-size:14px">d0 · 30</text>
+      <rect x="540" y="114" width="110" height="40" rx="6" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <text x="595" y="140" text-anchor="middle" class="mono" style="fill:currentColor;font-size:14px">d2 · 25</text>
+      <text x="595" y="48" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">waiting stack</text>
+      <text x="595" y="228" text-anchor="middle" style="fill:var(--muted);font-size:12px">just before d3 arrives;</text>
+      <text x="595" y="244" text-anchor="middle" style="fill:var(--muted);font-size:12px">values decrease upward</text>
+    </svg>
+    <figcaption>The waiting stack holds the days that haven't seen a bigger day yet. When day 3 (40 min) arrives it pops both and becomes their answer.</figcaption>
+  </figure>
+  <pre><code class="lang-js">function daysUntilMore(minutes) {
+  const answer = new Array(minutes.length).fill(0);
+  const waiting = [];   // INDEXES of days still waiting; their values decrease bottom→top
+  for (let today = 0; today &lt; minutes.length; today++) {
+    while (waiting.length &gt; 0 &amp;&amp; minutes[today] &gt; minutes[waiting[waiting.length - 1]]) {
+      const earlierDay = waiting.pop();
+      answer[earlierDay] = today - earlierDay;   // today is the first bigger day
+    }
+    waiting.push(today);
+  }
+  return answer;   // days still waiting at the end keep 0
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: minutes = [30, 20, 25, 40, 10, 15, 50]</b> (stack shows index·value)</p>
+    <table class="tbl">
+      <thead><tr><th>today</th><th>value</th><th>pops (and answers)</th><th>stack after push</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>30</td><td>none</td><td><code>[0·30]</code></td></tr>
+        <tr><td>1</td><td>20</td><td>none (20 is not &gt; 30)</td><td><code>[0·30, 1·20]</code></td></tr>
+        <tr><td>2</td><td>25</td><td>1·20 → answer[1] = 1</td><td><code>[0·30, 2·25]</code></td></tr>
+        <tr><td>3</td><td>40</td><td>2·25 → answer[2] = 1; 0·30 → answer[0] = 3</td><td><code>[3·40]</code></td></tr>
+        <tr><td>4</td><td>10</td><td>none</td><td><code>[3·40, 4·10]</code></td></tr>
+        <tr><td>5</td><td>15</td><td>4·10 → answer[4] = 1</td><td><code>[3·40, 5·15]</code></td></tr>
+        <tr><td>6</td><td>50</td><td>5·15 → answer[5] = 1; 3·40 → answer[3] = 3</td><td><code>[6·50]</code></td></tr>
+      </tbody>
+    </table>
+    <p>Day 6 is still waiting at the end, so it keeps 0. <span class="yes">Answer [3, 1, 1, 3, 1, 1, 0]</span>. 7 pushes and 6 pops in total.</p>
+  </div>
+  <p><b>O(n) time</b>: each index is pushed once and popped at most once, so the inner <code>while</code> shares a total budget of n pops across the whole run. <b>O(n) space</b> for the stack. What removed the repeated work: a day is only ever compared until it gets its answer, then it's gone for good.</p>
+  <p>Variations are tiny edits: <b>next greater element</b> stores <code>minutes[today]</code> instead of the distance; <b>next smaller</b> flips <code>&gt;</code> to <code>&lt;</code> (the stack becomes increasing); <b>previous greater</b> reads the top of the stack <i>after</i> popping, before pushing.</p>
+
+  <h2>6. The templates</h2>
+  <p>Two shapes cover almost every stack problem. (In TypeScript you would just add types, e.g. <code>const stack: string[] = []</code>.)</p>
+  <pre><code class="lang-js">// Shape 1: matching / undo. The stack holds the "unfinished" items.
+function matchingTemplate(items) {
+  const stack = [];
+  for (const item of items) {
+    if (startsSomething(item)) {
+      stack.push(item);
+    } else if (endsSomething(item)) {
+      if (stack.length === 0) return false;   // nothing to close / undo
+      const top = stack.pop();
+      if (!matches(top, item)) return false;
+    }
+  }
+  return stack.length === 0;                  // or: build the result from the stack
+}
+
+// Shape 2: monotonic stack. The stack holds indexes still waiting for an answer.
+function nextGreaterTemplate(values) {
+  const answer = new Array(values.length).fill(-1);
+  const waiting = [];
+  for (let i = 0; i &lt; values.length; i++) {
+    while (waiting.length &gt; 0 &amp;&amp; values[i] &gt; values[waiting[waiting.length - 1]]) {
+      const j = waiting.pop();
+      answer[j] = values[i];                  // or i, or i - j
+    }
+    waiting.push(i);
+  }
+  return answer;
+}</code></pre>
+
+  <h2>7. Queues, briefly</h2>
+  <p>A <b>queue</b> is the opposite order: first in, first out (<b>FIFO</b>), like the line at the school library checkout. You add at the back (<i>enqueue</i>) and remove from the front (<i>dequeue</i>). You will use queues for breadth-first search over trees and graphs (the <code>dsa-trees</code> and <code>dsa-graphs</code> lessons), for "process things in the order they arrived", and for a running window of recent events.</p>
+  <table class="tbl">
+    <thead><tr><th></th><th>Stack</th><th>Queue</th></tr></thead>
+    <tbody>
+      <tr><td>Order</td><td>Last in, first out</td><td>First in, first out</td></tr>
+      <tr><td>Reach for it when</td><td>The newest unfinished thing must be handled first (nesting, undo, next greater)</td><td>Things must be handled in arrival order (BFS, task lines)</td></tr>
+      <tr><td>JS</td><td><code>push</code> / <code>pop</code>: O(1)</td><td><code>push</code> + read at a head index: O(1)</td></tr>
+    </tbody>
+  </table>
+  <p>The JavaScript catch: <code>array.shift()</code> removes the first element and, in general, shifts every other element down, so it can cost O(n) per call. Engines optimize some cases, but don't rely on it in an interview. Use a moving head index instead:</p>
+  <pre><code class="lang-js">const queue = [firstItem];
+let head = 0;                          // index of the next item to process
+while (head &lt; queue.length) {
+  const item = queue[head];
+  head++;                              // "dequeue" in O(1)
+  for (const next of neighboursOf(item)) {
+    queue.push(next);                  // enqueue
+  }
+}</code></pre>
+
+  <h2>8. Common mistakes</h2>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Forgetting the two edge checks in bracket matching. A closer with an empty stack (<code>")("</code>): <code>[].pop()</code> returns <code>undefined</code> instead of throwing, so if you don't check <code>stack.length === 0</code> the bug is silent. And leftovers at the end (<code>"(("</code>): if you return <code>true</code> instead of <code>stack.length === 0</code>, unclosed openers pass.</p></div>
+  <ul>
+    <li><b>Storing values instead of indexes</b> in a monotonic stack when you need a distance ("how many days"). Push the index; you can always look up the value.</li>
+    <li><b><code>&gt;</code> vs <code>&gt;=</code></b> in the monotonic pop condition. "Strictly warmer" means equal values must <i>not</i> pop each other. Read the problem for "greater" vs "greater or equal".</li>
+    <li><b>Counting instead of stacking.</b> A counter of open brackets works for one bracket type only; with <code>()[]{}</code> it accepts <code>([)]</code>.</li>
+    <li><b>Using <code>shift()</code> in a hot loop</b> for a queue. Use a head index.</li>
+  </ul>
+
+  <h2>9. Labs</h2>
+  <p>Matching, undo, and a monotonic stack. Starters are empty functions.</p>
+  <div data-lab="dsa-valid-brackets"></div>
+  <div data-lab="dsa-backspace-compare"></div>
+  <div data-lab="dsa-daily-temperatures"></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"Check whether the HTML tags in a snippet are properly nested, e.g. b inside i must close before i does. Which approach fits best?","o":["A counter of open tags","A stack of open tag names","Sliding window","Sort the tags"],"a":1,"why":"Each closing tag must match the most recently opened unclosed tag: last in, first out. A counter cannot catch wrong order."},
+    {"q":"For each stock price, find how many days until a higher price. Which approach fits best?","o":["Nested loops scanning forward","A monotonic stack of indexes still waiting for a higher price","A queue","Binary search on each day"],"a":1,"why":"Next greater element is the monotonic stack trigger. Each index is pushed once and popped once, so O(n) instead of O(n²)."},
+    {"q":"Simplify a Unix path like /home/./maya/../docs/ into /home/docs. Which approach fits best?","o":["A stack of folder names: push names, pop on ..","Two pointers from both ends","A hash map of folders","Sliding window"],"a":0,"why":"The .. part undoes the most recent folder, which is the undo shape of a stack. Ignore . and empty parts, then join what is left."},
+    {"q":"Process tutoring requests in the order students submitted them. Which structure fits?","o":["Stack","Queue (FIFO)","Monotonic stack","Set"],"a":1,"why":"Arrival order means first in, first out: a queue. A stack would serve the newest request first."},
+    {"q":"In the daily-temperatures monotonic stack, why is the whole algorithm O(n) even though there is a while loop inside the for loop?","o":["The while loop runs at most once per day","Each index is pushed once and popped at most once, so all the while loops together do at most n pops","Because the stack never holds more than 2 items","It is actually O(n log n)"],"a":1,"why":"The inner loop spends from a shared budget: there are only n indexes to pop in total across the whole run."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>A stack is LIFO: <code>push</code>/<code>pop</code>/peek at the end of a JS array, all O(1).</li>
+    <li>Trigger: <b>the newest unfinished item must be resolved first</b>. Brackets, nesting, undo/backspace, simplify path.</li>
+    <li>Monotonic stack: keep <b>indexes still waiting</b> for an answer; a new value pops everything it beats. "Next greater", "days until warmer": O(n) instead of O(n²).</li>
+    <li>Each item is pushed once and popped at most once, which is why a <code>while</code> inside a <code>for</code> is still O(n).</li>
+    <li>Queues are FIFO (arrival order, BFS). In JS use a head index instead of <code>shift()</code>.</li>
+  </ul>
+</template>

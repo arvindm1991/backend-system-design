@@ -1,0 +1,40 @@
+{
+  "id": "consistent-hashing",
+  "title": "Consistent hashing with virtual nodes",
+  "minutes": 30,
+  "prompt": "<p>The reading app caches student progress across a pool of cache servers. The starter code picks a server with <code>hash(key) % servers.length</code>. Run the tests: when one server is added or removed, almost every key moves to a different server, so the whole cache goes cold at once. Replace it with a <b>hash ring</b>.</p>\n<p>API: <code>new HashRing({ vnodes = 100, hash = hash32 } = {})</code></p>\n<ul>\n<li><code>addNode(name)</code>: place <code>vnodes</code> points on the ring for this server, at <code>hash(name + &#39;#&#39; + i)</code> for i = 0 .. vnodes-1.</li>\n<li><code>removeNode(name)</code>: remove all its points.</li>\n<li><code>getNode(key)</code>: hash the key, walk clockwise to the first point whose position is <code>&gt;=</code> the key&#39;s hash, and return that point&#39;s server. If you pass the end of the ring, wrap to the first point. Return <code>undefined</code> if the ring is empty.</li>\n</ul>\n<p>Keep the points in an array sorted by position. Binary search is nice; a linear scan also passes the tests.</p>",
+  "starter": "// Provided: a fast 32-bit string hash (FNV-1a + a final mix). Returns 0 .. 2^32-1.\nfunction hash32(str) {\n  let h = 0x811c9dc5;\n  for (let i = 0; i < str.length; i++) {\n    h ^= str.charCodeAt(i);\n    h = Math.imul(h, 0x01000193);\n  }\n  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);\n  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);\n  h ^= h >>> 16;\n  return h >>> 0;\n}\n\nclass HashRing {\n  constructor({ vnodes = 100, hash = hash32 } = {}) {\n    this.vnodes = vnodes;\n    this.hash = hash;\n    this.nodes = [];\n  }\n  addNode(name) { this.nodes.push(name); }\n  removeNode(name) { this.nodes = this.nodes.filter((n) => n !== name); }\n  getNode(key) {\n    // Modulo hashing: simple, but adding/removing a node remaps almost everything.\n    if (this.nodes.length === 0) return undefined;\n    return this.nodes[this.hash(key) % this.nodes.length];\n  }\n}",
+  "solution": "// Provided: a fast 32-bit string hash (FNV-1a + a final mix). Returns 0 .. 2^32-1.\nfunction hash32(str) {\n  let h = 0x811c9dc5;\n  for (let i = 0; i < str.length; i++) {\n    h ^= str.charCodeAt(i);\n    h = Math.imul(h, 0x01000193);\n  }\n  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);\n  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);\n  h ^= h >>> 16;\n  return h >>> 0;\n}\n\nclass HashRing {\n  constructor({ vnodes = 100, hash = hash32 } = {}) {\n    this.vnodes = vnodes;\n    this.hash = hash;\n    this.ring = []; // sorted [{ pos, node }]\n  }\n\n  addNode(name) {\n    for (let i = 0; i < this.vnodes; i++) {\n      this.ring.push({ pos: this.hash(name + '#' + i), node: name });\n    }\n    this.ring.sort((a, b) => a.pos - b.pos);\n  }\n\n  removeNode(name) {\n    this.ring = this.ring.filter((p) => p.node !== name);\n  }\n\n  getNode(key) {\n    if (this.ring.length === 0) return undefined;\n    const h = this.hash(key);\n    // binary search: first point with pos >= h\n    let lo = 0, hi = this.ring.length;\n    while (lo < hi) {\n      const mid = (lo + hi) >> 1;\n      if (this.ring[mid].pos < h) lo = mid + 1; else hi = mid;\n    }\n    return this.ring[lo === this.ring.length ? 0 : lo].node; // wrap around\n  }\n}",
+  "tests": [
+    {
+      "name": "empty ring returns undefined; one node owns everything",
+      "code": "const r = new HashRing();\nassertEqual(r.getNode('student:1'), undefined);\nr.addNode('cache-a');\nfor (let i = 0; i < 50; i++) assertEqual(r.getNode('student:' + i), 'cache-a');"
+    },
+    {
+      "name": "walks clockwise and wraps around (hand-placed positions)",
+      "code": "const pos = { 'A#0': 100, 'B#0': 200, 'C#0': 300, k1: 150, k2: 250, k3: 350, k4: 50, k5: 200 };\nconst r = new HashRing({ vnodes: 1, hash: (s) => pos[s] });\nr.addNode('A'); r.addNode('B'); r.addNode('C');\nassertEqual(['k1','k2','k3','k4','k5'].map(k => r.getNode(k)), ['B', 'C', 'A', 'A', 'B']);"
+    },
+    {
+      "name": "removing a node only moves the keys that were on it",
+      "code": "const r = new HashRing();\n['cache-a','cache-b','cache-c'].forEach(n => r.addNode(n));\nconst keys = Array.from({ length: 2000 }, (_, i) => 'student:' + i);\nconst before = keys.map(k => r.getNode(k));\nr.removeNode('cache-b');\nlet moved = 0;\nkeys.forEach((k, i) => {\n  const now = r.getNode(k);\n  if (before[i] !== 'cache-b') assertEqual(now, before[i], k + ' should not move');\n  else moved++;\n  assert(now !== 'cache-b');\n});\nassert(moved > 0, 'cache-b should have owned some keys');"
+    },
+    {
+      "name": "adding a 4th node moves roughly 1/4 of keys, all to the new node",
+      "code": "const r = new HashRing();\n['cache-a','cache-b','cache-c'].forEach(n => r.addNode(n));\nconst keys = Array.from({ length: 4000 }, (_, i) => 'student:' + i);\nconst before = keys.map(k => r.getNode(k));\nr.addNode('cache-d');\nlet moved = 0;\nkeys.forEach((k, i) => { const now = r.getNode(k); if (now !== before[i]) { moved++; assertEqual(now, 'cache-d', 'moved keys go to the new node'); } });\nconst frac = moved / keys.length;\nassert(frac > 0.15 && frac < 0.35, 'expected ~25% of keys to move, got ' + (frac * 100).toFixed(1) + '%');"
+    },
+    {
+      "name": "virtual nodes spread load fairly evenly",
+      "code": "const r = new HashRing({ vnodes: 100 });\nconst nodes = ['cache-a','cache-b','cache-c','cache-d'];\nnodes.forEach(n => r.addNode(n));\nconst count = {}; nodes.forEach(n => count[n] = 0);\nfor (let i = 0; i < 20000; i++) count[r.getNode('book:' + i)]++;\nnodes.forEach(n => { const f = count[n] / 20000; assert(f > 0.17 && f < 0.33, n + ' got ' + (f * 100).toFixed(1) + '%'); });"
+    },
+    {
+      "name": "the same key always maps to the same node",
+      "code": "const r1 = new HashRing(); const r2 = new HashRing();\n['x','y','z'].forEach(n => { r1.addNode(n); r2.addNode(n); });\nfor (let i = 0; i < 100; i++) assertEqual(r1.getNode('k' + i), r2.getNode('k' + i));"
+    }
+  ],
+  "hints": [
+    "<p>Store points as objects <code>{ pos, node }</code> in one array. After <code>addNode</code>, sort by <code>pos</code>. <code>removeNode</code> is a filter.</p>",
+    "<p>In <code>getNode</code>, find the first point with <code>pos &gt;= hash(key)</code>. If none exists (the key hashes past the last point), the answer is <code>ring[0]</code>: that&#39;s the wrap-around.</p>",
+    "<p>Binary search shape: <code>let lo = 0, hi = ring.length; while (lo &lt; hi) { const mid = (lo + hi) &gt;&gt; 1; if (ring[mid].pos &lt; h) lo = mid + 1; else hi = mid; } return ring[lo === ring.length ? 0 : lo].node;</code></p>"
+  ],
+  "explain": "<p>With <code>% N</code>, going from 3 to 4 servers remaps about 3 out of 4 keys (a key stays only if <code>h % 3 === h % 4</code>). With a ring, only the keys in the arcs the new server takes over move: about 1/N. Virtual nodes (many points per server) fix the uneven arcs you get with one point per server, and let a bigger machine take more points. Dynamo, Cassandra, Riak, many memcached clients and some load balancers use this idea; Redis Cluster uses a related trick (16,384 fixed hash slots assigned to nodes).</p>\n<p><b>In an interview:</b> &quot;I&#39;d shard the cache by key with consistent hashing and ~100 virtual nodes per server, so adding a node moves only about 1/N of the keys and we don&#39;t get a cold-cache stampede on the database.&quot;</p>"
+}

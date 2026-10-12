@@ -1,0 +1,207 @@
+<template id="tpl-distributed" data-title="Why distributed is hard" data-part="Part 3 · Distributed systems" data-order="100">
+  <h1>What makes distributed systems hard</h1>
+  <p class="lede">By the end of this lesson you will be able to explain, with one concrete story, why a system on many machines behaves differently from a system on one: calls that might or might not have happened, a network that drops and delays messages, and clocks that disagree. You will be able to state CAP and PACELC correctly (most people don&#39;t), and pick a consistency model per feature (&quot;seat inventory must be strong, the viewer counter can be eventual&quot;) and say why.</p>
+
+  <h2>1. The running example: SeatSwift goes multi-region</h2>
+  <p>SeatSwift sells concert tickets. Version 1 runs in one data center in Virginia: app servers plus one Postgres database. Selling a seat is a single transaction:</p>
+  <pre><code class="lang-sql">BEGIN;
+UPDATE seats SET holder = 'alice', status = 'sold'
+ WHERE event_id = 42 AND seat = '14C' AND status = 'available';
+-- 1 row updated: Alice got it. 0 rows: someone beat her.
+COMMIT;</code></pre>
+  <p>Two buyers clicking at the same instant is a non-problem. The database serializes them: one <code>UPDATE</code> matches the row, the other finds <code>status = 'sold'</code> and updates 0 rows. One machine, one copy of the truth, one order of events.</p>
+  <p>Then SeatSwift grows. West coast fans complain about slow pages (Virginia to San Francisco is roughly 60–70&nbsp;ms per round trip, and a checkout makes several). A Virginia power event takes the site down for two hours during a big on-sale. So the team adds a second data center in Oregon, with its own app servers and its own copy of the database, kept in sync over the network.</p>
+  <p>Now there are two copies of the truth. Everything in this lesson comes from that sentence.</p>
+
+  <h2>2. A distributed system, defined</h2>
+  <p>A <b>distributed system</b> is a set of computers that cooperate over a network and appear to users as one system. Your app is already one, the moment it has an app server and a separate database server. It becomes a hard one when the <i>same data</i> lives on more than one machine, or when one user action needs several machines to agree.</p>
+  <p>Three things that were free on one machine stop being free:</p>
+  <ol>
+    <li><b>Knowing whether something happened</b> (partial failure).</li>
+    <li><b>Getting a message across</b> (the network is unreliable).</li>
+    <li><b>Knowing what time it is</b> (there is no shared clock).</li>
+  </ol>
+
+  <h2>3. Partial failure: the request that maybe happened</h2>
+  <p>On one machine, a function call either returns or the whole process crashes. Over a network, there is a third outcome: <b>you don&#39;t know</b>.</p>
+  <p>SeatSwift&#39;s checkout calls a payment provider to charge Alice $89. It waits 3 seconds (its <b>timeout</b>, the maximum time it&#39;s willing to wait) and gets nothing back. What happened?</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 250" width="100%" role="img" aria-label="Three places a request can fail: the request is lost, the server crashes while processing, or the response is lost" style="font-family:inherit">
+      <defs><marker id="dist-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="20" y="20" width="130" height="210" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="85" y="46" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">SeatSwift</text>
+      <text x="85" y="64" text-anchor="middle" style="fill:var(--muted);font-size:12px">checkout server</text>
+      <rect x="530" y="20" width="130" height="210" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="595" y="46" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Payments</text>
+      <text x="595" y="64" text-anchor="middle" style="fill:var(--muted);font-size:12px">provider</text>
+      <line x1="150" y1="100" x2="330" y2="100" style="stroke:var(--muted);stroke-width:1.5"/>
+      <text x="340" y="105" style="fill:var(--bad);font-size:16px;font-weight:700">✕</text>
+      <text x="360" y="104" style="fill:currentColor;font-size:13px">A. request lost: not charged</text>
+      <line x1="150" y1="150" x2="526" y2="150" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dist-arr)"/>
+      <text x="595" y="155" text-anchor="middle" style="fill:var(--bad);font-size:16px;font-weight:700">✕</text>
+      <text x="340" y="140" text-anchor="middle" style="fill:currentColor;font-size:13px">B. provider crashes mid-charge: maybe charged</text>
+      <line x1="530" y1="200" x2="400" y2="200" style="stroke:var(--muted);stroke-width:1.5"/>
+      <text x="380" y="205" style="fill:var(--bad);font-size:16px;font-weight:700">✕</text>
+      <text x="200" y="222" style="fill:currentColor;font-size:13px">C. charged, but the reply is lost: charged</text>
+      <text x="85" y="205" text-anchor="middle" style="fill:var(--muted);font-size:12px">sees: timeout</text>
+      <text x="85" y="221" text-anchor="middle" style="fill:var(--muted);font-size:12px">in all 3 cases</text>
+    </svg>
+    <figcaption>From the caller&#39;s side, a lost request, a crash mid-work and a lost reply all look identical: silence, then a timeout.</figcaption>
+  </figure>
+  <p>The caller cannot tell these apart. If it retries, case C charges Alice twice. If it gives up, case C keeps her money with no ticket. This is the core problem of distributed systems, and it has a standard answer you will see in every later lesson: make operations <b>idempotent</b> (safe to repeat) by sending an <b>idempotency key</b>, a unique id for the operation, so the provider can say &quot;I already did charge <code>ord_7731</code>, here&#39;s the original result&quot;.</p>
+  <div class="callout key"><span class="callout-label">Key idea</span><p>A timeout tells you the answer is late. It does not tell you the work didn&#39;t happen. Design every cross-machine write so it can be retried safely.</p></div>
+
+  <h2>4. The network is unreliable</h2>
+  <p>Networks between your machines can, at any moment:</p>
+  <ul>
+    <li><b>Delay</b> a message: a usual 0.5&nbsp;ms hop inside a data center occasionally takes 50&nbsp;ms or 2&nbsp;seconds (a congested switch, a garbage-collection pause on the receiver).</li>
+    <li><b>Drop</b> it entirely.</li>
+    <li><b>Reorder</b> messages: &quot;price = $40&quot; sent after &quot;price = $50&quot; arrives first.</li>
+    <li><b>Duplicate</b> them: a retry at some layer delivers the same message twice.</li>
+    <li><b>Partition</b>: split the machines into groups that can each talk internally but not to each other. A <b>network partition</b> is the big one, and it is not rare: misconfigured routers, a cut fiber, a cloud networking incident.</li>
+  </ul>
+  <p>Some rough numbers worth knowing (they vary by provider and route; treat them as orders of magnitude):</p>
+  <table class="tbl">
+    <thead><tr><th>Hop</th><th>Typical round trip</th></tr></thead>
+    <tbody>
+      <tr><td>Same data center (same availability zone)</td><td>~0.1–0.5 ms</td></tr>
+      <tr><td>Across zones in one region</td><td>~0.5–2 ms</td></tr>
+      <tr><td>US east ↔ US west (Virginia ↔ Oregon)</td><td>~60–80 ms</td></tr>
+      <tr><td>US ↔ Europe</td><td>~70–100 ms</td></tr>
+      <tr><td>US ↔ Asia / Australia</td><td>~120–250 ms</td></tr>
+    </tbody>
+  </table>
+  <p>The speed of light sets a floor here. No amount of engineering makes Virginia-to-Oregon round trips much faster than ~60&nbsp;ms. Remember this; it is the whole &quot;L&quot; in PACELC below.</p>
+
+  <h2>5. There is no shared clock</h2>
+  <p>Every machine has its own clock, built from a cheap quartz crystal that drifts (tens of parts per million is typical, which can add up to a second or more per day if never corrected). <b>NTP</b> (Network Time Protocol) keeps clocks close to real time, typically within a few milliseconds inside a data center, worse across the internet, and it sometimes <i>jumps</i> a clock backward or forward when it corrects.</p>
+  <p>So &quot;which write happened last?&quot; cannot be answered by comparing timestamps from two machines. If Virginia&#39;s clock runs 40&nbsp;ms fast, a write it makes at true time 10:00:00.010 is stamped 10:00:00.050, and it will &quot;beat&quot; an Oregon write made 30&nbsp;ms later in real time. A policy of <b>last-write-wins</b> (LWW) by timestamp then silently throws away the newer write. The next lesson covers logical clocks, which order events without trusting wall time.</p>
+
+  <h2>6. The partition story: seat 14C</h2>
+  <p>Now let&#39;s break SeatSwift. Both data centers accept purchases, and each copies its writes to the other a few milliseconds later (this is called <b>asynchronous multi-primary replication</b>: every site is a primary that accepts writes, and replication happens after the local commit).</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 270" width="100%" role="img" aria-label="Virginia and Oregon data centers with the replication link cut. Alice buys 14C in Virginia, Bob buys 14C in Oregon." style="font-family:inherit">
+      <defs><marker id="dist-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="30" y="70" width="220" height="130" rx="12" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="140" y="96" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Virginia (us-east)</text>
+      <text x="140" y="122" text-anchor="middle" class="mono" style="fill:currentColor;font-size:12px">seat 14C: available</text>
+      <text x="140" y="146" text-anchor="middle" class="mono" style="fill:var(--accent);font-size:12px">20:00:05 → sold to Alice</text>
+      <text x="140" y="180" text-anchor="middle" style="fill:var(--muted);font-size:12px">app servers + database</text>
+      <rect x="430" y="70" width="220" height="130" rx="12" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="540" y="96" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Oregon (us-west)</text>
+      <text x="540" y="122" text-anchor="middle" class="mono" style="fill:currentColor;font-size:12px">seat 14C: available</text>
+      <text x="540" y="146" text-anchor="middle" class="mono" style="fill:var(--accent);font-size:12px">20:00:07 → sold to Bob</text>
+      <text x="540" y="180" text-anchor="middle" style="fill:var(--muted);font-size:12px">app servers + database</text>
+      <line x1="250" y1="135" x2="320" y2="135" style="stroke:var(--muted);stroke-width:2;stroke-dasharray:6 4"/>
+      <line x1="360" y1="135" x2="430" y2="135" style="stroke:var(--muted);stroke-width:2;stroke-dasharray:6 4"/>
+      <text x="340" y="142" text-anchor="middle" style="fill:var(--bad);font-size:22px;font-weight:700">✕</text>
+      <text x="340" y="112" text-anchor="middle" style="fill:var(--bad);font-size:12px">link down 20:00:00</text>
+      <text x="340" y="166" text-anchor="middle" style="fill:var(--muted);font-size:12px">replication paused</text>
+      <circle cx="140" cy="30" r="14" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <text x="140" y="35" text-anchor="middle" style="fill:currentColor;font-size:12px">A</text>
+      <text x="170" y="35" style="fill:currentColor;font-size:12px">Alice, New York</text>
+      <line x1="140" y1="44" x2="140" y2="66" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dist-arr2)"/>
+      <circle cx="540" cy="30" r="14" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <text x="540" y="35" text-anchor="middle" style="fill:currentColor;font-size:12px">B</text>
+      <text x="570" y="35" style="fill:currentColor;font-size:12px">Bob, SF</text>
+      <line x1="540" y1="44" x2="540" y2="66" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dist-arr2)"/>
+      <text x="340" y="240" text-anchor="middle" style="fill:currentColor;font-size:13px">Each side sees 14C as available, because it can&#39;t see the other side&#39;s write.</text>
+    </svg>
+    <figcaption>A network partition between two data centers that both accept writes. Both purchases succeed locally.</figcaption>
+  </figure>
+  <div class="trace"><b>Trace: the double sale</b>
+    <ol>
+      <li><p><b>20:00:00</b> A cloud networking incident cuts the link between Virginia and Oregon. Both sites are healthy and still serve their own users. Replication messages queue up and fail.</p></li>
+      <li><p><b>20:00:05</b> Alice (New York, routed to Virginia) buys seat 14C. Virginia&#39;s database runs the <code>UPDATE ... WHERE status = 'available'</code>: 1 row updated. Commit. Alice is charged $89 and sees &quot;You&#39;re going!&quot;.</p></li>
+      <li><p><b>20:00:07</b> Bob (San Francisco, routed to Oregon) buys seat 14C. Oregon&#39;s copy still says available, because Alice&#39;s write never arrived. 1 row updated. Commit. Bob is charged $89.</p></li>
+      <li><p><b>20:03:10</b> The link heals. Replication resumes, and each side receives a write for 14C that conflicts with its own. With last-write-wins on timestamps, Bob&#39;s 20:00:07 write &quot;wins&quot; and Alice&#39;s record is overwritten (if Oregon&#39;s clock had been behind, it could have gone the other way).</p></li>
+      <li><p><b>Outcome</b> <span class="no">Two charges, one seat.</span> Someone gets a refund email and an apology. On a sold-out show, that&#39;s a support ticket, a chargeback risk and a tweet.</p></li>
+    </ol>
+  </div>
+  <p>What else could SeatSwift have done at 20:00:07? Only one other thing: <b>refuse Bob&#39;s purchase</b>. Oregon could say: &quot;I can&#39;t confirm with the rest of the system right now, so I won&#39;t sell seats. Please try again in a few minutes.&quot; Bob is annoyed, but nobody is double-charged.</p>
+  <p>That choice, during a partition, between <i>answering anyway</i> and <i>refusing to answer</i>, is the CAP theorem.</p>
+
+  <h2>7. CAP, stated correctly</h2>
+  <p>CAP (Eric Brewer&#39;s conjecture, proved by Gilbert and Lynch in 2002) talks about three properties:</p>
+  <ul>
+    <li><b>C, consistency</b>: here it means <b>linearizability</b>: the system behaves as if there were one copy of the data, and every read sees the latest completed write. (This is a different &quot;C&quot; from the C in ACID transactions.)</li>
+    <li><b>A, availability</b>: every request that reaches a non-failed node gets a non-error response (not &quot;try later&quot;).</li>
+    <li><b>P, partition tolerance</b>: the system keeps working when the network drops messages between nodes.</li>
+  </ul>
+  <p>The theorem: <b>when a network partition happens, a system must give up either C or A.</b> Oregon either sells (available, not consistent: double sale) or refuses (consistent, not available).</p>
+  <p>Partitions are not optional. Real networks partition, so P is a fact of life, not a feature you choose. The real choice is <b>CP or AP during a partition</b>. When there is no partition, a well-built system can be both consistent and available.</p>
+  <table class="tbl">
+    <thead><tr><th>During a partition</th><th>What SeatSwift does</th><th>You get</th><th>You pay</th></tr></thead>
+    <tbody>
+      <tr><td>CP (choose consistency)</td><td>Only the side that holds the majority or the leader sells; the other side returns &quot;try again&quot;</td><td>No double sales, ever</td><td>Some users get errors until the network heals</td></tr>
+      <tr><td>AP (choose availability)</td><td>Both sides keep selling</td><td>Every user gets an answer</td><td>Conflicts to detect and fix afterwards (refunds, merges)</td></tr>
+    </tbody>
+  </table>
+  <p>CP gives you correctness at the cost of errors for some users during a partition; choose it when a wrong answer costs real money or trust (seat inventory, bank balances, unique usernames). AP gives you uptime at the cost of reconciliation; choose it when conflicts are cheap or mergeable (likes, view counts, a shopping cart where you can union two versions).</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Saying &quot;CAP means pick any two of three&quot; and then describing a &quot;CA system&quot;. On a network, you can&#39;t opt out of partitions, so a &quot;CA&quot; distributed system just hasn&#39;t decided what it does when one happens (and usually does something bad). A single-node database is &quot;CA&quot; only because it isn&#39;t distributed. Also note CAP is about one narrow situation (a partition) and one strict kind of consistency; it says nothing about latency, which is where PACELC comes in.</p></div>
+
+  <h2>8. PACELC: the trade-off you pay every day</h2>
+  <p>Partitions are rare. What about the other 99.9% of the time? Daniel Abadi&#39;s <b>PACELC</b> extends CAP: <b>if Partition, choose Availability or Consistency; Else, choose Latency or Consistency.</b></p>
+  <p>The &quot;else&quot; half is about normal days. Suppose SeatSwift goes CP and wants every sale confirmed by both regions before telling the buyer &quot;sold&quot; (this is <b>synchronous replication</b>: the write isn&#39;t acknowledged until the other copy has it). Every purchase now waits for at least one Virginia–Oregon round trip, ~60–80&nbsp;ms, and protocols that need two round trips pay double. If you skip the wait (asynchronous replication), purchases are fast, but a reader in the other region may briefly see stale data, and a site failure can lose the last few writes.</p>
+  <table class="tbl">
+    <thead><tr><th>System (default setup)</th><th>Partition: A or C?</th><th>Else: L or C?</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Google Spanner, CockroachDB</td><td>C</td><td>C</td><td>Consensus (Paxos/Raft) per data range; cross-region writes pay round trips</td></tr>
+      <tr><td>Cassandra, DynamoDB-style stores</td><td>A</td><td>L</td><td>Tunable per query (quorum reads/writes push toward C); next lesson</td></tr>
+      <tr><td>Single-primary Postgres/MySQL with async replicas</td><td>C for writes (only the primary writes)</td><td>L for replica reads</td><td>Replica reads can be stale; failover to a replica can lose the last few writes</td></tr>
+    </tbody>
+  </table>
+  <p>Classifications like this are rough: most real databases let you tune the behavior per table or per query. The value of PACELC is the question it forces: <i>for this feature, am I willing to wait for agreement on every write?</i></p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;For seat inventory I want strong consistency: one leader per event&#39;s inventory, or a consensus-backed database. During a partition the minority side returns a retryable error rather than risk a double sale; that&#39;s CP. On normal days I accept a few tens of milliseconds of extra write latency for that, which is PACELC&#39;s EC. For browsing pages, event descriptions and the &#39;2,140 people viewing&#39; counter, I&#39;ll take AP/EL: serve from the nearest region and let it be a few seconds stale.&quot;</p></div>
+
+  <h2>9. Consistency models: what users can observe</h2>
+  <p>&quot;Strong vs eventual&quot; is too coarse. A <b>consistency model</b> is a promise about what reads can return. Here are the ones you&#39;ll use, each with a SeatSwift story where it is violated.</p>
+  <table class="tbl">
+    <thead><tr><th>Model</th><th>The promise</th><th>Violation story</th><th>Typical way to get it</th></tr></thead>
+    <tbody>
+      <tr><td>Strong (linearizable)</td><td>Behaves like one copy; once a write completes, every later read sees it</td><td>Two people both see 14C as available after it sold</td><td>Single leader, or consensus (Raft/Paxos); reads go to the leader or a quorum</td></tr>
+      <tr><td>Read-your-writes</td><td>You always see your own writes (others may lag)</td><td>Alice buys, refreshes &quot;My tickets&quot;, and it&#39;s empty</td><td>Read from the primary for a short window after your write, or track the write&#39;s position and wait for a replica to catch up</td></tr>
+      <tr><td>Monotonic reads</td><td>You never see time go backwards</td><td>Refresh 1 shows the ticket, refresh 2 (different replica) doesn&#39;t</td><td>Pin a user&#39;s reads to one replica (session stickiness)</td></tr>
+      <tr><td>Eventual</td><td>If writes stop, all copies converge eventually</td><td>Viewer count differs by region for a few seconds (fine)</td><td>Async replication; the default for caches and replicas</td></tr>
+    </tbody>
+  </table>
+  <p>Read-your-writes deserves a trace, because it&#39;s the bug every growing product hits once it adds <b>read replicas</b> (copies of the database that serve reads):</p>
+  <div class="trace"><b>Trace: the missing ticket</b>
+    <ol>
+      <li><p><b>t = 0 ms</b> Alice&#39;s purchase commits on the primary database.</p></li>
+      <li><p><b>t = 40 ms</b> The app redirects her to &quot;My tickets&quot;. That page is a read, so the load balancer sends the query to a read replica.</p></li>
+      <li><p><b>t = 41 ms</b> Replication lag right now is 250&nbsp;ms (normal under load; it can spike to seconds). The replica doesn&#39;t have the purchase yet. <span class="no">The page shows no tickets.</span> Alice panics and buys again.</p></li>
+      <li><p><b>Fix</b> After a user writes, set a short-lived marker (e.g. a cookie <code>wrote_at</code>); for the next ~5 seconds, route that user&#39;s reads to the primary. Better: store the primary&#39;s log position from the commit and only use a replica that has replayed past it. <span class="yes">Alice sees her ticket; everyone else still reads from replicas.</span></p></li>
+    </ol>
+  </div>
+  <p>Stronger models cost you latency and availability; weaker ones cost you user confusion and application complexity. The move a senior engineer makes is to <b>choose per feature</b>, not per company.</p>
+
+  <h2>10. Putting it together for SeatSwift</h2>
+  <table class="tbl">
+    <thead><tr><th>Feature</th><th>Model</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Seat holds and sales</td><td>Strong (CP)</td><td>A double sale is money and trust. Errors during a rare partition are acceptable.</td></tr>
+      <tr><td>&quot;My tickets&quot; page</td><td>Read-your-writes</td><td>Users must see what they just bought; others&#39; purchases can lag.</td></tr>
+      <tr><td>Event pages, artist bios</td><td>Eventual, cached at the CDN</td><td>Stale by a minute is harmless; latency matters.</td></tr>
+      <tr><td>&quot;2,140 people viewing&quot;</td><td>Eventual (AP)</td><td>Approximate by design.</td></tr>
+    </tbody>
+  </table>
+  <p>A common practical shape: route all writes for one event&#39;s inventory to a single home region (its leader), serve reads from everywhere. Users far from the home region pay ~70&nbsp;ms more on checkout, which is invisible next to a 2-second payment call, and the partition story can&#39;t happen.</p>
+
+  <div data-quiz='[
+    {"q":"SeatSwift calls the payment provider and gets a timeout after 3 seconds. What do you actually know?","o":["The charge failed, so it is safe to show an error and stop","The charge succeeded, because timeouts only happen on slow successes","Nothing about whether the charge happened; retry only with an idempotency key","The network is partitioned, so CAP says to choose availability"],"a":2,"why":"A lost request, a crash mid-work and a lost reply all look like a timeout. Retrying is only safe if the operation is idempotent, which is what the idempotency key buys you."},
+    {"q":"Which statement of CAP is correct?","o":["Pick any two of consistency, availability and partition tolerance","During a network partition, a system must give up either linearizable consistency or availability","A system cannot be consistent and available even when the network is healthy","CAP is about the latency cost of synchronous replication"],"a":1,"why":"Partitions happen whether you like it or not; CAP says what you must give up when one does. With a healthy network you can have both. Latency is the PACELC Else half."},
+    {"q":"SeatSwift replicates every seat sale synchronously from Virginia to Oregon before confirming. In PACELC terms, what are they paying on a normal day?","o":["Nothing, synchronous replication is free when there is no partition","Availability: some buyers get errors","Latency: each sale waits for at least one cross-country round trip, roughly 60 to 80 ms","Durability: writes can be lost"],"a":2,"why":"Else, Latency or Consistency. Waiting for the other region gives consistency and costs at least one round trip of latency on every write."},
+    {"q":"Alice buys a ticket, is redirected to My tickets, and sees nothing; a refresh 2 seconds later shows it. Which guarantee was missing?","o":["Read-your-writes","Linearizability of the payment provider","Partition tolerance","Monotonic writes on the replica"],"a":0,"why":"Her own write was not visible to her own subsequent read, because the read went to a lagging replica. Route her reads to the primary briefly, or wait for a replica that has caught up to her write."},
+    {"q":"Which pairing is the best choice?","o":["Seat inventory: eventual; viewer counter: strong","Seat inventory: strong (CP); viewer counter: eventual (AP)","Everything strong, because consistency is always better","Everything eventual, because availability is always better"],"a":1,"why":"Choose per feature. A double-sold seat costs money and trust; a viewer count that is off by a few for a few seconds costs nothing, so it should not pay the latency and availability price of strong consistency."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Distribution makes three free things expensive: knowing whether a call happened, delivering messages, and agreeing on time.</li>
+    <li>A timeout means &quot;unknown&quot;, not &quot;failed&quot;. Make cross-machine writes idempotent so retries are safe.</li>
+    <li>CAP: during a partition, choose consistency (some requests error) or availability (conflicts to fix later). Partitions aren&#39;t optional, so there is no real &quot;CA&quot;.</li>
+    <li>PACELC: on normal days, strong consistency across distance costs latency (Virginia–Oregon ≈ 60–80&nbsp;ms per round trip).</li>
+    <li>Pick consistency per feature: strong for inventory and money, read-your-writes for a user&#39;s own data, eventual for counters and content.</li>
+  </ul>
+</template>

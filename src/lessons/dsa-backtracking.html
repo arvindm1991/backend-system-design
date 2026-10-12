@@ -1,0 +1,245 @@
+<template id="tpl-dsa-backtracking" data-title="Backtracking" data-part="Part 5 · Coding patterns (DSA)" data-order="405">
+  <h1>Backtracking: generate every option, cleverly</h1>
+  <p class="lede">After this lesson you will recognise &quot;list all the possibilities&quot; problems, draw their decision tree, and write them with one three-line template: <b>choose → explore → un-choose</b>. You will solve subsets, permutations and combination sum, know why they are exponential (and why that&#39;s fine), and use pruning to skip branches that can&#39;t work.</p>
+
+  <h2>1. The trigger: &quot;all&quot;, &quot;every&quot;, and a tiny n</h2>
+  <p>Running example: Ms. Rivera runs the reading club at Lincoln Middle School. She keeps asking questions like these:</p>
+  <ul>
+    <li>&quot;Which <b>combinations</b> of these 3 books could I put on this month&#39;s list?&quot; (all subsets)</li>
+    <li>&quot;In what <b>orders</b> could these 3 students present?&quot; (all permutations)</li>
+    <li>&quot;Which sets of reading assignments add up to <b>exactly</b> 7 hours?&quot; (combination sum)</li>
+  </ul>
+  <p>Each question asks you to <b>list every option</b>, not just count them or find the best one. Listing everything means the answer itself can be huge: 3 books have 2 × 2 × 2 = 8 possible lists; 20 books have over a million. So these problems always come with a <b>small n</b>.</p>
+  <table class="tbl">
+    <thead><tr><th>You read...</th><th>Think...</th></tr></thead>
+    <tbody>
+      <tr><td>&quot;return <b>all</b> subsets / combinations / permutations / arrangements&quot;</td><td>Backtracking</td></tr>
+      <tr><td>&quot;generate every valid ...&quot; (parentheses, phone-number letter combos, IP addresses)</td><td>Backtracking</td></tr>
+      <tr><td>&quot;place N queens so none attack&quot;, &quot;solve the Sudoku&quot;, &quot;find the word in the grid&quot;</td><td>Backtracking with pruning</td></tr>
+      <tr><td>constraints like n &le; 10, n &le; 15, n &le; 20</td><td>Exponential time is expected and OK</td></tr>
+      <tr><td>&quot;<b>how many</b> ways&quot; or &quot;<b>min/max</b> ...&quot; with bigger n</td><td>Probably DP instead (next lesson)</td></tr>
+    </tbody>
+  </table>
+  <p>Recall the constraint rule from the approach lesson: n &le; 20 means 2<sup>n</sup> (about a million) is fine; n &le; 10 means even n! (3.6 million) is fine. A tiny n is the problem setter telling you &quot;yes, try everything&quot;.</p>
+
+  <h2>2. The intuition: a decision tree</h2>
+  <p>Think of choosing an outfit: first pick a shirt, then (for that shirt) pick trousers, then shoes. If you want to see every outfit, you try a shirt, try each trousers with it, and when you&#39;re done with that shirt you <b>take it off</b> and try the next one. &quot;Take it off&quot; is the key move. That is backtracking: <b>make a choice, explore everything that follows from it, then undo the choice</b> so you can try the next one.</p>
+  <p>Every backtracking problem is a walk through a <b>decision tree</b>. Each level is one decision, each branch is one option, and each path from the top to a node is a partial answer. Here is the tree for &quot;all reading lists from books A, B, C&quot;. At each node you may add any book that comes <i>after</i> the last one you added (so you get {A, B} once, never {B, A} again).</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 270" width="100%" role="img" aria-label="Decision tree for subsets of A, B, C. Root is empty; children A, B, C; A has children AB and AC; AB has child ABC; B has child BC. Every node is a subset, 8 in total." style="font-family:inherit">
+      <g style="stroke:var(--muted);stroke-width:1.6">
+        <line x1="340" y1="48" x2="150" y2="108"/>
+        <line x1="340" y1="48" x2="390" y2="108"/>
+        <line x1="340" y1="48" x2="580" y2="108"/>
+        <line x1="150" y1="132" x2="80" y2="182"/>
+        <line x1="150" y1="132" x2="230" y2="182"/>
+        <line x1="80" y1="206" x2="80" y2="236"/>
+        <line x1="390" y1="132" x2="390" y2="182"/>
+      </g>
+      <g style="font-size:13px;font-family:var(--font-mono)">
+        <rect x="305" y="24" width="70" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="340" y="42" text-anchor="middle" style="fill:currentColor">[ ]</text>
+        <rect x="115" y="108" width="70" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="150" y="126" text-anchor="middle" style="fill:currentColor">[A]</text>
+        <rect x="355" y="108" width="70" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="390" y="126" text-anchor="middle" style="fill:currentColor">[B]</text>
+        <rect x="545" y="108" width="70" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="580" y="126" text-anchor="middle" style="fill:currentColor">[C]</text>
+        <rect x="40" y="182" width="80" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="80" y="200" text-anchor="middle" style="fill:currentColor">[A,B]</text>
+        <rect x="190" y="182" width="80" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="230" y="200" text-anchor="middle" style="fill:currentColor">[A,C]</text>
+        <rect x="350" y="182" width="80" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="390" y="200" text-anchor="middle" style="fill:currentColor">[B,C]</text>
+        <rect x="32" y="236" width="96" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="80" y="254" text-anchor="middle" style="fill:currentColor">[A,B,C]</text>
+      </g>
+      <g style="font-size:12px;fill:var(--muted)">
+        <text x="225" y="76">add A</text>
+        <text x="370" y="84">add B</text>
+        <text x="480" y="76">add C</text>
+        <text x="84" y="158">add B</text>
+        <text x="198" y="158">add C</text>
+        <text x="398" y="162">add C</text>
+        <text x="90" y="226">add C</text>
+      </g>
+      <text x="470" y="200" style="fill:currentColor;font-size:13px">8 nodes = 8 subsets</text>
+      <text x="470" y="222" style="fill:var(--muted);font-size:12px">depth-first order of visits:</text>
+      <text x="470" y="242" style="fill:var(--muted);font-size:12px;font-family:var(--font-mono)">[] A AB ABC AC B BC C</text>
+    </svg>
+    <figcaption>The decision tree for subsets of {A, B, C}. Each node is one valid subset. Backtracking walks it depth-first, undoing the last choice each time it goes back up.</figcaption>
+  </figure>
+  <p>Backtracking is really just <b>DFS on this tree</b> (the tree is never built in memory; it exists only as the path of recursive calls). That&#39;s why it follows the graphs lesson.</p>
+
+  <h2>3. The template: choose → explore → un-choose</h2>
+  <pre><code class="lang-js">// In TypeScript you&#39;d add types: result: number[][], current: number[].
+function backtrack(input) {
+  const result = [];
+  const current = [];                 // the partial answer: one path in the tree
+
+  function explore(/* where am I? e.g. start index, remaining amount */) {
+    if (/* current is a complete answer */) {
+      result.push([...current]);      // save a COPY, not current itself
+      return;
+    }
+    for (const option of /* options available from here */) {
+      if (/* option can&#39;t possibly work */) continue;   // pruning
+      current.push(option);           // 1. choose
+      explore(/* the smaller problem */);                // 2. explore
+      current.pop();                  // 3. un-choose (undo exactly what you did)
+    }
+  }
+
+  explore(/* starting state */);
+  return result;
+}</code></pre>
+  <p>Three questions shape every problem:</p>
+  <ol>
+    <li><b>What is a complete answer?</b> (Subsets: every node. Permutations: all n items placed. Combination sum: remaining is exactly 0.)</li>
+    <li><b>What options do I have from here?</b> (Items after the start index? Any unused item? The same item again?)</li>
+    <li><b>When can I give up early?</b> (Already over the target? Already two queens on a diagonal?) That&#39;s <b>pruning</b>.</li>
+  </ol>
+
+  <h2>4. Worked problem: all reading lists (subsets)</h2>
+  <p><b>Problem.</b> Given distinct items, return every subset. For [1, 2, 3]: [], [1], [2], [3], [1,2], [1,3], [2,3], [1,2,3].</p>
+  <p><b>Brute force.</b> The &quot;obvious&quot; approach is nested loops: one loop for &quot;include item 0?&quot;, one inside it for item 1, and so on. That works for exactly 3 items, but you can&#39;t write a variable number of nested loops. Recursion <i>is</i> the variable number of nested loops. (The other brute force, counting from 0 to 2<sup>n</sup> − 1 in binary and reading the bits, is also O(n × 2<sup>n</sup>); it&#39;s a neat trick, but the backtracking version generalises to every other problem in this lesson.)</p>
+  <p><b>Why it&#39;s exponential no matter what.</b> Each item is either in or out: 2 choices, n times, so 2<sup>n</sup> subsets. For n = 10 that&#39;s 1,024; for n = 20, 1,048,576. You can&#39;t output 2<sup>n</sup> things in less than 2<sup>n</sup> steps, so O(n × 2<sup>n</sup>) (each copy costs up to n) is optimal.</p>
+  <pre><code class="lang-js">function subsets(nums) {
+  const result = [];
+  const current = [];
+  function explore(start) {
+    result.push([...current]);              // every node is a complete answer
+    for (let i = start; i &lt; nums.length; i++) {
+      current.push(nums[i]);                // choose
+      explore(i + 1);                       // explore: only items after i
+      current.pop();                        // un-choose
+    }
+  }
+  explore(0);
+  return result;
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: subsets([1, 2, 3]), watching <code>current</code></b></p>
+    <ol>
+      <li><code>explore(0)</code>, current = [] → save []. Loop i = 0: push 1.</li>
+      <li><code>explore(1)</code>, current = [1] → save [1]. Loop i = 1: push 2.</li>
+      <li><code>explore(2)</code>, current = [1,2] → save [1,2]. Loop i = 2: push 3.</li>
+      <li><code>explore(3)</code>, current = [1,2,3] → save [1,2,3]. Loop doesn&#39;t run (3 is not &lt; 3). Return.</li>
+      <li>Back in step 3: pop → current = [1,2]. Loop ends. Return.</li>
+      <li>Back in step 2: pop → current = [1]. Next i = 2: push 3 → <code>explore(3)</code>, current = [1,3] → save [1,3]. Pop → [1]. Return.</li>
+      <li>Back in step 1: pop → current = []. Next i = 1: push 2 → save [2]; inside, push 3 → save [2,3]; pop, pop.</li>
+      <li>Next i = 2: push 3 → save [3]; pop. Done.</li>
+      <li><b>Result:</b> [[], [1], [1,2], [1,2,3], [1,3], [2], [2,3], [3]]: 8 subsets, each exactly once.</li>
+    </ol>
+  </div>
+  <p>The <code>start</code> index is what stops duplicates. Because we only ever add items to the <i>right</i> of the last one, [2, 1] can never be built, so {1, 2} appears once.</p>
+
+  <h2>5. Worked problem: presentation orders (permutations)</h2>
+  <p><b>Problem.</b> Return every ordering of distinct items. [1, 2, 3] has 3 × 2 × 1 = 6: [1,2,3], [1,3,2], [2,1,3], [2,3,1], [3,1,2], [3,2,1]. (n! is said &quot;n factorial&quot;: n × (n − 1) × ... × 1.)</p>
+  <p><b>Brute force.</b> Fill each of the n positions with any of the n items (n<sup>n</sup> sequences), then throw away sequences that repeat an item. For n = 7 that&#39;s 7<sup>7</sup> = 823,543 sequences to build and check, of which only 5,040 are valid. The wasted work: <b>building sequences we could have known were invalid at the second position</b>.</p>
+  <p><b>With the pattern.</b> At each position, only try items not used yet. That&#39;s pruning in its simplest form: we never build an invalid sequence, so the work is about n × n! (35,280 steps for n = 7).</p>
+  <pre><code class="lang-js">function permute(nums) {
+  const result = [];
+  const current = [];
+  const used = new Set();                    // indexes already placed
+  function explore() {
+    if (current.length === nums.length) {    // complete: all positions filled
+      result.push([...current]);
+      return;
+    }
+    for (let i = 0; i &lt; nums.length; i++) { // from 0: order matters now
+      if (used.has(i)) continue;
+      used.add(i); current.push(nums[i]);    // choose
+      explore();                             // explore
+      current.pop(); used.delete(i);         // un-choose BOTH
+    }
+  }
+  explore();
+  return result;
+}</code></pre>
+  <table class="tbl">
+    <thead><tr><th></th><th>Subsets</th><th>Permutations</th></tr></thead>
+    <tbody>
+      <tr><td>Does order matter?</td><td>No: {1,2} = {2,1}</td><td>Yes: [1,2] ≠ [2,1]</td></tr>
+      <tr><td>Loop starts at</td><td><code>start</code> (only items to the right)</td><td><code>0</code>, skipping used items</td></tr>
+      <tr><td>Record an answer when</td><td>At every node</td><td>When <code>current.length === n</code></td></tr>
+      <tr><td>How many answers</td><td>2<sup>n</sup> (n = 10 → 1,024)</td><td>n! (n = 10 → 3,628,800)</td></tr>
+      <tr><td>Time</td><td>O(n × 2<sup>n</sup>)</td><td>O(n × n!)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>6. Worked problem: exactly 7 hours of reading (combination sum)</h2>
+  <p><b>Problem.</b> Reading assignments take 2, 3, 6 or 7 hours. Each can be assigned as many times as you like. List every unique combination that adds up to exactly 7 hours. Answer: [2, 2, 3] and [7].</p>
+  <p><b>Brute force.</b> Generate every sequence of assignments up to some length and keep those summing to 7. With 4 options and lengths up to 3 (7 ÷ 2), that&#39;s 4 + 16 + 64 = 84 sequences, and it produces [2,2,3], [2,3,2] and [3,2,2] as three separate answers that then need de-duplicating. For target 40 with a smallest piece of 2, sequences up to length 20 means up to 4<sup>20</sup> ≈ 10<sup>12</sup>. The wasted work: <b>exploring orderings of the same combination</b>, and <b>continuing down branches already over the target</b>.</p>
+  <p><b>With the pattern</b>, fix both:</p>
+  <ul>
+    <li><b>Never look left</b>: recurse with the <i>same</i> index <code>i</code> (reuse allowed) but never an earlier one. So combinations are built in non-decreasing order, and [3, 2, 2] can&#39;t happen.</li>
+    <li><b>Prune</b>: sort the options first; as soon as one is bigger than what&#39;s remaining, every later one is too, so <code>break</code>.</li>
+  </ul>
+  <pre><code class="lang-js">function combinationSum(candidates, target) {
+  const sorted = [...candidates].sort((a, b) =&gt; a - b);
+  const result = [];
+  const current = [];
+  function explore(start, remaining) {
+    if (remaining === 0) { result.push([...current]); return; }
+    for (let i = start; i &lt; sorted.length; i++) {
+      if (sorted[i] &gt; remaining) break;     // prune this and all bigger options
+      current.push(sorted[i]);               // choose
+      explore(i, remaining - sorted[i]);     // explore (i, not i + 1: reuse allowed)
+      current.pop();                         // un-choose
+    }
+  }
+  explore(0, target);
+  return result;
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: combinationSum([2, 3, 6, 7], 7)</b> (rem = remaining)</p>
+    <ol>
+      <li>[] rem 7 → choose 2 → [2] rem 5 → choose 2 → [2,2] rem 3 → choose 2 → [2,2,2] rem 1.</li>
+      <li>[2,2,2] rem 1: first option is 2 &gt; 1, <b>break</b> (pruned 4 branches at once). Pop → [2,2] rem 3.</li>
+      <li>[2,2] rem 3: next option 3 → [2,2,3] rem 0 → <b>save [2,2,3]</b>. Pop. Next option 6 &gt; 3, break.</li>
+      <li>[2] rem 5: next option 3 → [2,3] rem 2. Options start at index 1 (value 3) &gt; 2, break. Pop. Next 6 &gt; 5, break.</li>
+      <li>[] rem 7: option 3 → [3] rem 4 → option 3 → [3,3] rem 1 → 3 &gt; 1 break. Back to [3]: 6 &gt; 4 break.</li>
+      <li>[] rem 7: option 6 → [6] rem 1 → 6 &gt; 1 break. Option 7 → [7] rem 0 → <b>save [7]</b>.</li>
+      <li><b>Result:</b> [[2,2,3], [7]], with no duplicate orderings and only 9 choices made.</li>
+    </ol>
+  </div>
+  <p>The worst-case time is still exponential (roughly options<sup>target ÷ smallest</sup>), but pruning means real inputs run far below that bound. If the question changed to &quot;<b>how many</b> combinations sum to 7?&quot;, you&#39;d switch to DP and get O(options × target). Listing needs backtracking; counting usually doesn&#39;t.</p>
+
+  <h2>7. Pruning: the difference between fast and frozen</h2>
+  <p>Pruning means checking, <b>before</b> you go deeper, whether this branch can possibly lead to an answer, and skipping it if not. Every branch you cut near the top of the tree removes all of its descendants.</p>
+  <ul>
+    <li><b>Over budget</b>: remaining &lt; 0 (or the next sorted option is too big). Stop.</li>
+    <li><b>Already invalid</b>: in N-Queens, if the queen you just placed attacks another, don&#39;t place anything else on this board.</li>
+    <li><b>Can&#39;t finish</b>: building parentheses, if you&#39;ve used more <code>)</code> than <code>(</code>, no completion can fix it.</li>
+    <li><b>Duplicates in the input</b>: for [1, 1, 2], sort and skip an item equal to the previous one at the same level (<code>if (i &gt; start &amp;&amp; nums[i] === nums[i - 1]) continue;</code>), otherwise you list [1, 2] twice.</li>
+  </ul>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><code>result.push(current)</code> instead of <code>result.push([...current])</code>. Arrays are shared by reference, so every entry in <code>result</code> is the <i>same</i> array, and since you pop it back to empty at the end, you return <code>[[], [], [], ...]</code>. Always save a copy. The second classic: undoing only half of what you did (popping <code>current</code> but forgetting <code>used.delete(i)</code>), which silently blocks items in later branches.</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Getting duplicates like [2,3] and [3,2] in a &quot;combinations&quot; problem. That means your loop starts at 0 when it should start at <code>start</code>. Ask yourself: &quot;does order matter here?&quot; If not, never look left.</p></div>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;The question asks for <i>all</i> combinations and n is at most 20, so an exponential answer is expected. I&#39;ll backtrack: keep a current path, and at each step choose an option, recurse, then undo it. I&#39;ll pass a start index so I don&#39;t produce the same combination in two orders, and prune as soon as the running sum goes over the target. The output alone has up to 2 to the n items, so O(n times 2 to the n) is the best possible.&quot;</p></div>
+
+  <div data-quiz='[
+    {"q":"Generate all valid combinations of n pairs of parentheses, for n up to 8. Which approach fits?","o":["Sliding window","Backtracking: add ( or ) while it can still lead to a valid string","BFS on a grid","Binary search on n"],"a":1,"why":"All valid strings means listing every option: backtracking. Prune when you would use more ) than ( or more than n of either."},
+    {"q":"Given 30 distinct numbers, return how many subsets sum to a target of 500. Which approach fits best?","o":["Backtracking that lists every subset, then count","Dynamic programming over (index, sum) to count without listing","Two pointers","A min-heap"],"a":1,"why":"2 to the 30 is about a billion subsets, too many to list. The question only asks how many, so DP over the sum (about 30 × 500 states) is the right tool. Listing needs backtracking; counting usually does not."},
+    {"q":"Your subsets function returns [[], [], [], [], [], [], [], []] for [1,2,3]. What is the bug?","o":["The loop should start at 0","You pushed current into result without copying it","You forgot the base case","Sets are unordered in JavaScript"],"a":1,"why":"result.push(current) stores the same array 8 times; it ends up empty after all the pops. Use result.push([...current])."},
+    {"q":"Your combinations output contains both [2,3] and [3,2]. What is the most likely fix?","o":["Recurse with i + 1 instead of i","Loop from the start index instead of from 0, so you never pick an earlier item","Sort the result at the end","Use a Map instead of an array"],"a":1,"why":"When order does not matter, only choose items at or after the current start index. That makes each combination appear in exactly one (non-decreasing) order."},
+    {"q":"Which constraint most strongly suggests a backtracking solution is intended?","o":["n up to 100,000","n up to 10, and the output is every arrangement","The array is sorted","The input is a linked list"],"a":1,"why":"Tiny n plus all arrangements means exponential work is expected. With n up to 100,000 you need O(n) or O(n log n)."},
+    {"q":"Word Search: does the word READ appear in a letter grid by moving between adjacent cells without reusing a cell? Which approach fits?","o":["BFS for the shortest path","Backtracking DFS from each cell: mark the cell used, try the 4 neighbours for the next letter, then unmark","Prefix sums over rows","Sort the letters"],"a":1,"why":"You explore paths letter by letter and must undo the used mark when you back out, so other paths can reuse that cell. That is backtracking on a grid, with pruning whenever the next letter does not match."}
+  ]'></div>
+
+  <h2>Labs</h2>
+  <p>Subsets and permutations are the two base shapes; combination sum adds reuse and pruning.</p>
+  <div data-lab="dsa-subsets"></div>
+  <div data-lab="dsa-permutations"></div>
+  <div data-lab="dsa-combination-sum"></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Trigger: &quot;return <b>all</b> ...&quot; (subsets, permutations, combinations, arrangements, valid strings) with a small n (about 20 or less).</li>
+    <li>Picture the decision tree; backtracking is DFS down that tree without ever building it.</li>
+    <li>Template: if complete, save a <b>copy</b>; otherwise for each option: choose → explore → un-choose.</li>
+    <li>Order doesn&#39;t matter → loop from a <code>start</code> index. Order matters → loop from 0 and skip used items. Reuse allowed → recurse with <code>i</code>, not <code>i + 1</code>.</li>
+    <li>Prune early (over target, already invalid, duplicate at the same level); sorting first often makes pruning a simple <code>break</code>.</li>
+    <li>It&#39;s exponential by nature (2<sup>n</sup>, n!), because the output is. If the question only asks &quot;how many&quot; or &quot;best&quot;, reach for DP.</li>
+  </ul>
+</template>

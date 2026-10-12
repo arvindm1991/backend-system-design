@@ -1,0 +1,278 @@
+<template id="tpl-web" data-title="How a request travels" data-part="Part 1 · Foundations" data-order="10">
+  <h1>How a request travels</h1>
+  <p class="lede">Follow one tap in a reading app from the browser to the database and back, with real timings. By the end you'll be able to explain DNS, TCP, TLS, HTTP and cookies in plain words, read a raw request and response, and say where the milliseconds go and how to get them back.</p>
+
+  <h2>1. One tap, about 200 milliseconds</h2>
+  <p>Meet the running example for this whole part: <b>PageTurn</b>, a reading app for schools. Students read leveled books; teachers see who is reading and how much.</p>
+  <p>Ms. Lee teaches class 4B. At 8:10am she opens her laptop on the classroom Wi-Fi and taps <b>This week's progress</b>. About 200ms later a table appears: 28 students, minutes read, books finished.</p>
+  <p>In those 200ms her browser found a server it had never heard of, opened a private channel to it, sent a request, and the server checked who she was, asked a database for 28 rows, turned them into JSON and sent them back. Every system design you will ever draw is this same trip, with more boxes in the middle. So it is worth knowing each step well.</p>
+  <p>Here is the whole journey. We'll walk through each arrow.</p>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 720 470" role="img" aria-label="Sequence diagram: the browser asks DNS for the address, opens a TCP connection and a TLS session with the load balancer, sends GET with a cookie, the load balancer forwards to an app server, which queries Postgres and returns JSON.">
+      <defs>
+        <marker id="web-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="web-ah-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>
+        <marker id="web-ah-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" text-anchor="middle">
+        <!-- lanes -->
+        <g>
+          <rect x="50" y="8" width="104" height="38" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+          <text x="102" y="32" font-weight="600" fill="currentColor">Browser</text>
+          <rect x="182" y="8" width="104" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="234" y="32" font-weight="600" fill="currentColor">DNS resolver</text>
+          <rect x="314" y="8" width="112" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="370" y="32" font-weight="600" fill="currentColor">Load balancer</text>
+          <rect x="454" y="8" width="104" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="506" y="32" font-weight="600" fill="currentColor">App server</text>
+          <rect x="586" y="8" width="104" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="638" y="32" font-weight="600" fill="currentColor">Postgres</text>
+        </g>
+        <g stroke="var(--line)" stroke-width="1.5" stroke-dasharray="4 4">
+          <path d="M102 46 V 460"/><path d="M234 46 V 460"/><path d="M370 46 V 460"/><path d="M506 46 V 460"/><path d="M638 46 V 460"/>
+        </g>
+        <!-- time labels -->
+        <g font-size="12" text-anchor="start" fill="var(--muted)" class="mono">
+          <text x="4" y="84">0 ms</text><text x="4" y="148">5</text><text x="4" y="208">45</text><text x="4" y="270">85</text><text x="4" y="348">106</text><text x="4" y="436">145</text>
+        </g>
+        <!-- 1 DNS -->
+        <path d="M104 80 H 230" stroke="currentColor" stroke-width="1.5" marker-end="url(#web-ah)"/>
+        <text x="168" y="73" fill="currentColor">app.pageturn.com?</text>
+        <path d="M232 104 H 106" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#web-ah)"/>
+        <text x="168" y="97" fill="var(--muted)">203.0.113.10</text>
+        <!-- 2 TCP -->
+        <path d="M104 144 H 366" stroke="currentColor" stroke-width="1.5" marker-end="url(#web-ah)"/>
+        <text x="236" y="137" fill="currentColor">TCP: SYN</text>
+        <path d="M368 164 H 106" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#web-ah)"/>
+        <text x="236" y="180" fill="var(--muted)">SYN-ACK (1 round trip)</text>
+        <!-- 3 TLS -->
+        <path d="M104 204 H 366" stroke="currentColor" stroke-width="1.5" marker-end="url(#web-ah)"/>
+        <text x="236" y="197" fill="currentColor">TLS: ClientHello</text>
+        <path d="M368 224 H 106" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#web-ah)"/>
+        <text x="236" y="240" fill="var(--muted)">certificate + keys (1 round trip)</text>
+        <!-- 4 request -->
+        <path d="M104 266 H 366" stroke="var(--accent)" stroke-width="2" marker-end="url(#web-ah-a)"/>
+        <text x="236" y="259" fill="var(--accent)" font-weight="600">GET /api/classes/c1/progress</text>
+        <text x="236" y="282" fill="var(--muted)" font-size="12">Cookie: sid=9f2c…</text>
+        <path d="M372 296 H 502" stroke="var(--accent)" stroke-width="2" marker-end="url(#web-ah-a)"/>
+        <text x="437" y="289" fill="currentColor" font-size="12">plain HTTP, private net</text>
+        <!-- 5 db -->
+        <rect x="474" y="306" width="64" height="20" rx="4" fill="var(--warn-soft)"/>
+        <text x="506" y="320" font-size="12" fill="var(--warn)">auth 2ms</text>
+        <path d="M508 344 H 634" stroke="currentColor" stroke-width="1.5" marker-end="url(#web-ah)"/>
+        <text x="572" y="337" fill="currentColor">SELECT … $1</text>
+        <path d="M636 368 H 510" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#web-ah)"/>
+        <text x="572" y="384" fill="var(--muted)">28 rows, 12ms</text>
+        <!-- 6 response -->
+        <path d="M504 404 H 374" stroke="var(--ok)" stroke-width="2" marker-end="url(#web-ah-ok)"/>
+        <text x="437" y="397" fill="var(--ok)">200 OK + JSON</text>
+        <path d="M368 432 H 106" stroke="var(--ok)" stroke-width="2" marker-end="url(#web-ah-ok)"/>
+        <text x="236" y="425" fill="var(--ok)" font-weight="600">200 OK · 1.8 KB JSON</text>
+      </g>
+    </svg>
+    <figcaption>One request on a cold start: three round trips just to get a secure connection, then one more for the actual question. Times assume a 40ms round trip from the school to the data center.</figcaption>
+  </figure>
+
+  <h2>2. Finding the server: DNS</h2>
+  <p>Ms. Lee's browser knows a name, <code>app.pageturn.com</code>. Networks route packets to <b>IP addresses</b>, numbers like <code>203.0.113.10</code>. The <b>Domain Name System (DNS)</b> is the internet's phone book that turns one into the other.</p>
+  <p>The browser asks a <b>resolver</b> (usually run by the school's network or the internet provider). If the resolver doesn't know the answer, it asks the root servers which servers handle <code>.com</code>, asks those which servers handle <code>pageturn.com</code>, and asks those for <code>app.pageturn.com</code>. Then it caches the answer.</p>
+  <p>Every DNS answer carries a <b>TTL (time to live)</b>: how many seconds anyone may cache it. PageTurn sets 300 seconds. So the first teacher in the building pays maybe 20–100ms for the full lookup; the next 300 teachers get the answer from the resolver's cache in a millisecond or two, and the browser and operating system cache it too.</p>
+  <div class="callout"><span class="callout-label">Why you care as a builder</span><p>DNS is also a routing tool. Because the answer can change, you can point the name at a different set of servers to fail over to another region, or answer differently depending on where the user is (that's how CDNs send you to a nearby edge). The TTL is the catch: lower TTL means faster failover but more lookups. A TTL of a day means a mistake lives for a day.</p></div>
+
+  <h2>3. Opening a private channel: TCP and TLS</h2>
+  <p>Now the browser has an address. Before it can send its question it needs two things: a reliable connection, and privacy.</p>
+  <h3>TCP: a reliable pipe made of unreliable packets</h3>
+  <p>The internet moves data in small <b>packets</b>, and packets get lost, duplicated and reordered. <b>TCP (Transmission Control Protocol)</b> hides all of that. It numbers every byte, resends what was lost, and hands the other side the bytes in order. To start, the two sides exchange a short "hello" (<code>SYN</code>, <code>SYN-ACK</code>, <code>ACK</code>), which costs one <b>round trip</b>: the time for a message to go there and back.</p>
+  <h3>TLS: encryption plus proof of identity</h3>
+  <p>Ms. Lee's request contains her session cookie and the reply contains student names. On school Wi-Fi anyone nearby could read plain text. <b>TLS (Transport Layer Security)</b>, the "S" in HTTPS, encrypts the bytes, and it also proves the server really is <code>app.pageturn.com</code>: the server shows a <b>certificate</b> signed by a certificate authority the browser already trusts. With TLS 1.3 this setup costs one more round trip.</p>
+  <p>You don't need the cryptography. You need two facts: <b>every new secure connection costs about two round trips before any real work happens</b>, and <b>TLS usually ends at the load balancer</b> ("TLS termination"), so traffic inside the data center is often plain HTTP on a private network.</p>
+  <div class="callout tip"><span class="callout-label">Round trips are the currency</span><p>A round trip from a school in California to a data center in Oregon is around 20–40ms; to Virginia, 60–80ms; across an ocean, 150ms or more. Light in fiber can't go faster. So the cheapest optimization is to <b>not open new connections</b>: browsers keep connections open (keep-alive) and reuse them, and HTTP/2 sends many requests over one connection at the same time. HTTP/3 goes further and combines the transport and TLS handshakes.</p></div>
+
+  <h2>4. The request and the response: HTTP</h2>
+  <p>With a secure pipe open, the browser finally speaks <b>HTTP (Hypertext Transfer Protocol)</b>. HTTP/2 and HTTP/3 send it in a compact binary form, but the meaning is exactly what HTTP/1.1 shows as text, so that's how we'll read it:</p>
+  <pre><code class="lang-http">GET /api/classes/c1/progress?week=2026-W41 HTTP/1.1
+Host: app.pageturn.com
+Accept: application/json
+Cookie: sid=9f2c41e0b7d5
+User-Agent: Mozilla/5.0 (Macintosh; ...)</code></pre>
+  <p>Four parts. The <b>method</b> (<code>GET</code>) says what kind of thing you want to do. The <b>path</b> and <b>query string</b> say which resource. The <b>headers</b> are metadata as <code>Name: value</code> lines. And an optional <b>body</b>, empty here because GET doesn't send one. The response has the same shape, with a <b>status code</b> instead of a method:</p>
+  <pre><code class="lang-http">HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Cache-Control: private, no-store
+X-Request-Id: req_7Hc2kq
+Content-Length: 1843
+
+{"classId":"c1","week":"2026-W41","students":[{"id":"st17","name":"Ana R.","minutes":142,"booksFinished":2}, ...]}</code></pre>
+
+  <h3>Methods: what kind of action</h3>
+  <p>Two words matter here. A method is <b>safe</b> if it doesn't change anything on the server, so it's fine to call it any number of times, prefetch it, or cache it. A method is <b>idempotent</b> if doing it twice has the same effect as doing it once. Idempotency matters because networks fail: if a request times out, the client doesn't know whether it happened, and it can only retry safely if the operation is idempotent.</p>
+  <table class="tbl">
+    <thead><tr><th>Method</th><th>Meaning</th><th>Safe</th><th>Idempotent</th><th>PageTurn example</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET</code></td><td>Read a resource</td><td>Yes</td><td>Yes</td><td><code>GET /api/books/b42</code></td></tr>
+      <tr><td><code>POST</code></td><td>Create something, or trigger an action</td><td>No</td><td>No*</td><td><code>POST /api/reading-sessions</code></td></tr>
+      <tr><td><code>PUT</code></td><td>Replace a resource with this full version</td><td>No</td><td>Yes</td><td><code>PUT /api/students/st17/settings</code></td></tr>
+      <tr><td><code>PATCH</code></td><td>Change some fields</td><td>No</td><td>Not guaranteed</td><td><code>PATCH /api/assignments/a9</code> <code>{"dueAt": ...}</code></td></tr>
+      <tr><td><code>DELETE</code></td><td>Remove a resource</td><td>No</td><td>Yes</td><td><code>DELETE /api/assignments/a9</code></td></tr>
+    </tbody>
+    <caption>* POST can be made safe to retry with an idempotency key. That's in the next lesson.</caption>
+  </table>
+  <p>Why is DELETE idempotent if the second call returns 404? Because idempotency is about the <i>effect on the server</i>, not the response. After one DELETE or five, the assignment is gone.</p>
+
+  <h3>Status codes: what happened</h3>
+  <p>The first digit tells you who should act. <b>2xx</b>: it worked. <b>3xx</b>: look elsewhere. <b>4xx</b>: the client did something wrong, retrying the same request won't help. <b>5xx</b>: the server failed, a retry later might work. The ones you'll actually use:</p>
+  <table class="tbl">
+    <thead><tr><th>Code</th><th>Means</th><th>When PageTurn returns it</th></tr></thead>
+    <tbody>
+      <tr><td><code>200 OK</code></td><td>Success, here's the body</td><td>Progress table loaded</td></tr>
+      <tr><td><code>201 Created</code></td><td>Created a new resource</td><td>A reading session was saved (with a <code>Location</code> header)</td></tr>
+      <tr><td><code>204 No Content</code></td><td>Success, nothing to return</td><td>Assignment deleted</td></tr>
+      <tr><td><code>304 Not Modified</code></td><td>Your cached copy is still good</td><td>Book cover requested with <code>If-None-Match</code></td></tr>
+      <tr><td><code>400 Bad Request</code></td><td>Malformed or invalid input</td><td><code>week=banana</code></td></tr>
+      <tr><td><code>401 Unauthorized</code></td><td>We don't know who you are</td><td>Missing or expired session cookie</td></tr>
+      <tr><td><code>403 Forbidden</code></td><td>We know who you are; you can't do this</td><td>Ms. Lee asks for another teacher's class</td></tr>
+      <tr><td><code>404 Not Found</code></td><td>No such resource</td><td>Class <code>c999</code></td></tr>
+      <tr><td><code>409 Conflict</code></td><td>Clashes with current state</td><td>Editing an assignment someone else just changed</td></tr>
+      <tr><td><code>429 Too Many Requests</code></td><td>Slow down (see <code>Retry-After</code>)</td><td>A script hammering the API</td></tr>
+      <tr><td><code>500 Internal Server Error</code></td><td>Our code crashed</td><td>An unhandled exception</td></tr>
+      <tr><td><code>502 / 504</code></td><td>The load balancer couldn't get a good answer from the app (bad response / timeout)</td><td>App servers down or too slow</td></tr>
+      <tr><td><code>503 Service Unavailable</code></td><td>Temporarily overloaded or in maintenance</td><td>Shedding load at 8:05am</td></tr>
+    </tbody>
+  </table>
+  <p>The 502/504 pair is worth remembering for debugging: they are produced by the load balancer, not your code. If you see them, look at whether app servers are crashing, overloaded, or slower than the load balancer's timeout.</p>
+
+  <h3>Headers that do real work</h3>
+  <ul>
+    <li><code>Host</code>: which site. One load balancer can serve many domains.</li>
+    <li><code>Content-Type</code> / <code>Accept</code>: the format of the body you're sending / the format you want back.</li>
+    <li><code>Authorization</code>: credentials such as <code>Bearer &lt;token&gt;</code> for API clients. Browsers usually use <code>Cookie</code> instead.</li>
+    <li><code>Cache-Control</code>: who may cache the response and for how long. Student data gets <code>private, no-store</code>; a book cover gets <code>public, max-age=31536000</code>.</li>
+    <li><code>ETag</code> + <code>If-None-Match</code>: a fingerprint of the response. The client sends it back, and if nothing changed the server answers <code>304</code> with no body.</li>
+    <li><code>X-Request-Id</code> or <code>traceparent</code>: an ID that follows the request through every service and log line. When Ms. Lee reports "it was slow at 8:10", this is how you find her request.</li>
+  </ul>
+
+  <h2>5. What the server does with a request</h2>
+  <p>The request reaches PageTurn's <b>load balancer</b>, a server whose job is to spread requests across several identical <b>app servers</b> and stop sending to ones that fail health checks. It ends TLS, picks an app server, and forwards the request. (Part 2 covers load balancers properly.)</p>
+  <p>Inside the app server, a request passes through a pipeline. Most web frameworks (Express, Fastify, Next.js route handlers, Rails, Django) look like this:</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 720 200" role="img" aria-label="Pipeline inside the app server: router, parse, authenticate, authorize, validate, handler with database query, serialize, response.">
+      <defs><marker id="web-ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+      <g font-size="13" text-anchor="middle">
+        <rect x="6" y="6" width="708" height="188" rx="12" fill="none" stroke="var(--line)" stroke-dasharray="5 4"/>
+        <text x="20" y="26" text-anchor="start" font-size="12" fill="var(--muted)">App server (stateless: any instance can handle any request)</text>
+        <g>
+          <rect x="20" y="44" width="150" height="58" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="95" y="68" font-weight="600" fill="currentColor">1. Route</text>
+          <text x="95" y="88" font-size="12" fill="var(--muted)">/classes/:id/progress</text>
+          <rect x="196" y="44" width="150" height="58" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="271" y="68" font-weight="600" fill="currentColor">2. Authenticate</text>
+          <text x="271" y="88" font-size="12" fill="var(--muted)">cookie → session → user</text>
+          <rect x="372" y="44" width="150" height="58" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="447" y="68" font-weight="600" fill="currentColor">3. Authorize</text>
+          <text x="447" y="88" font-size="12" fill="var(--muted)">teacher of c1? else 403</text>
+          <rect x="548" y="44" width="150" height="58" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="623" y="68" font-weight="600" fill="currentColor">4. Validate</text>
+          <text x="623" y="88" font-size="12" fill="var(--muted)">week format? else 400</text>
+          <rect x="372" y="124" width="150" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="447" y="148" font-weight="600" fill="var(--accent)">5. Handler</text>
+          <text x="447" y="168" font-size="12" fill="currentColor">one SQL query, 12ms</text>
+          <rect x="196" y="124" width="150" height="58" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="271" y="148" font-weight="600" fill="currentColor">6. Serialize</text>
+          <text x="271" y="168" font-size="12" fill="var(--muted)">rows → JSON, 200</text>
+          <rect x="20" y="124" width="150" height="58" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="95" y="148" font-weight="600" fill="currentColor">7. Log + respond</text>
+          <text x="95" y="168" font-size="12" fill="var(--muted)">200 · 15ms · req_7Hc2kq</text>
+        </g>
+        <g stroke="var(--muted)" stroke-width="1.5" fill="none">
+          <path d="M170 73 H 192" marker-end="url(#web-ah2)"/>
+          <path d="M346 73 H 368" marker-end="url(#web-ah2)"/>
+          <path d="M522 73 H 544" marker-end="url(#web-ah2)"/>
+          <path d="M623 102 V 153 H 526" marker-end="url(#web-ah2)"/>
+          <path d="M372 153 H 350" marker-end="url(#web-ah2)"/>
+          <path d="M196 153 H 174" marker-end="url(#web-ah2)"/>
+        </g>
+      </g>
+    </svg>
+    <figcaption>Each step can end the request early with an error status. Cheap checks run first, so a bad request never reaches the database.</figcaption>
+  </figure>
+  <p>In code, the handler for Ms. Lee's request might look like this. Notice that by the time the handler body runs, steps 1–3 have already happened in shared middleware:</p>
+  <pre><code class="lang-js">app.get('/api/classes/:classId/progress', requireSession, async (req, res) =&gt; {
+  const { classId } = req.params;
+  const week = req.query.week;                      // "2026-W41"
+  if (!/^\d{4}-W\d{2}$/.test(week)) return res.status(400).json({ error: 'invalid_week' });
+  if (!(await isTeacherOf(req.user.id, classId))) return res.status(403).json({ error: 'forbidden' });
+
+  const { rows } = await db.query(
+    `SELECT s.id, s.name, COALESCE(SUM(r.minutes), 0) AS minutes, COUNT(r.finished_at) AS books_finished
+       FROM enrollments e
+       JOIN students s ON s.id = e.student_id
+       LEFT JOIN reading_sessions r ON r.student_id = s.id AND r.week = $2
+      WHERE e.class_id = $1
+      GROUP BY s.id, s.name
+      ORDER BY s.name`,
+    [classId, week]                                 // parameters, never string concatenation
+  );
+  res.json({ classId, week, students: rows });
+});</code></pre>
+  <p>One property of this server is easy to miss and drives all of Part 2: it is <b>stateless</b>. It keeps nothing in memory between requests. Who Ms. Lee is lives in the session store; her data lives in Postgres. That's why the load balancer can send her next request to a different app server and nothing breaks, and why you can add servers at 8am and remove them at 4pm.</p>
+
+  <h2>6. Remembering who you are: cookies</h2>
+  <p>HTTP itself is stateless too. Each request stands alone; the server doesn't remember that Ms. Lee logged in five minutes ago. <b>Cookies</b> fill that gap. When she logged in, the server replied with:</p>
+  <pre><code class="lang-http">HTTP/1.1 302 Found
+Location: /dashboard
+Set-Cookie: sid=9f2c41e0b7d5; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000</code></pre>
+  <p>From then on, the browser automatically attaches <code>Cookie: sid=9f2c41e0b7d5</code> to every request to <code>app.pageturn.com</code>. The value is a random <b>session ID</b>; the server looks it up to find "user u-lee, teacher, district d1". The attributes are security settings, and you should know what each one buys you:</p>
+  <ul>
+    <li><b><code>HttpOnly</code></b>: JavaScript on the page can't read the cookie. If an attacker manages to inject a script (XSS), they still can't steal the session.</li>
+    <li><b><code>Secure</code></b>: only sent over HTTPS, never plain HTTP.</li>
+    <li><b><code>SameSite=Lax</code></b>: not sent on most requests started by <i>other</i> sites, which blocks most cross-site request forgery (CSRF). More in the auth lesson.</li>
+    <li><b><code>Max-Age</code></b>: how long the browser keeps it, here 30 days. The server should also expire sessions on its side.</li>
+  </ul>
+
+  <h2>7. The full trace, with numbers</h2>
+  <p>Put it together. Ms. Lee's laptop has a 40ms round trip to PageTurn's data center. This is her first request of the morning, so nothing is warm yet.</p>
+  <div class="trace">
+    <b>Trace · first request of the day</b>
+    <ol>
+      <li><p><b>0ms.</b> Browser needs an IP for <code>app.pageturn.com</code>. Not in its cache. The school's resolver has it cached from another teacher (TTL 300s, 41s left): <code>203.0.113.10</code>. <span class="ok">~5ms.</span> (A full uncached lookup could have cost 60ms.)</p></li>
+      <li><p><b>5ms.</b> TCP handshake with the load balancer: SYN → SYN-ACK → ACK. <span class="no">1 round trip = 40ms.</span></p></li>
+      <li><p><b>45ms.</b> TLS 1.3 handshake. The certificate for <code>app.pageturn.com</code> checks out. <span class="no">1 round trip = 40ms.</span></p></li>
+      <li><p><b>85ms.</b> Browser sends <code>GET /api/classes/c1/progress?week=2026-W41</code> with the cookie. It takes half a round trip to arrive: <b>105ms</b>.</p></li>
+      <li><p><b>105ms.</b> Load balancer ends TLS, picks app server #3 of 4 (the least busy), forwards over the private network. <b>~1ms.</b></p></li>
+      <li><p><b>106ms.</b> App server: route matches, session <code>9f2c…</code> found in Redis → user <code>u-lee</code> (<b>2ms</b>). She teaches <code>c1</code> → allowed. <code>week</code> is valid.</p></li>
+      <li><p><b>108ms.</b> One SQL query using the index on <code>enrollments.class_id</code>: 28 rows in <b>12ms</b>. Build the JSON (1.8 KB): <b>1ms</b>. Log <code>200 GET /api/classes/:id/progress 15ms req_7Hc2kq</code>.</p></li>
+      <li><p><b>~124ms.</b> Response leaves; half a round trip later, <b>~145ms</b>, it reaches the browser. React renders the table: <b>~20ms</b>. Ms. Lee sees it at about <b>165ms</b>. Real networks add some jitter, so call it 150–250ms.</p></li>
+      <li><p><b>Next tap</b> (she opens a student's detail). DNS cached, connection still open: <span class="ok">no handshakes</span>. Request + 10ms of server work + response ≈ <b>50ms</b> plus render.</p></li>
+    </ol>
+  </div>
+  <p>Look at where the time went on the first request: about <b>80ms of handshakes, 40ms of the request itself crossing the network, and only 15ms of actual server work</b>. That's typical. It tells you where to look when something is slow:</p>
+  <ul>
+    <li><b>Many small requests on page load?</b> Each one pays at least a round trip. Batch them, or fetch in parallel over one HTTP/2 connection.</li>
+    <li><b>Users far away?</b> Move the work closer: a CDN for static files and cacheable responses, or a second region.</li>
+    <li><b>Server time growing?</b> Usually the database: a missing index or many queries per request (the N+1 problem, in the SQL lesson).</li>
+  </ul>
+
+  <div class="callout key"><span class="callout-label">Say it in the interview</span><p>"A request resolves DNS, which is almost always cached, then reuses a keep-alive TLS connection to the load balancer. The LB terminates TLS and forwards to a stateless app server. The app authenticates from the session cookie, checks permissions, runs one indexed query and returns JSON. On a cold connection most of the latency is handshakes, not our code, so I'd keep connections warm, put static assets behind a CDN, and keep each endpoint to one or two queries."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><b>Changing data with GET.</b> A link like <code>GET /assignments/a9/delete</code> looks harmless until a browser prefetches it, an email security scanner "clicks" it, or a crawler follows it, and assignments vanish. GET must be safe. Use <code>DELETE</code> or <code>POST</code> for anything that changes state.</p><p>A close second: <b>returning <code>200</code> with <code>{"error": "..."}</code> in the body.</b> Monitoring, retries, caches and client libraries all read the status code. If it says 200, they believe everything worked.</p></div>
+
+  <div data-quiz='[
+    {"q":"A teacher&#39;s browser already resolved app.pageturn.com 2 minutes ago and has an open HTTPS connection. Which costs does her next request skip?","o":["Only the DNS lookup","DNS, the TCP handshake and the TLS handshake","Only the TLS handshake","None: every request repeats all three"],"a":1,"why":"DNS is cached (TTL not expired) and the keep-alive connection already has TCP and TLS set up. The request only pays one round trip plus server time. That&#39;s why connection reuse is the cheapest speed-up there is."},
+    {"q":"Ms. Lee requests a class she does not teach. She is logged in. What status should the API return?","o":["401 Unauthorized","403 Forbidden","404 Not Found, always","400 Bad Request"],"a":1,"why":"401 means we don&#39;t know who you are (no valid credentials). We do know her; she just isn&#39;t allowed. Some APIs deliberately return 404 to avoid revealing that the class exists, which is a valid choice, but the plain answer is 403."},
+    {"q":"Users see 504 errors during the 8am spike. Your app logs show no errors. What is the most likely story?","o":["The database rejected the queries","The load balancer timed out waiting for overloaded app servers","DNS stopped resolving","The TLS certificate expired"],"a":1,"why":"502 and 504 are produced by the load balancer when the app gives a bad answer or no answer in time. No errors in app logs plus 504s usually means requests were too slow (queued behind others), not that the code threw."},
+    {"q":"Why is DELETE /api/assignments/a9 called idempotent even though the second call returns 404?","o":["Because DELETE requests are cached","Because idempotency is about the effect on the server: after one call or five, the assignment is gone","Because 404 counts as success","It is not idempotent"],"a":1,"why":"Idempotent means repeating the request leaves the server in the same state as doing it once. The response can differ. This is what makes it safe to retry a DELETE after a timeout."},
+    {"q":"Which cookie attribute stops injected JavaScript from reading the session ID?","o":["Secure","SameSite=Lax","HttpOnly","Max-Age"],"a":2,"why":"HttpOnly hides the cookie from document.cookie. Secure only controls HTTPS-only sending, SameSite controls cross-site sending (CSRF), and Max-Age controls lifetime."},
+    {"q":"On a cold first request with a 40ms round trip, roughly how much of the 165ms total was spent inside PageTurn&#39;s app server and database?","o":["About 15ms","About 80ms","About 120ms","Almost all of it"],"a":0,"why":"Around 80ms went to TCP and TLS handshakes and about 40ms to the request and response crossing the network. Server work was about 15ms. Measure before optimizing code: the network often dominates."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li><b>DNS</b> turns a name into an IP address. Answers are cached for their TTL, which also controls how fast you can fail over.</li>
+    <li><b>TCP</b> gives a reliable, ordered byte stream; <b>TLS</b> adds encryption and proves the server's identity. Together they cost about two round trips on a new connection, so reuse connections.</li>
+    <li><b>HTTP</b> is method + path + headers + body, answered by status + headers + body. GET is safe; GET, PUT and DELETE are idempotent; POST is neither unless you add an idempotency key.</li>
+    <li>Status codes tell clients and infrastructure what to do: 4xx don't retry, 5xx maybe retry, 502/504 come from the load balancer.</li>
+    <li>The app server is a <b>stateless</b> pipeline: route → authenticate → authorize → validate → handler → serialize. State lives in the database and session store.</li>
+    <li><b>Cookies</b> carry a session ID on every request. Use <code>HttpOnly</code>, <code>Secure</code> and <code>SameSite</code>.</li>
+  </ul>
+</template>

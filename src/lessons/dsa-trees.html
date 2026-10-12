@@ -1,0 +1,255 @@
+<template id="tpl-dsa-trees" data-title="Recursion &amp; binary trees" data-part="Part 5 · Coding patterns (DSA)" data-order="390">
+  <h1>Recursion &amp; binary trees</h1>
+  <p class="lede">After this lesson recursion will stop feeling like magic. You will use one mental move, <b>"trust the function on the smaller piece, and handle the base case"</b>, to write tree code that is short and correct. You will know the three depth-first orders and when each is useful, do breadth-first (level by level) with a queue, and solve the classics: max depth, path sum, search and validate a binary search tree.</p>
+
+  <p>Running example for the whole lesson: <b>the reading app&#39;s book index</b>, stored as a binary search tree keyed by book id. Seven books, ids 20 to 80:</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 300" width="100%" role="img" aria-label="Binary search tree with root 50, children 30 and 70, and leaves 20, 40, 60, 80, with the three depth-first visit orders listed below" style="font-family:inherit">
+      <g style="font-size:13px">
+        <line x1="340" y1="40" x2="190" y2="110" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="340" y1="40" x2="490" y2="110" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="190" y1="110" x2="115" y2="180" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="190" y1="110" x2="265" y2="180" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="490" y1="110" x2="415" y2="180" style="stroke:var(--line);stroke-width:2"/>
+        <line x1="490" y1="110" x2="565" y2="180" style="stroke:var(--line);stroke-width:2"/>
+        <circle cx="340" cy="40" r="22" style="fill:var(--surface);stroke:var(--accent);stroke-width:2.5"/>
+        <text x="340" y="45" text-anchor="middle" style="fill:currentColor;font-weight:600">50</text>
+        <circle cx="190" cy="110" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="190" y="115" text-anchor="middle" style="fill:currentColor;font-weight:600">30</text>
+        <circle cx="490" cy="110" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="490" y="115" text-anchor="middle" style="fill:currentColor;font-weight:600">70</text>
+        <circle cx="115" cy="180" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="115" y="185" text-anchor="middle" style="fill:currentColor;font-weight:600">20</text>
+        <circle cx="265" cy="180" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="265" y="185" text-anchor="middle" style="fill:currentColor;font-weight:600">40</text>
+        <circle cx="415" cy="180" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="415" y="185" text-anchor="middle" style="fill:currentColor;font-weight:600">60</text>
+        <circle cx="565" cy="180" r="22" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="565" y="185" text-anchor="middle" style="fill:currentColor;font-weight:600">80</text>
+        <text x="380" y="30" style="fill:var(--accent);font-size:12px">root</text>
+        <text x="600" y="185" style="fill:var(--muted);font-size:12px">leaf</text>
+        <text x="40" y="115" style="fill:var(--muted);font-size:12px">left: smaller</text>
+        <text x="540" y="100" style="fill:var(--muted);font-size:12px">right: bigger</text>
+        <text x="20" y="232" style="fill:currentColor"><tspan style="font-weight:600">Pre-order</tspan> (node, left, right):  50 30 20 40 70 60 80</text>
+        <text x="20" y="256" style="fill:currentColor"><tspan style="font-weight:600;fill:var(--accent)">In-order</tspan> (left, node, right):  20 30 40 50 60 70 80  ← sorted!</text>
+        <text x="20" y="280" style="fill:currentColor"><tspan style="font-weight:600">Post-order</tspan> (left, right, node):  20 40 30 60 80 70 50</text>
+      </g>
+    </svg>
+    <figcaption>A binary search tree: every id in a node&#39;s left subtree is smaller, every id in its right subtree is bigger. The three depth-first orders differ only in when you visit the node itself.</figcaption>
+  </figure>
+
+  <h2>1. Recursion: the &quot;trust the function&quot; leap</h2>
+  <p>You&#39;re in a dark cinema and want to know your row number. You can&#39;t count the rows. So you ask the person in front of you, &quot;what row are you in?&quot;, and add one to their answer. They do the same thing. The person in the front row doesn&#39;t ask anyone: they just know they&#39;re in row 1.</p>
+  <p>That is recursion. A <b>recursive function</b> solves a problem by calling itself on a <b>smaller</b> version of the same problem. It has two parts:</p>
+  <ul>
+    <li><b>Base case:</b> the smallest input, answered directly with no further calls (the front row says &quot;1&quot;). Without it, the calls never stop and JavaScript throws <code>RangeError: Maximum call stack size exceeded</code>.</li>
+    <li><b>Recursive case:</b> call yourself on something smaller and combine the result (&quot;their row + 1&quot;).</li>
+  </ul>
+  <p>The hard part is a mindset. Beginners try to trace every call in their head and get lost. Instead, make a <b>leap of faith</b>: <i>assume the function already works for smaller inputs</i>, and only ask &quot;given the right answers for the smaller pieces, how do I build my answer?&quot; If the base case is right and every call is on a smaller piece, the whole thing is right (this is just proof by induction, without the math).</p>
+  <p>Trees are where this pays off, because a tree is made of smaller trees. The node 30 with its children 20 and 40 is a complete tree by itself (a <b>subtree</b>).</p>
+
+  <h2>2. Tree vocabulary in one paragraph</h2>
+  <p>A <b>tree</b> is nodes connected parent-to-child with no loops. The top node is the <b>root</b> (50). A node with no children is a <b>leaf</b> (20, 40, 60, 80). In a <b>binary tree</b> each node has at most two children, <code>left</code> and <code>right</code>. The <b>depth</b> of a tree (also called its height) is the number of nodes on the longest root-to-leaf path: 3 here. A <b>binary search tree (BST)</b> adds a rule: everything in the left subtree is smaller than the node and everything in the right subtree is bigger.</p>
+  <pre><code class="lang-js">// In TypeScript you would add types: left: TreeNode | null, etc.
+class TreeNode {
+  constructor(val, left = null, right = null) {
+    this.val = val;
+    this.left = left;
+    this.right = right;
+  }
+}
+
+// The book index above:
+const root = new TreeNode(50,
+  new TreeNode(30, new TreeNode(20), new TreeNode(40)),
+  new TreeNode(70, new TreeNode(60), new TreeNode(80)));</code></pre>
+  <p>Interview problems (and the labs) often write trees as a level-order array, LeetCode style: <code>[50, 30, 70, 20, 40, 60, 80]</code>. A <code>null</code> means &quot;no child here&quot;, so <code>[1, null, 2]</code> is a root 1 with only a right child 2. The labs give you <code>fromArray</code> to build a tree from that format.</p>
+
+  <h2>3. Your first tree recursion: how many books are in the index?</h2>
+  <p>Apply the leap of faith. If <code>count</code> already works on the two subtrees, the answer for this node is <b>1 (this node) + count(left) + count(right)</b>. The base case: an empty tree (<code>null</code>) has 0 books.</p>
+  <pre><code class="lang-js">function count(node) {
+  if (node === null) return 0;                       // base case
+  return 1 + count(node.left) + count(node.right);   // trust it on the smaller trees
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: <code>count(30)</code> on the subtree 30 → (20, 40)</b>. Indentation = how deep the call stack is.</p>
+    <ol>
+      <li><code>count(30)</code> needs count(20) and count(40).</li>
+      <li>&#160;&#160;<code>count(20)</code> needs count(null) and count(null). Both hit the base case and return 0. So count(20) returns 1 + 0 + 0 = <b>1</b>.</li>
+      <li>&#160;&#160;<code>count(40)</code>: same shape, returns <b>1</b>.</li>
+      <li>Back in <code>count(30)</code>: 1 + 1 + 1 = <b>3</b>.</li>
+      <li>At the root, count(50) = 1 + count(30) + count(70) = 1 + 3 + 3 = <b>7</b>.</li>
+    </ol>
+  </div>
+  <p>Every node is visited once, so this is <b>O(n)</b> time. The memory used is the call stack, at most one frame per level, so <b>O(h)</b> space where h is the height. For a balanced tree, h is about log₂ n (a million nodes is only about 20 levels). For a tree that is really a chain, h = n.</p>
+
+  <h2>4. Depth-first search: three orders</h2>
+  <p><b>Depth-first search (DFS)</b> goes as deep as possible down one branch before backing up. The recursive code is the same three lines in a different order; the only question is <b>when you handle the node itself</b>:</p>
+  <pre><code class="lang-js">function preorder(node, out) {   // node, left, right: copy or print a tree top-down
+  if (node === null) return;
+  out.push(node.val);
+  preorder(node.left, out);
+  preorder(node.right, out);
+}
+function inorder(node, out) {    // left, node, right: a BST comes out SORTED
+  if (node === null) return;
+  inorder(node.left, out);
+  out.push(node.val);
+  inorder(node.right, out);
+}
+function postorder(node, out) {  // left, right, node: children first (sizes, heights, deleting)
+  if (node === null) return;
+  postorder(node.left, out);
+  postorder(node.right, out);
+  out.push(node.val);
+}</code></pre>
+  <p>On our index, the outputs are in the diagram above. The one to remember: <b>in-order on a BST gives sorted order</b>. Post-order is what <code>count</code> did: it needed both children&#39;s answers before computing its own.</p>
+
+  <h2>5. Breadth-first search: level by level with a queue</h2>
+  <p><b>Breadth-first search (BFS)</b> visits the tree one level at a time: 50; then 30, 70; then 20, 40, 60, 80. It uses a <b>queue</b> (first in, first out): take a node from the front, add its children to the back. To keep levels separate, process the queue one level at a time.</p>
+  <table class="tbl">
+    <thead><tr><th>Round</th><th>Queue at start of round (this level)</th><th>Values recorded</th><th>Children collected for next round</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>[50]</td><td>[50]</td><td>[30, 70]</td></tr>
+      <tr><td>2</td><td>[30, 70]</td><td>[30, 70]</td><td>[20, 40, 60, 80]</td></tr>
+      <tr><td>3</td><td>[20, 40, 60, 80]</td><td>[20, 40, 60, 80]</td><td>[] → stop</td></tr>
+    </tbody>
+  </table>
+  <pre><code class="lang-js">function levelOrder(root) {
+  const levels = [];
+  if (root === null) return levels;
+  let queue = [root];
+  while (queue.length &gt; 0) {
+    const values = [];
+    const nextQueue = [];
+    for (const node of queue) {
+      values.push(node.val);
+      if (node.left !== null) nextQueue.push(node.left);
+      if (node.right !== null) nextQueue.push(node.right);
+    }
+    levels.push(values);
+    queue = nextQueue; // avoids queue.shift(), which is O(n) on a JS array
+  }
+  return levels;
+}</code></pre>
+  <p>Use BFS when the problem talks about <b>levels</b> or <b>the nearest / shallowest</b> something (minimum depth, right-side view, &quot;closest leaf&quot;). Use DFS for almost everything else; it is shorter to write.</p>
+
+  <h2>6. The trigger</h2>
+  <ul>
+    <li>Input is a <b><code>TreeNode</code> root</b>, or data that nests (folders, org charts, comments with replies, district → school → class) → recursion / DFS.</li>
+    <li>The answer for a node can be <b>built from the answers for its children</b> (size, depth, sum, &quot;is balanced&quot;) → DFS that <b>returns up</b> (post-order).</li>
+    <li>The answer depends on the <b>path from the root</b> (path sum, valid range in a BST, depth so far) → DFS that <b>passes down</b> a parameter.</li>
+    <li><b>&quot;Level&quot;, &quot;row&quot;, &quot;minimum depth&quot;, &quot;nearest&quot;</b> → BFS with a queue.</li>
+    <li><b>&quot;BST&quot;</b> → use the ordering: go left or right instead of searching everywhere; in-order is sorted.</li>
+  </ul>
+
+  <h2>7. Worked problems</h2>
+  <h3>a) Maximum depth (return up)</h3>
+  <p><b>Brute force:</b> collect every root-to-leaf path into its own array, then take the longest. That copies a path of up to h nodes for each of up to n/2 leaves: roughly <b>O(n · h)</b> time and space. The wasted work: you only needed each path&#39;s <i>length</i>, not the path.</p>
+  <p><b>Pattern:</b> leap of faith. If I know the depth of my left and right subtrees, my depth is 1 + the bigger one. Base case: <code>null</code> has depth 0.</p>
+  <pre><code class="lang-js">function maxDepth(node) {
+  if (node === null) return 0;
+  return 1 + Math.max(maxDepth(node.left), maxDepth(node.right));
+}</code></pre>
+  <p>On our index: leaves return 1, 30 and 70 return 2, the root returns <b>3</b>. <b>O(n)</b> time, O(h) space.</p>
+
+  <h3>b) Path sum (pass down)</h3>
+  <p>&quot;Is there a root-to-leaf path whose ids add up to exactly 100?&quot; <b>Brute force:</b> again, list every root-to-leaf path and sum each one: O(n · h). <b>Pattern:</b> pass down how much is <i>still needed</i>. Each node subtracts its own value; a leaf succeeds if exactly 0 is left.</p>
+  <pre><code class="lang-js">function hasPathSum(node, target) {
+  if (node === null) return false;
+  const remaining = target - node.val;
+  if (node.left === null &amp;&amp; node.right === null) return remaining === 0; // a leaf
+  return hasPathSum(node.left, remaining) || hasPathSum(node.right, remaining);
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: <code>hasPathSum(root, 100)</code></b></p>
+    <ol>
+      <li>At 50: remaining = 100 − 50 = 50. Not a leaf, try left.</li>
+      <li>At 30: remaining = 50 − 30 = 20. Not a leaf, try left.</li>
+      <li>At 20: remaining = 20 − 20 = 0. It&#39;s a leaf and 0 is left: <b>true</b>. The <code>||</code> stops here, so the right side is never explored.</li>
+    </ol>
+  </div>
+  <p><b>O(n)</b> time (each node once at most), O(h) space. Passing the remaining amount down removed the need to store paths.</p>
+
+  <h3>c) Search and validate a BST</h3>
+  <p><b>Search</b> for book 60. <b>Brute force:</b> visit every node until you find it, O(n). <b>BST pattern:</b> compare and go one way. 60 &gt; 50, go right. 60 &lt; 70, go left. Found in 3 steps. That&#39;s <b>O(h)</b>: about 20 steps for a balanced tree of a million books.</p>
+  <pre><code class="lang-js">function searchBST(node, target) {
+  while (node !== null &amp;&amp; node.val !== target) {
+    node = target &lt; node.val ? node.left : node.right;
+  }
+  return node; // the node, or null if absent
+}</code></pre>
+  <p><b>Validate:</b> is a tree a valid BST? The tempting check, &quot;each node&#39;s left child is smaller and right child is bigger&quot;, is <b>wrong</b>. Suppose node 40 is replaced by 55. Locally, 30 → right child 55 looks fine (55 &gt; 30). But 55 is in the <i>left</i> subtree of 50, so it must be smaller than 50. The rule is about <b>all ancestors</b>, not just the parent.</p>
+  <p><b>Pattern:</b> pass down the allowed range <code>(low, high)</code>. The root may be anything: (−∞, ∞). Going left from a node with value v, the upper bound becomes v. Going right, the lower bound becomes v.</p>
+  <div class="trace">
+    <p><b>Trace: validating with 55 in place of 40</b></p>
+    <ol>
+      <li>50 must be in (−∞, ∞). OK. Left child gets (−∞, 50); right child gets (50, ∞).</li>
+      <li>30 must be in (−∞, 50). OK. Its left gets (−∞, 30); its right gets (30, 50).</li>
+      <li>20 in (−∞, 30). OK.</li>
+      <li>55 must be in (30, 50). <b>55 ≥ 50: invalid.</b> Return false.</li>
+    </ol>
+  </div>
+  <p>You&#39;ll write this in the third lab. It&#39;s O(n) time, O(h) space. (An alternative: do an in-order traversal and check the values come out strictly increasing.)</p>
+
+  <h2>8. The templates</h2>
+  <pre><code class="lang-js">// (In TypeScript, type node as TreeNode | null.)
+
+// A. DFS that RETURNS UP: combine the children&#39;s answers (size, depth, sum, balanced?)
+function solve(node) {
+  if (node === null) return BASE_ANSWER;   // e.g. 0, true
+  const leftAnswer = solve(node.left);
+  const rightAnswer = solve(node.right);
+  return combine(node.val, leftAnswer, rightAnswer);
+}
+
+// B. DFS that PASSES DOWN: carry what the path so far implies (remaining sum, valid range, depth)
+function walk(node, info) {
+  if (node === null) return;
+  // use node.val with info; record an answer if this is a leaf, etc.
+  walk(node.left, updatedInfoForLeft);
+  walk(node.right, updatedInfoForRight);
+}
+
+// C. BFS by level
+let queue = [root];   // (skip if root is null)
+while (queue.length &gt; 0) {
+  const nextQueue = [];
+  for (const node of queue) {
+    // handle node
+    if (node.left) nextQueue.push(node.left);
+    if (node.right) nextQueue.push(node.right);
+  }
+  queue = nextQueue;
+}</code></pre>
+  <p>Most tree problems are template A or B. Before coding, answer two questions: <b>what do I pass down?</b> and <b>what do I return up?</b></p>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><b>Forgetting the base case</b> (or putting it after you read <code>node.left</code>): you get <code>Cannot read properties of null</code> or a stack overflow. Make <code>if (node === null)</code> the first line. Other classics: validating a BST by checking only parent vs child; calling the recursive function but not <b>returning</b> or using its result; treating a node with one child as a leaf in path-sum problems (a leaf has <i>no</i> children); and using <code>queue.shift()</code> in a big BFS, which is O(n) per call on a JS array. Also note: very deep trees (a chain of tens of thousands of nodes) can overflow JavaScript&#39;s call stack; the limit varies by engine, so mention an iterative version with your own stack if the interviewer asks.</p></div>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;This is a tree, so I&#39;ll recurse. Base case: a null node returns [0 / true / nothing]. For the recursive case I&#39;ll trust the function on the left and right subtrees and combine: [1 + the max depth] / [pass down the remaining sum] / [pass down the allowed range]. Every node is visited once, so O(n) time, and O(h) space for the call stack, which is O(log n) if the tree is balanced and O(n) if it&#39;s a chain. If the question is about levels or the nearest node, I&#39;d switch to BFS with a queue.&quot;</p></div>
+
+  <div data-quiz='[
+    {"q":"Return the values you would see looking at a binary tree from its right side (the last node of each level). Which approach fits most naturally?","o":["In-order DFS","BFS level by level, taking the last value of each level","Sort the values","Binary search"],"a":1,"why":"Anything about levels is BFS. Process one level per round and record its last node."},
+    {"q":"Given a binary tree, return true if every node&#39;s left and right subtree heights differ by at most 1. Which template fits?","o":["BFS with a queue","DFS that passes a range down","DFS that returns each subtree&#39;s height up (post-order) and checks the difference","In-order traversal, check the values are sorted"],"a":2,"why":"A node needs its children&#39;s heights before it can decide, so compute heights bottom-up and check the balance at each node."},
+    {"q":"A function walks a tree recursively but has no base case for null. What happens?","o":["It returns undefined at the leaves","It crashes reading .left of null (or overflows the call stack)","It visits nodes in a random order","It runs in O(n²)"],"a":1,"why":"Without a base case, the call on a null child tries to read null.left and throws, or recursion never stops. Put if (node === null) first."},
+    {"q":"Find the k-th smallest value in a binary search tree. Which observation makes it easy?","o":["The root is always the median","In-order traversal of a BST visits values in sorted order, so stop at the k-th visit","BFS visits values in sorted order","The leftmost leaf is the largest"],"a":1,"why":"Left, node, right on a BST yields ascending order. Count as you visit and stop at k."},
+    {"q":"A tree has a node 30 whose right child is 55, and 30 is the left child of the root 50. Each parent-child pair satisfies left smaller, right bigger. Is it a valid BST?","o":["Yes, every parent-child pair is fine","No, 55 is in the left subtree of 50, so it must be less than 50","Yes, because 55 is a leaf","Only if 55 has no children"],"a":1,"why":"The BST rule covers all ancestors. Pass a (low, high) range down: 55 must lie in (30, 50) and it does not."},
+    {"q":"What is the space complexity of recursive DFS on a balanced binary tree with 1,000,000 nodes?","o":["O(1)","O(log n): the call stack is about 20 frames deep","O(n): one frame per node at once","O(n²)"],"a":1,"why":"The stack holds one frame per level on the current path. A balanced tree with a million nodes has about 20 levels. A chain-shaped tree would need O(n)."}
+  ]'></div>
+
+  <h2>Labs</h2>
+  <p>Each lab&#39;s editor starts with <code>TreeNode</code> plus <code>fromArray</code> (build from a LeetCode-style level-order array) and <code>toArray</code>. Keep them: the tests use them.</p>
+  <div data-lab="dsa-max-depth"></div>
+  <div data-lab="dsa-level-order"></div>
+  <div data-lab="dsa-validate-bst"></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li><b>Recursion</b> = base case + call yourself on something smaller. Take the leap of faith: assume it works on the subtrees and only write how to combine.</li>
+    <li>Tree DFS is O(n) time and O(h) space (h ≈ log n balanced, n for a chain).</li>
+    <li>Pre-order (node first), in-order (BST comes out <b>sorted</b>), post-order (children first, for sizes and heights).</li>
+    <li><b>BFS with a queue</b> for levels and &quot;nearest&quot;; process one level per round.</li>
+    <li>Ask two questions: <b>what do I pass down?</b> (remaining sum, valid range) and <b>what do I return up?</b> (depth, size, true/false). A BST lets you go one way: O(h) search.</li>
+    <li>Practice next: LeetCode 104 (Max Depth), 112 (Path Sum), 102 (Level Order), 98 (Validate BST), 230 (Kth Smallest in BST), 226 (Invert Tree).</li>
+  </ul>
+</template>

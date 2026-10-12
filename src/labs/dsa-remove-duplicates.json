@@ -1,0 +1,44 @@
+{
+  "id": "dsa-remove-duplicates",
+  "title": "Remove duplicates from a sorted array",
+  "minutes": 15,
+  "prompt": "<p>An import bug wrote some of a student&#39;s quiz scores twice. The scores are <b>sorted</b>. Write <code>removeDuplicates(nums)</code> that removes the duplicates <b>in place</b>: after the call, the first <code>k</code> slots of <code>nums</code> hold each distinct value once, in the original order, and the function returns <code>k</code>. What is left in the array after slot <code>k</code> doesn&#39;t matter. Don&#39;t create a new array and don&#39;t use <code>splice</code>.</p>\n<p>Example: <code>nums = [70, 70, 82, 90, 90, 95]</code> → returns <code>4</code>, and <code>nums.slice(0, 4)</code> is <code>[70, 82, 90, 95]</code>.</p>\n<p>Constraints: 0 ≤ <code>nums.length</code> ≤ 3 × 10<sup>4</sup>; values can be negative; <code>nums</code> is sorted in non-decreasing order.</p>",
+  "starter": "function removeDuplicates(nums) {\n  // TODO: read/write pointers. read visits every slot; write is the next slot to fill\n  // with a value you keep.\n  return nums.length;\n}",
+  "solution": "function removeDuplicates(nums) {\n  if (nums.length === 0) return 0;\n  let write = 1; // nums[0] is always kept\n  for (let read = 1; read < nums.length; read++) {\n    if (nums[read] !== nums[write - 1]) {\n      nums[write] = nums[read];\n      write++;\n    }\n  }\n  return write;\n}",
+  "tests": [
+    {
+      "name": "small example",
+      "code": "const nums = [1, 1, 2];\nconst k = removeDuplicates(nums);\nassertEqual(k, 2);\nassertEqual(nums.slice(0, k), [1, 2]);"
+    },
+    {
+      "name": "quiz scores from the prompt",
+      "code": "const nums = [70, 70, 82, 90, 90, 95];\nconst k = removeDuplicates(nums);\nassertEqual(k, 4);\nassertEqual(nums.slice(0, k), [70, 82, 90, 95]);"
+    },
+    {
+      "name": "long runs of duplicates",
+      "code": "const nums = [0, 0, 1, 1, 1, 2, 2, 3, 3, 4];\nconst k = removeDuplicates(nums);\nassertEqual(k, 5);\nassertEqual(nums.slice(0, k), [0, 1, 2, 3, 4]);"
+    },
+    {
+      "name": "empty array returns 0",
+      "code": "const nums = [];\nassertEqual(removeDuplicates(nums), 0);"
+    },
+    {
+      "name": "single element",
+      "code": "const nums = [7];\nassertEqual(removeDuplicates(nums), 1);\nassertEqual(nums[0], 7);"
+    },
+    {
+      "name": "all the same value",
+      "code": "const nums = [5, 5, 5, 5];\nconst k = removeDuplicates(nums);\nassertEqual(k, 1);\nassertEqual(nums.slice(0, k), [5]);"
+    },
+    {
+      "name": "negatives and no-duplicate arrays",
+      "code": "const a = [-3, -3, -1, 0, 0];\nconst ka = removeDuplicates(a);\nassertEqual(a.slice(0, ka), [-3, -1, 0]);\nconst b = [1, 2, 3];\nassertEqual(removeDuplicates(b), 3);\nassertEqual(b, [1, 2, 3]);"
+    }
+  ],
+  "hints": [
+    "<p>&quot;In place&quot; plus &quot;keep some items in order&quot; is the same-direction (read/write) two-pointer shape.</p>",
+    "<p>Because the array is sorted, a value is new exactly when it differs from the last value you kept, which is <code>nums[write - 1]</code>. When it&#39;s new, copy it to <code>nums[write]</code> and advance <code>write</code>.</p>",
+    "<p>Shape:</p><pre><code>if (nums.length === 0) return 0;\nlet write = 1;\nfor (let read = 1; read &lt; nums.length; read++) {\n  if (nums[read] !== nums[write - 1]) {\n    nums[write] = nums[read];\n    write++;\n  }\n}\nreturn write;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n), extra space O(1).</b> <code>read</code> visits each slot once and nothing ever shifts. The <code>splice</code> version is O(n²) in the worst case because every removal shifts the whole tail of the array.</p><p>The same shape solves &quot;move zeros to the end&quot;, &quot;remove all copies of a value&quot;, and &quot;keep at most two of each&quot; (compare with <code>nums[write - 2]</code>). It&#39;s also how compaction works in storage engines: copy the live records forward, then truncate.</p><p><b>In an interview:</b> &quot;I&#39;ll use a write pointer for the end of the kept prefix and a read pointer that scans. Sorted means duplicates are adjacent, so I keep a value when it differs from the last kept one. O(n) time, O(1) space.&quot;</p>"
+}

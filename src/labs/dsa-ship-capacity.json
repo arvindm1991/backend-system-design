@@ -1,0 +1,44 @@
+{
+  "id": "dsa-ship-capacity",
+  "title": "Capacity to ship packages within D days",
+  "minutes": 25,
+  "prompt": "<p>A conveyor belt has packages with weights <code>weights[i]</code> that must be shipped <b>in the given order</b>. Each day you load packages onto the ship in order, without exceeding its weight capacity, and you can&#39;t split a package. (It&#39;s the same problem as the lesson&#39;s &quot;smallest daily page limit to finish the chapters in D days&quot;.)</p>\n<p>Write <code>shipWithinDays(weights, days)</code> that returns the <b>smallest capacity</b> that ships everything within <code>days</code> days.</p>\n<p>Examples:</p>\n<ul>\n<li><code>shipWithinDays([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5)</code> → <code>15</code>: [1–5], [6, 7], [8], [9], [10]</li>\n<li><code>shipWithinDays([3, 2, 2, 4, 1, 4], 3)</code> → <code>6</code>: [3, 2], [2, 4], [1, 4]</li>\n<li><code>shipWithinDays([30, 50, 20, 40, 60], 3)</code> → <code>80</code></li>\n</ul>\n<p>Constraints: 1 ≤ <code>days</code> ≤ <code>weights.length</code> ≤ 5 × 10<sup>4</sup>, 1 ≤ <code>weights[i]</code> ≤ 500. Trying every capacity from 1 to the total is too slow; binary search the capacity.</p>",
+  "starter": "function shipWithinDays(weights, days) {\n  // TODO:\n  // 1. write daysNeeded(capacity): greedily fill each day in order\n  // 2. binary search capacity between max(weights) and sum(weights)\n  return 0;\n}",
+  "solution": "function daysNeeded(weights, capacity) {\n  let days = 1;\n  let loadToday = 0;\n  for (const weight of weights) {\n    if (loadToday + weight > capacity) {\n      days++;\n      loadToday = 0;\n    }\n    loadToday += weight;\n  }\n  return days;\n}\n\nfunction shipWithinDays(weights, days) {\n  let lo = Math.max(...weights);\n  let hi = weights.reduce((sum, w) => sum + w, 0);\n  while (lo < hi) {\n    const mid = lo + Math.floor((hi - lo) / 2);\n    if (daysNeeded(weights, mid) <= days) {\n      hi = mid;\n    } else {\n      lo = mid + 1;\n    }\n  }\n  return lo;\n}",
+  "tests": [
+    {
+      "name": "classic example",
+      "code": "assertEqual(shipWithinDays([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5), 15);"
+    },
+    {
+      "name": "more examples",
+      "code": "assertEqual(shipWithinDays([3, 2, 2, 4, 1, 4], 3), 6);\nassertEqual(shipWithinDays([1, 2, 3, 1, 1], 4), 3);"
+    },
+    {
+      "name": "chapters from the lesson",
+      "code": "assertEqual(shipWithinDays([30, 50, 20, 40, 60], 3), 80);"
+    },
+    {
+      "name": "one day means the total",
+      "code": "assertEqual(shipWithinDays([4, 8, 2], 1), 14);"
+    },
+    {
+      "name": "one day per package means the heaviest package",
+      "code": "assertEqual(shipWithinDays([4, 8, 2], 3), 8);\nassertEqual(shipWithinDays([7], 1), 7);"
+    },
+    {
+      "name": "capacity can never be below the heaviest package",
+      "code": "assertEqual(shipWithinDays([1, 1, 1, 9], 4), 9);\nassertEqual(shipWithinDays([10, 1, 1, 1, 1], 2), 10);"
+    },
+    {
+      "name": "matches trying every capacity on many small inputs",
+      "code": "let seed = 31;\nconst rand = (m) => { seed = (seed * 48271) % 2147483647; return seed % m; };\nfunction need(w, c) { let d = 1, load = 0; for (const x of w) { if (load + x > c) { d++; load = 0; } load += x; } return d; }\nfunction brute(w, days) { let c = Math.max(...w); while (need(w, c) > days) c++; return c; }\nfor (let k = 0; k < 40; k++) {\n  const w = Array.from({ length: 1 + rand(10) }, () => 1 + rand(12));\n  const d = 1 + rand(w.length);\n  assertEqual(shipWithinDays(w, d), brute(w, d), JSON.stringify(w) + ' days=' + d);\n}"
+    }
+  ],
+  "hints": [
+    "<p>&quot;Smallest capacity such that...&quot;, and a bigger capacity never needs more days. The answers to &quot;does capacity c finish in time?&quot; go no...no yes...yes: binary search on the answer.</p>",
+    "<p>Write <code>daysNeeded(capacity)</code>: walk the weights, adding each to today&#39;s load; if it would go over capacity, start a new day first. Then search between <code>Math.max(...weights)</code> (anything smaller can&#39;t carry the heaviest package) and the total (always one day).</p>",
+    "<p>Shape:</p><pre><code>let lo = Math.max(...weights);\nlet hi = weights.reduce((s, w) =&gt; s + w, 0);\nwhile (lo &lt; hi) {\n  const mid = lo + Math.floor((hi - lo) / 2);\n  if (daysNeeded(weights, mid) &lt;= days) hi = mid;\n  else lo = mid + 1;\n}\nreturn lo;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n · log S), space O(1)</b>, where S is the total weight. Each feasibility check is one O(n) pass, and the binary search needs about log₂(S) checks. Trying every capacity is O(n · S).</p><p>The same shape solves &quot;Koko eating bananas&quot; (minimum eating speed), &quot;split array largest sum&quot;, &quot;minimum days to make bouquets&quot;, and real capacity planning: &quot;what&#39;s the smallest worker pool that drains this backlog within the SLA?&quot;</p><p><b>In an interview:</b> &quot;Feasibility is monotonic: if capacity c works, anything bigger works. So I binary search c between the heaviest package and the total weight, and check each candidate greedily in O(n). That&#39;s O(n log S).&quot;</p>"
+}

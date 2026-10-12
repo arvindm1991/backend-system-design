@@ -1,0 +1,44 @@
+{
+  "id": "dsa-max-profit",
+  "title": "Best Time to Buy and Sell Stock",
+  "minutes": 15,
+  "prompt": "<p>You are given <code>prices</code>, where <code>prices[i]</code> is a stock&#39;s price on day <code>i</code>. Choose one day to buy and a <b>later</b> day to sell. Return the maximum profit you can make. If no profit is possible, return <code>0</code>.</p>\n<p>Write <code>maxProfit(prices)</code>.</p>\n<ul>\n<li><code>maxProfit([7, 1, 5, 3, 6, 4])</code> → <code>5</code> (buy at 1 on day 1, sell at 6 on day 4)</li>\n<li><code>maxProfit([7, 6, 4, 3, 1])</code> → <code>0</code> (prices only fall)</li>\n<li><code>maxProfit([])</code> → <code>0</code></li>\n</ul>\n<p>Constraints: <code>0 &lt;= prices.length &lt;= 10^5</code>, <code>0 &lt;= prices[i] &lt;= 10^4</code>. So O(n²) is too slow: aim for one pass, O(n) time and O(1) extra space.</p>",
+  "starter": "function maxProfit(prices) {\n  // Brute force (correct but O(n^2)):\n  //   for every buy day, for every later sell day, track the best difference.\n  // Goal: one pass. What do you need to remember about the days you've already seen?\n  // TODO\n  return 0;\n}",
+  "solution": "function maxProfit(prices) {\n  let cheapestSoFar = Infinity; // lowest price on any earlier day\n  let bestProfit = 0;\n  for (const price of prices) {\n    const profitIfSoldToday = price - cheapestSoFar;\n    if (profitIfSoldToday > bestProfit) bestProfit = profitIfSoldToday;\n    if (price < cheapestSoFar) cheapestSoFar = price;\n  }\n  return bestProfit;\n}",
+  "tests": [
+    {
+      "name": "the classic example",
+      "code": "assertEqual(maxProfit([7, 1, 5, 3, 6, 4]), 5);"
+    },
+    {
+      "name": "prices only fall: profit 0",
+      "code": "assertEqual(maxProfit([7, 6, 4, 3, 1]), 0);"
+    },
+    {
+      "name": "empty and single-day inputs return 0",
+      "code": "assertEqual(maxProfit([]), 0, 'empty');\nassertEqual(maxProfit([5]), 0, 'one day');"
+    },
+    {
+      "name": "cannot sell before buying (the max comes before the min)",
+      "code": "assertEqual(maxProfit([9, 2, 4, 1]), 2, 'buy 2, sell 4; 9 - 1 is not allowed');"
+    },
+    {
+      "name": "a new low later can lead to a bigger profit",
+      "code": "assertEqual(maxProfit([3, 8, 1, 9]), 8, 'buy 1, sell 9');"
+    },
+    {
+      "name": "flat prices and duplicates",
+      "code": "assertEqual(maxProfit([4, 4, 4]), 0, 'flat');\nassertEqual(maxProfit([2, 2, 5, 2, 5]), 3);"
+    },
+    {
+      "name": "a longer generated input matches brute force",
+      "code": "const prices = [];\nfor (let i = 0; i < 300; i++) prices.push((i * 37) % 101);\nlet expected = 0;\nfor (let b = 0; b < prices.length; b++) for (let s = b + 1; s < prices.length; s++) expected = Math.max(expected, prices[s] - prices[b]);\nassertEqual(maxProfit(prices), expected);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: for each sell day, the best buy day is simply the <b>cheapest day before it</b>. The brute force inner loop keeps re-finding that minimum.</p>",
+    "<p>Idea: walk left to right once, carrying <code>cheapestSoFar</code>. At each day, the best profit if you sell today is <code>price - cheapestSoFar</code>.</p>",
+    "<p>Code shape: <code>let cheapestSoFar = Infinity, best = 0; for (const price of prices) { best = Math.max(best, price - cheapestSoFar); cheapestSoFar = Math.min(cheapestSoFar, price); }</code>. Update the profit <i>before</i> the minimum so you never buy and sell on the same day for a fake gain (here it would only ever be 0, but the order matters in many variants).</p>"
+  ],
+  "explain": "<p><b>Time O(n), space O(1).</b> One pass, two variables. The brute force was O(n²) because its inner loop recomputed the minimum of all earlier days for every sell day; carrying that minimum forward makes each day O(1).</p>\n<p><b>How to say it:</b> &quot;Brute force tries every pair, O(n²). For each sell day the best buy is the cheapest earlier price, so I keep a running minimum while scanning once. That&#39;s O(n) time and O(1) space.&quot; This running-value idea is the simplest form of precomputation, which the prefix sums lesson builds on.</p>"
+}

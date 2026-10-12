@@ -1,0 +1,220 @@
+<template id="tpl-sd-notifications" data-title="Case: Notification system" data-part="Part 4 · System design" data-order="175">
+  <h1>Case study: Notification system</h1>
+  <p class="lede">Every product grows a notification system: login codes by SMS, receipts by email, "your teacher commented" by push. The hard parts aren't sending; they're sending the right thing once, on the right channel, at the right time, without a marketing blast delaying someone's login code. After this lesson you can design a multi-channel notification service with preferences, priorities, retries, deduplication and provider failover, and explain each choice.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: a learning platform. At 8:00pm marketing sends "New summer reading list!" to 20 million users. At 8:01pm, Priya tries to log in and needs a one-time code by SMS. She must get it in seconds, not after 20 million emails.</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>Internal services send a notification by event: "user U, type <code>comment.created</code>, data {...}". They don't pick channels.</li>
+    <li>Channels: push (iOS/Android), email, SMS, in-app inbox.</li>
+    <li>User preferences per category and channel; quiet hours; unsubscribe.</li>
+    <li>Templates with localization; scheduled sends; delivery status tracking.</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li>Priorities: security codes in under ~10 s end to end; social notifications within a minute; bulk campaigns within hours.</li>
+    <li>No duplicates the user can notice (two identical texts look broken and cost money).</li>
+    <li>At-least-once for important messages: a retry is better than a silent drop.</li>
+    <li>Respect providers' rate limits and legal rules (unsubscribe links in marketing email, STOP for SMS).</li>
+  </ul>
+  <p><b>Out of scope:</b> the campaign-building UI, A/B testing of copy.</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Users.</b> 50 million registered, 10 million daily active.</li>
+      <li><b>Daily volume by channel.</b> Push 200 M, in-app 200 M, email 30 M, SMS 1 M (mostly login codes). Total ≈ 430 M sends/day ≈ <b>5,000/second</b> average.</li>
+      <li><b>Campaign peak.</b> 20 M marketing emails sent within an hour = 20,000,000 / 3,600 ≈ <b>5,600 emails/second</b> on top of normal traffic. Email providers cap your account's send rate, so we must throttle to whatever our quota is, not just "go as fast as possible".</li>
+      <li><b>SMS cost.</b> SMS costs real money per message (roughly a cent or more in the US, much more in some countries). 1 M/day is thousands of dollars a day, so a duplicate-sending bug is a finance incident.</li>
+      <li><b>Storage.</b> One log row per send, ~500 bytes: 430 M × 500 B ≈ <b>215 GB/day</b>. Keep 90 days hot (~20 TB) in a store that's cheap for appends; archive the rest.</li>
+    </ol>
+  </div>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-http">POST /v1/notifications
+Idempotency-Key: comment-88123:user-42          (the caller's natural dedupe key)
+{ "user_id": "42",
+  "type": "comment.created",                    (maps to a category + templates)
+  "priority": "normal",                          (critical | normal | bulk)
+  "data": { "teacher": "Ms. Ortiz", "assignment": "Chapter 4 reflection" },
+  "send_at": null }                              (or a future time)
+202 Accepted  { "notification_id": "n_7f3..." }
+
+GET  /v1/notifications/{id}               -- status per channel
+GET  /v1/users/{id}/inbox?cursor=...      -- in-app notifications
+PUT  /v1/users/{id}/preferences           -- { "marketing": {"email": false, "push": true}, ... }
+POST /v1/providers/ses/events             -- webhooks: delivered, bounced, complained</code></pre>
+  <p>The API returns <b>202 Accepted</b> (queued), not 200: sending happens asynchronously. Callers never block on an email provider.</p>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">notifications (notification_id PK, idempotency_key UNIQUE, user_id, type, priority,
+               data JSON, send_at, created_at)
+deliveries    (delivery_id PK, notification_id, channel, status,   -- queued|sent|delivered|failed|suppressed
+               provider, provider_message_id, attempts, last_error, updated_at)
+preferences   (user_id, category, channel, enabled, PRIMARY KEY (user_id, category, channel))
+user_settings (user_id PK, timezone, quiet_start, quiet_end, locale)
+devices       (device_id PK, user_id, platform, push_token, last_seen_at)
+templates     (type, channel, locale, version, subject, body)
+suppressions  (channel, address PK, reason, created_at)   -- hard bounces, spam complaints, SMS STOP</code></pre>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 860 400" width="100%" role="img" aria-label="Notification system architecture" xmlns="http://www.w3.org/2000/svg" style="max-width:860px;font-family:inherit">
+
+<rect x="10" y="170" width="120" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="70.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Producers</text>
+<text x="70.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">orders, auth, LMS</text>
+<rect x="180" y="170" width="140" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="250.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Notification API</text>
+<text x="250.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">validate + dedupe</text>
+<path d="M180,308 a70.0,8 0 0,0 140,0 a70.0,8 0 0,0 -140,0 v54 a70.0,8 0 0,0 140,0 v-54" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="250.0" y="337.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Notification log</text>
+<text x="250.0" y="352.0" text-anchor="middle" font-size="12" fill="var(--muted)">unique(idem key)</text>
+<rect x="360" y="100" width="150" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="500" y1="108" x2="500" y2="138" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="493" y1="108" x2="493" y2="138" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="486" y1="108" x2="486" y2="138" stroke="currentColor" stroke-opacity=".45"/>
+<text x="423.0" y="128.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">High-priority q</text>
+<rect x="360" y="245" width="150" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="500" y1="253" x2="500" y2="283" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="493" y1="253" x2="493" y2="283" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="486" y1="253" x2="486" y2="283" stroke="currentColor" stroke-opacity=".45"/>
+<text x="423.0" y="273.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Bulk queue</text>
+<rect x="550" y="170" width="140" height="56" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="620.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Orchestrator</text>
+<text x="620.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">prefs, template, caps</text>
+<path d="M550,28 a70.0,8 0 0,0 140,0 a70.0,8 0 0,0 -140,0 v54 a70.0,8 0 0,0 140,0 v-54" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="620.0" y="65.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Prefs + templates</text>
+<rect x="725" y="95" width="125" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="787.5" y="117.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Email workers</text>
+<text x="787.5" y="132.0" text-anchor="middle" font-size="12" fill="var(--muted)">SES / SendGrid</text>
+<rect x="725" y="173" width="125" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="787.5" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Push workers</text>
+<text x="787.5" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">APNs / FCM</text>
+<rect x="725" y="251" width="125" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="787.5" y="273.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">SMS workers</text>
+<text x="787.5" y="288.0" text-anchor="middle" font-size="12" fill="var(--muted)">Twilio etc.</text>
+<rect x="550" y="320" width="140" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="680" y1="328" x2="680" y2="358" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="673" y1="328" x2="673" y2="358" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="666" y1="328" x2="666" y2="358" stroke="currentColor" stroke-opacity=".45"/>
+<text x="608.0" y="348.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Dead letters</text>
+<path d="M130.0,198.0 L177.0,198.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M177.0,198.0 L168.0,202.5 L168.0,193.5 Z" fill="currentColor"/>
+<path d="M250.0,226.0 L250.0,297.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M250.0,297.0 L245.5,288.0 L254.5,288.0 Z" fill="currentColor"/>
+<path d="M319.1,170.0 L375.5,147.1" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M375.5,147.1 L368.8,154.7 L365.5,146.3 Z" fill="currentColor"/>
+<path d="M320.0,224.5 L371.4,243.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M371.4,243.9 L361.4,245.0 L364.6,236.5 Z" fill="currentColor"/>
+<path d="M491.7,146.0 L548.2,168.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M548.2,168.9 L538.1,169.7 L541.5,161.3 Z" fill="currentColor"/>
+<path d="M495.8,245.0 L547.2,225.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M547.2,225.5 L540.4,232.9 L537.2,224.5 Z" fill="currentColor"/>
+<path d="M620.0,170.0 L620.0,93.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M620.0,93.0 L624.5,102.0 L615.5,102.0 Z" fill="currentColor"/>
+<path d="M680.1,170.0 L731.1,146.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M731.1,146.3 L724.8,154.1 L721.0,146.0 Z" fill="currentColor"/>
+<path d="M690.0,198.0 L722.0,198.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M722.0,198.0 L713.0,202.5 L713.0,193.5 Z" fill="currentColor"/>
+<path d="M680.1,226.0 L731.1,249.7" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M731.1,249.7 L721.0,250.0 L724.8,241.9 Z" fill="currentColor"/>
+<path d="M725.0,301.0 L680.3,318.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M680.3,318.9 L687.0,311.4 L690.3,319.7 Z" fill="currentColor"/>
+<text x="153.5" y="190.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">event</text>
+<text x="226.0" y="265.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">insert</text>
+<text x="317.3" y="152.6" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">OTP, security</text>
+<text x="309.7" y="248.2" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">digests, promos</text>
+<text x="640.0" y="135.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">read</text>
+<text x="722.6" y="327.9" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">after N tries</text>
+</svg>
+    <figcaption>Producers send events to one API. Separate queues by priority keep bulk traffic from delaying critical messages. The orchestrator applies preferences and templates and fans out to per-channel workers, which talk to external providers. Messages that keep failing land in a dead-letter queue.</figcaption>
+  </figure>
+  <div class="trace">
+    <ol>
+      <li>The comments service calls <code>POST /v1/notifications</code> with key <code>comment-88123:user-42</code>. The API inserts into <code>notifications</code>; the unique key means a retry from the caller inserts nothing new and returns the same ID.</li>
+      <li>Priority <code>normal</code> → the message goes on the normal queue (critical goes to the high-priority queue; campaigns to the bulk queue).</li>
+      <li>The orchestrator loads user 42's preferences: comments are on for push and in-app, off for email. It's 9:30pm and the user's quiet hours start at 9pm, so push is deferred to 7am; in-app is written now.</li>
+      <li>It renders the Spanish template (user locale <code>es</code>) and enqueues a push job for 7:00am local time.</li>
+      <li>At 7:00 the push worker looks up the user's 2 devices, sends to APNs and FCM, and records <code>sent</code> per device. APNs says one token is no longer valid; the worker deletes that device row.</li>
+    </ol>
+  </div>
+
+  <h2>6. Deep dive: priorities and isolation</h2>
+  <p>If everything shares one queue, Priya's login code sits behind 20 million campaign emails. That's a failure of <b>isolation</b>. The fix is a bulkhead (like the watertight compartments in a ship): separate queues and separate worker pools per priority, and ideally per channel.</p>
+  <ul>
+    <li><b>Critical</b> (login codes, password resets, security alerts): own queue, own workers, always-on capacity, ignores quiet hours and frequency caps, can't be unsubscribed.</li>
+    <li><b>Normal</b> (social, assignments): own queue; respects preferences and quiet hours.</li>
+    <li><b>Bulk</b> (campaigns, digests): throttled to a rate well under the provider quota, so there's always room left for critical sends on the same account. Better still, send bulk email from a separate provider account or IP pool so marketing complaints can't hurt the deliverability of login emails.</li>
+  </ul>
+
+  <h2>7. Deep dive: retries, deduplication, and the "exactly once" myth</h2>
+  <p>Three places duplicates come from, and the fix for each:</p>
+  <table class="tbl">
+    <thead><tr><th>Where</th><th>What happens</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Caller retries</td><td>The comments service times out and posts again</td><td>Unique <code>idempotency_key</code> on <code>notifications</code></td></tr>
+      <tr><td>Queue redelivery</td><td>A worker takes a job, crashes before acknowledging; the queue redelivers it</td><td>Worker checks <code>deliveries.status</code> first; skips if already <code>sent</code></td></tr>
+      <tr><td>Provider ambiguity</td><td>Worker calls Twilio, the call times out: did it send or not?</td><td>Use provider idempotency where offered; otherwise choose: retry (risk duplicate) or not (risk loss) per category</td></tr>
+    </tbody>
+  </table>
+  <p>The last row is the honest part. When a call to an external provider times out, you cannot know if it succeeded. No design gives exactly-once over a network to a system you don't control. So decide per category: a login code should retry (a duplicate code is harmless, a missing one locks the user out); a marketing SMS should not (a duplicate costs money and annoys).</p>
+  <p><b>Retry policy.</b> Exponential backoff with jitter: wait ~1 s, 2 s, 4 s, 8 s... each multiplied by a random factor so thousands of failing jobs don't retry in lockstep. Retry on timeouts, 5xx and 429; never retry on permanent errors (invalid phone number, hard bounce). After N attempts, move the job to the dead-letter queue (DLQ) for inspection and alerting.</p>
+  <p><b>Provider failover.</b> Wrap each provider in a circuit breaker: if SMS provider A fails 50% of calls over a minute, stop calling it and route critical SMS to provider B. Keep B warm with a small share of real traffic so you know it works.</p>
+
+  <h2>8. Deep dive: preferences, compliance, and not annoying people</h2>
+  <ul>
+    <li><b>Preference check at send time,</b> not at enqueue time. A user who unsubscribes at 7:59 should not receive the 8:00 campaign queued at 7:00.</li>
+    <li><b>Suppression lists.</b> Provider webhooks report hard bounces and spam complaints. Add those addresses to <code>suppressions</code> and never send again; continuing to mail them damages your sender reputation and gets your mail sent to spam for everyone. SMS "STOP" replies must opt the number out.</li>
+    <li><b>Marketing email</b> needs a working unsubscribe link (US CAN-SPAM), and large senders to Gmail/Yahoo are now expected to support one-click unsubscribe.</li>
+    <li><b>Frequency caps.</b> "At most 3 promotional pushes per user per day": a Redis counter per user per day with a 24 h TTL, checked by the orchestrator.</li>
+    <li><b>Digests.</b> 14 classmates liking your book review shouldn't be 14 pushes. Hold low-priority notifications of the same type for a window (say 10 minutes) and collapse them: "Ana and 13 others liked your review".</li>
+    <li><b>Kids.</b> On an education product, students under 13 typically get in-app notifications only; email and SMS go to teachers or guardians who opted in.</li>
+  </ul>
+
+  <h2>9. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Queues per priority</td><td>Critical messages never wait behind bulk</td><td>More queues and worker pools to run</td><td>You have both transactional and marketing traffic (almost always)</td></tr>
+      <tr><td>Retry on ambiguous timeout</td><td>No lost critical messages</td><td>Occasional duplicates</td><td>Missing is worse than duplicate (login codes)</td></tr>
+      <tr><td>Check preferences at send time</td><td>Unsubscribes take effect immediately</td><td>A lookup per send (cache it)</td><td>Always</td></tr>
+      <tr><td>Digesting / batching</td><td>Fewer, more useful notifications</td><td>Delay of minutes</td><td>Low-priority social events</td></tr>
+      <tr><td>Multiple providers</td><td>Survive a provider outage</td><td>Two integrations, template drift, cost</td><td>For critical channels (SMS codes, transactional email)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Follow-up questions and strong answers</h2>
+  <h3>"How do scheduled notifications work?"</h3>
+  <p>Store them with <code>send_at</code>. A scheduler polls for due rows, e.g. <code>SELECT ... WHERE send_at &lt;= now() AND status = 'scheduled' ORDER BY send_at LIMIT 1000 FOR UPDATE SKIP LOCKED</code>, which lets several scheduler instances grab different rows without blocking each other. It enqueues them and marks them queued in the same transaction. For millions of future sends, partition by time bucket so each poll reads a small slice.</p>
+  <h3>"How do you know a notification was actually delivered?"</h3>
+  <p>For email and SMS, providers call our webhook with delivered, bounced, or failed; we update <code>deliveries</code> by <code>provider_message_id</code>. Push has weaker signals (APNs accepted it; it doesn't tell you the user saw it). For "seen", the app reports opens. Be explicit that "sent" and "delivered" are different states.</p>
+  <h3>"What's your biggest operational risk?"</h3>
+  <p>A bug that sends the wrong thing to everyone, like a test campaign to 50 million users. Mitigations: campaigns require a second approver, send to a small canary percentage first, a global kill switch per campaign, and per-user frequency caps as a last line of defense.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Producers send events, not emails; one service decides channels from preferences. I'd isolate priorities with separate queues and worker pools so a 20-million-email campaign can never delay a login code. Dedupe happens at three layers: an idempotency key on intake, a status check in the worker, and per-category retry rules for provider timeouts, because over a network to a third party you can't get true exactly-once; you choose whether a duplicate or a miss is worse."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>One queue, one worker pool, and "we'll add retries." It works in the demo and fails on the first big campaign: critical messages queue behind bulk ones, retries from a provider outage stampede in sync, and a few thousand hard-bounced addresses keep getting mailed until the provider suspends your account. Name priority isolation, jittered backoff with a dead-letter queue, and suppression lists up front.</p></div>
+
+  <h2>11. Your turn</h2>
+  <p>Design <b>homework reminders</b>: at 7pm local time, remind each of 2 million students (across 4 US time zones) who has an incomplete assignment due tomorrow.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Scheduling:</b> one scheduled job per time zone (Eastern at 7pm ET, Central an hour later...). Each job finds students in districts in that zone with assignments due tomorrow and not submitted <i>at send time</i> (not precomputed hours earlier, or you'll nag kids who just finished). Query the assignment store in pages by school.</p>
+    <p><b>Load:</b> Eastern + Central are roughly 75% of students; say 1.5 M in the 7pm Eastern run and many of them have something due. Spread sends over 10–15 minutes with jitter instead of all at 7:00:00, both to stay within provider rates and to avoid a thundering herd of kids opening the app at once. 1 M pushes in 10 minutes ≈ 1,700/second.</p>
+    <p><b>Dedupe:</b> idempotency key <code>reminder:{student}:{assignment}:{date}</code>, so a rerun of the job after a crash doesn't double-send.</p>
+    <p><b>Policy:</b> students under 13 get in-app/push to the school-managed app only; optional guardian email if the district enabled it and the guardian opted in. Districts can disable reminders. Bulk priority queue so login codes are unaffected.</p>
+  </details>
+
+  <div data-quiz='[{"q":"Why does the notification API return 202 Accepted instead of 200?","o":["202 is faster to parse","The send happens asynchronously later; the caller only learns it was queued","202 means the email was delivered","HTTP forbids 200 for POST"],"a":1,"why":"Callers should never block on a third-party provider. 202 says accepted for processing."},{"q":"A 20 million email campaign is running. How do you make sure login codes are still fast?","o":["Send login codes by email instead","Separate queues and worker pools per priority, and throttle bulk below the provider quota","Make the campaign run at night only","Add more retries"],"a":1,"why":"This is the bulkhead pattern: isolation so one workload cannot starve another."},{"q":"A call to the SMS provider times out. What is true?","o":["The SMS definitely was not sent","The SMS definitely was sent","You cannot know; choose retry or not based on whether a duplicate or a miss is worse for that category","The provider will always retry for you"],"a":2,"why":"Ambiguous failures are inherent with external systems. Decide per category."},{"q":"When should user preferences be checked?","o":["Only when the producer calls the API","At send time, so an unsubscribe takes effect even for already queued messages","Once a week in a batch","Never; providers handle it"],"a":1,"why":"Checking at send time respects the latest preference."},{"q":"Why maintain a suppression list from bounce and complaint webhooks?","o":["To save database space","Repeatedly mailing bad or complaining addresses damages sender reputation and deliverability for everyone","Providers require it for push notifications","It speeds up template rendering"],"a":1,"why":"Mailbox providers judge your domain by bounce and complaint rates."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Producers send events; the notification service owns channels, preferences, templates, and timing.</li>
+    <li>Isolate priorities with separate queues and workers; throttle bulk to leave headroom for critical sends.</li>
+    <li>Dedupe at intake (idempotency key), in workers (status check), and decide per category how to handle ambiguous provider timeouts.</li>
+    <li>Exponential backoff with jitter, a dead-letter queue, and circuit breakers with provider failover.</li>
+    <li>Respect people: send-time preference checks, suppression lists, frequency caps, digests, and child-appropriate channels.</li>
+  </ul>
+</template>

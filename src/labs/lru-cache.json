@@ -1,0 +1,48 @@
+{
+  "id": "lru-cache",
+  "title": "Build an LRU cache with TTLs",
+  "minutes": 25,
+  "prompt": "<p>Build the in-memory cache that sits in front of the reading app&#39;s <code>getBook(bookId)</code> call. It holds at most <code>capacity</code> entries. When it is full and a new key arrives, it evicts the <b>least recently used</b> key (the one nobody has read or written for the longest). Entries can also carry a <b>time to live</b> (TTL), measured with an injected clock so the tests are deterministic.</p>\n<p>API:</p>\n<ul>\n<li><code>new LRUCache(capacity, now)</code>: <code>now</code> is a function returning the current time in ms (defaults to <code>() =&gt; 0</code>).</li>\n<li><code>set(key, value, ttlMs)</code>: store or overwrite. <code>ttlMs</code> is optional; without it the entry never expires. Overwriting resets the TTL and counts as a use.</li>\n<li><code>get(key)</code>: returns the value, or <code>undefined</code> if missing or expired. A hit counts as a use. An entry set at time <code>t</code> with <code>ttlMs = 100</code> is expired once <code>now() &gt;= t + 100</code>; delete it when you notice.</li>\n<li><code>size()</code>: number of entries currently stored.</li>\n</ul>\n<p>Example: capacity 2. <code>set(&#39;a&#39;,1); set(&#39;b&#39;,2); get(&#39;a&#39;); set(&#39;c&#39;,3)</code> evicts <code>b</code>, because <code>a</code> was used more recently.</p>\n<p>Tip: a JavaScript <code>Map</code> remembers insertion order, and <code>map.keys().next().value</code> is the oldest key.</p>",
+  "starter": "class LRUCache {\n  constructor(capacity, now = () => 0) {\n    this.capacity = capacity;\n    this.now = now;\n    this.map = new Map(); // key -> { value, expiresAt }\n  }\n\n  get(key) {\n    const entry = this.map.get(key);\n    if (!entry) return undefined;\n    // TODO: expired? recently used?\n    return entry.value;\n  }\n\n  set(key, value, ttlMs) {\n    // TODO: evict when full, track expiry\n    this.map.set(key, { value, expiresAt: Infinity });\n  }\n\n  size() {\n    return this.map.size;\n  }\n}",
+  "solution": "class LRUCache {\n  constructor(capacity, now = () => 0) {\n    this.capacity = capacity;\n    this.now = now;\n    this.map = new Map(); // insertion order = recency order (oldest first)\n  }\n\n  get(key) {\n    const entry = this.map.get(key);\n    if (!entry) return undefined;\n    if (this.now() >= entry.expiresAt) {\n      this.map.delete(key);           // lazy expiry\n      return undefined;\n    }\n    this.map.delete(key);             // move to the \"most recent\" end\n    this.map.set(key, entry);\n    return entry.value;\n  }\n\n  set(key, value, ttlMs) {\n    const expiresAt = ttlMs === undefined ? Infinity : this.now() + ttlMs;\n    if (this.map.has(key)) this.map.delete(key);\n    else if (this.map.size >= this.capacity) {\n      const oldest = this.map.keys().next().value;\n      this.map.delete(oldest);\n    }\n    this.map.set(key, { value, expiresAt });\n  }\n\n  size() {\n    return this.map.size;\n  }\n}",
+  "tests": [
+    {
+      "name": "stores and reads values; missing keys are undefined",
+      "code": "const c = new LRUCache(3);\nc.set('book:1', 'Charlotte\\'s Web');\nc.set('book:2', 'Holes');\nassertEqual(c.get('book:1'), 'Charlotte\\'s Web');\nassertEqual(c.get('book:9'), undefined);\nassertEqual(c.size(), 2);"
+    },
+    {
+      "name": "evicts the least recently used key when full",
+      "code": "const c = new LRUCache(2);\nc.set('a', 1); c.set('b', 2); c.set('c', 3);\nassertEqual(c.get('a'), undefined, 'a was oldest, should be evicted');\nassertEqual(c.get('b'), 2);\nassertEqual(c.get('c'), 3);\nassertEqual(c.size(), 2);"
+    },
+    {
+      "name": "a get counts as a use",
+      "code": "const c = new LRUCache(2);\nc.set('a', 1); c.set('b', 2);\nc.get('a');\nc.set('c', 3);\nassertEqual(c.get('b'), undefined, 'b should be evicted, a was read recently');\nassertEqual(c.get('a'), 1);"
+    },
+    {
+      "name": "overwriting a key updates it without evicting anything",
+      "code": "const c = new LRUCache(2);\nc.set('a', 1); c.set('b', 2);\nc.set('a', 10);\nassertEqual(c.size(), 2);\nassertEqual(c.get('a'), 10);\nc.set('c', 3);\nassertEqual(c.get('b'), undefined, 'b is now least recent');\nassertEqual(c.get('a'), 10);"
+    },
+    {
+      "name": "entries expire exactly at set time + ttl (injected clock)",
+      "code": "let t = 1000;\nconst c = new LRUCache(5, () => t);\nc.set('session', 'xyz', 100);\nt = 1099; assertEqual(c.get('session'), 'xyz');\nt = 1100; assertEqual(c.get('session'), undefined);\nassertEqual(c.size(), 0, 'expired entry should be removed');"
+    },
+    {
+      "name": "entries without a ttl never expire",
+      "code": "let t = 0;\nconst c = new LRUCache(5, () => t);\nc.set('config', 'v1');\nt = 10 ** 12;\nassertEqual(c.get('config'), 'v1');"
+    },
+    {
+      "name": "overwriting resets the ttl",
+      "code": "let t = 0;\nconst c = new LRUCache(5, () => t);\nc.set('k', 'old', 100);\nt = 90; c.set('k', 'new', 100);\nt = 150; assertEqual(c.get('k'), 'new', 'ttl should restart at t=90');\nt = 190; assertEqual(c.get('k'), undefined);"
+    },
+    {
+      "name": "capacity 1 always keeps only the latest key",
+      "code": "const c = new LRUCache(1);\nc.set('x', 1); c.set('y', 2);\nassertEqual(c.get('x'), undefined);\nassertEqual(c.get('y'), 2);\nassertEqual(c.size(), 1);"
+    }
+  ],
+  "hints": [
+    "<p>Use the <code>Map</code>&#39;s insertion order as your recency list: the first key is the least recently used, the last key is the most recently used.</p>",
+    "<p>To mark a key as &quot;just used&quot;, delete it and set it again. That moves it to the end. Do this on every hit and every overwrite.</p>",
+    "<p>Store <code>{ value, expiresAt }</code> where <code>expiresAt = ttlMs === undefined ? Infinity : now() + ttlMs</code>. In <code>get</code>, if <code>now() &gt;= expiresAt</code>, delete and return <code>undefined</code>. In <code>set</code>, only evict <code>this.map.keys().next().value</code> when the key is new and the map is full.</p>"
+  ],
+  "explain": "<p>You just built the core of what Redis does with <code>maxmemory-policy allkeys-lru</code> plus <code>EXPIRE</code>, and what every CDN edge does with its disk. Real systems approximate LRU (Redis samples a handful of keys instead of keeping a perfect list) because a perfect list costs memory per key, and they expire keys both lazily (on read, like you did) and with a background sweep so dead keys do not sit in memory forever.</p>\n<p><b>In an interview:</b> &quot;I&#39;d put a cache-aside layer in front of the book service, LRU eviction with a TTL of a few minutes. LRU keeps the hot catalog in memory; the TTL bounds how stale a book can get if an invalidation is missed.&quot;</p>"
+}

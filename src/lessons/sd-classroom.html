@@ -1,0 +1,277 @@
+<template id="tpl-sd-classroom" data-title="Case: K-12 learning platform" data-part="Part 4 · System design" data-order="205">
+  <h1>Case study: A K-12 learning platform at district scale</h1>
+  <p class="lede">This is the design question you can answer better than almost anyone, because the hard parts aren't generic scale; they're school realities. Rosters arrive from systems you don't control, a second-grader can't type a password, one district must never see another's data, privacy law shapes the schema, and on the first Monday of September 40,000 kids log in within the same ten minutes. After this lesson you can design the whole platform and talk about each of those realities with mechanisms and numbers.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: a reading platform sold to school districts. Riverside Unified (60,000 students) uses Clever for rostering and Google for sign-in. Ms. Ortiz teaches two 4th-grade sections and assigns a chapter book; her principal and the district's curriculum director want weekly reading reports.</p>
+  <p><b>Users and what they need</b></p>
+  <table class="tbl">
+    <thead><tr><th>Who</th><th>Needs</th><th>Sees</th></tr></thead>
+    <tbody>
+      <tr><td>Student (K–12)</td><td>Log in fast (K–2 without typing), read assigned books, record progress</td><td>Only their own work and their classes</td></tr>
+      <tr><td>Teacher</td><td>Assign to sections, watch progress live during class, give feedback</td><td>Students in sections they teach (including as co-teacher)</td></tr>
+      <tr><td>School admin</td><td>Usage and growth by class and grade</td><td>Everyone in their school</td></tr>
+      <tr><td>District admin</td><td>Rollout, licenses, district reports, rostering settings, data requests</td><td>Their whole district, nothing beyond</td></tr>
+    </tbody>
+  </table>
+  <p><b>Functional:</b> rostering sync from student information systems (SIS) via Clever, ClassLink or OneRoster files; single sign-on (SSO); assignments; reading sessions and progress; teacher live view; school and district reports.</p>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li><b>Tenant isolation:</b> a cross-district data leak is an existential event (contracts, press, law).</li>
+    <li><b>Student privacy:</b> FERPA, COPPA, state student-privacy laws, and per-district data privacy agreements (DPAs).</li>
+    <li><b>Spiky load:</b> school-start minutes, Mondays, and back-to-school weeks.</li>
+    <li><b>Hostile client environment:</b> low-end Chromebooks, shared carts, content filters, one public IP per school.</li>
+    <li><b>Availability during school hours</b> (roughly 7am–4pm local, across four US time zones).</li>
+  </ul>
+  <p><b>Out of scope:</b> content authoring tools, billing, parent app (mention it in privacy).</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Size.</b> 300 districts, 3 million students, 150,000 teachers (a ~20:1 ratio), ~10,000 schools.</li>
+      <li><b>Daily actives.</b> On a school day ~40% of students use it: <b>1.2 million</b>.</li>
+      <li><b>Login spike.</b> Eastern time is roughly 45% of students: ~540,000 actives. If 30% of them log in during 8:00–8:15, that's 162,000 logins / 900 s = 180/s on average, but classes start together at bell times, so 2-minute bursts run 5–10× higher: <b>1,000–2,000 logins/second</b>. Each login is an SSO round trip plus ~10–20 API calls for the home screen: <b>10,000–40,000 requests/second</b> for those minutes, versus a few thousand most of the day.</li>
+      <li><b>Learning events.</b> A reading session sends a progress event every ~30 s for ~20 minutes: 40 events/student/day × 1.2 M = <b>48 M events/day</b>. Squeezed into ~6 school hours (21,600 s): ~2,200/s average, ~10,000/s at peaks.</li>
+      <li><b>Event storage.</b> ~300 bytes each: 48 M × 300 B ≈ 14 GB/day; × 180 school days ≈ <b>2.6 TB/year</b> raw, several times smaller in a columnar warehouse.</li>
+      <li><b>Rosters.</b> 3 M students; with middle and high schoolers in ~6 sections each, ~15 M enrollment rows. On a normal night ~1% changes. In the first three weeks of school, a large share of enrollments change, often daily.</li>
+      <li><b>Teacher live view.</b> If 20,000 teachers have it open, refreshing every 15 s: ~1,300 requests/s, each reading ~30 students' progress rows. Cheap if those rows are precomputed.</li>
+    </ol>
+  </div>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-http">GET  /v1/me                                   -- user, role grants, sections (after SSO)
+GET  /v1/sections/s_401/assignments
+POST /v1/sections/s_401/assignments
+{ "book_id": "bk_charlottes_web", "chapters": [3,4], "due_at": "2026-10-14T23:59:00-04:00" }
+
+POST /v1/reading-events                        -- batched from the client
+{ "events": [ { "event_id": "ev_7c1...", "assignment_id": "a_9", "type": "page_turn",
+                "page": 42, "occurred_at": "2026-10-10T08:21:30Z" }, ... ] }
+202 Accepted
+
+GET  /v1/assignments/a_9/progress              -- teacher live view: one row per student
+GET  /v1/reports/district/minutes-read?from=2026-09-01&amp;group_by=school
+POST /v1/admin/roster-sync/run                 -- district admin: re-sync now; GET for status</code></pre>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">districts   (district_id PK, name, timezone, rostering_source, settings JSONB)
+orgs        (org_id PK, district_id, type,             -- 'district' | 'school'
+             parent_id, source_id)
+users       (user_id PK, district_id, kind,            -- student | teacher | admin
+             given_name, family_initial, grade, status, -- status: active | inactive
+             source, source_id,                         -- e.g. ('clever', '5f1e...')
+             UNIQUE (district_id, source, source_id))
+sso_identities (provider, subject, user_id, PRIMARY KEY (provider, subject))
+sections    (section_id PK, district_id, school_id, name, grade, term, source_id)
+enrollments (district_id, section_id, user_id, role,   -- student | teacher | co_teacher
+             status, PRIMARY KEY (section_id, user_id))
+role_grants (user_id, role, org_id, expires_at)        -- school_admin at org 12, etc.
+assignments (assignment_id PK, district_id, section_id, book_id, due_at, created_by)
+progress    (district_id, assignment_id, student_id, pages_read, minutes, status, updated_at,
+             PRIMARY KEY (assignment_id, student_id))  -- what the live view reads
+-- every table carries district_id; the warehouse gets events keyed by pseudonymous IDs</code></pre>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 890 470" width="100%" role="img" aria-label="K-12 learning platform architecture" xmlns="http://www.w3.org/2000/svg" style="max-width:890px;font-family:inherit">
+
+<rect x="20" y="40" width="160" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25" stroke-dasharray="5 4"/>
+<text x="100.0" y="65.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Clever / ClassLink</text>
+<text x="100.0" y="80.0" text-anchor="middle" font-size="12" fill="var(--muted)">or SIS via OneRoster</text>
+<rect x="20" y="170" width="160" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25" stroke-dasharray="5 4"/>
+<text x="100.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">District IdP</text>
+<text x="100.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">Google, Microsoft, Clever</text>
+<rect x="20" y="300" width="160" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="100.0" y="325.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Students, teachers</text>
+<text x="100.0" y="340.0" text-anchor="middle" font-size="12" fill="var(--muted)">Chromebooks, school NAT</text>
+<rect x="20" y="405" width="160" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="100.0" y="427.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">CDN</text>
+<text x="100.0" y="442.0" text-anchor="middle" font-size="12" fill="var(--muted)">books, audio, app</text>
+<rect x="250" y="40" width="160" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="330.0" y="65.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Roster sync</text>
+<text x="330.0" y="80.0" text-anchor="middle" font-size="12" fill="var(--muted)">diff + upsert</text>
+<rect x="250" y="170" width="160" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="330.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Auth service</text>
+<text x="330.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">SAML / OIDC -&gt; session</text>
+<rect x="250" y="300" width="160" height="56" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="330.0" y="325.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">App API</text>
+<text x="330.0" y="340.0" text-anchor="middle" font-size="12" fill="var(--muted)">tenant-scoped, RBAC</text>
+<path d="M465,158 a85.0,8 0 0,0 170,0 a85.0,8 0 0,0 -170,0 v64 a85.0,8 0 0,0 170,0 v-64" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="550.0" y="192.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Core DB</text>
+<text x="550.0" y="207.0" text-anchor="middle" font-size="12" fill="var(--muted)">Postgres, row-level</text>
+<rect x="465" y="310" width="170" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="625" y1="318" x2="625" y2="348" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="618" y1="318" x2="618" y2="348" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="611" y1="318" x2="611" y2="348" stroke="currentColor" stroke-opacity=".45"/>
+<text x="538.0" y="338.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Learning events</text>
+<rect x="700" y="40" width="170" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="785.0" y="65.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">District reports</text>
+<text x="785.0" y="80.0" text-anchor="middle" font-size="12" fill="var(--muted)">precomputed rollups</text>
+<path d="M700,298 a85.0,8 0 0,0 170,0 a85.0,8 0 0,0 -170,0 v64 a85.0,8 0 0,0 170,0 v-64" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="785.0" y="332.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Warehouse</text>
+<text x="785.0" y="347.0" text-anchor="middle" font-size="12" fill="var(--muted)">pseudonymous IDs</text>
+<path d="M180.0,68.0 L247.0,68.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M247.0,68.0 L238.0,72.5 L238.0,63.5 Z" fill="currentColor"/>
+<path d="M183.0,198.0 L247.0,198.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M247.0,198.0 L238.0,202.5 L238.0,193.5 Z" fill="currentColor"/>
+<path d="M183.0,198.0 L192.0,193.5 L192.0,202.5 Z" fill="currentColor"/>
+<path d="M100.0,300.0 L100.0,229.0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M100.0,229.0 L104.5,238.0 L95.5,238.0 Z" fill="currentColor"/>
+<path d="M180.0,328.0 L247.0,328.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M247.0,328.0 L238.0,332.5 L238.0,323.5 Z" fill="currentColor"/>
+<path d="M100.0,356.0 L100.0,402.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M100.0,402.0 L95.5,393.0 L104.5,393.0 Z" fill="currentColor"/>
+<path d="M380.5,96.0 L475.2,148.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M475.2,148.5 L465.2,148.1 L469.6,140.2 Z" fill="currentColor"/>
+<path d="M410.0,195.1 L462.0,193.2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M462.0,193.2 L453.2,198.0 L452.8,189.0 Z" fill="currentColor"/>
+<path d="M374.6,300.0 L483.7,231.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M483.7,231.6 L478.5,240.2 L473.7,232.6 Z" fill="currentColor"/>
+<path d="M410.0,329.8 L462.0,331.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M462.0,331.0 L452.9,335.3 L453.1,326.3 Z" fill="currentColor"/>
+<path d="M635.0,331.9 L697.0,331.1" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M697.0,331.1 L688.1,335.7 L687.9,326.7 Z" fill="currentColor"/>
+<path d="M785.0,290.0 L785.0,99.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M785.0,99.0 L789.5,108.0 L780.5,108.0 Z" fill="currentColor"/>
+<text x="550" y="222" text-anchor="middle" font-size="12" fill="var(--muted)">security by district</text>
+<text x="213.5" y="58.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">pull / events</text>
+<text x="215.0" y="188.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">SAML / OIDC</text>
+<text x="148.0" y="268.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">login redirect</text>
+<text x="213.5" y="320.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">HTTPS</text>
+<text x="441.9" y="116.3" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">upsert</text>
+<text x="436.0" y="322.4" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">events</text>
+<text x="841.0" y="194.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">nightly / hourly</text>
+</svg>
+    <figcaption>Rosters flow in from Clever/ClassLink/SIS through a sync service. Sign-in is delegated to the district's identity provider. The tenant-scoped App API serves classrooms from a core Postgres database with row-level security by district. Learning events stream to a warehouse that powers precomputed district reports. Book content comes from a CDN.</figcaption>
+  </figure>
+  <div class="trace">
+    <ol>
+      <li><b>Night before:</b> roster sync pulls Riverside's changes from Clever, upserts 412 enrollment changes, deactivates 9 students who left.</li>
+      <li><b>8:02am:</b> Ms. Ortiz's 4th graders click the app in their Clever portal. Clever performs SSO (an OAuth flow) and our auth service maps the Clever user ID to <code>users.user_id</code> via <code>sso_identities</code>, then creates a session.</li>
+      <li><b>8:03am:</b> <code>GET /v1/me</code> returns the student's section; the assigned book's assets load from the CDN.</li>
+      <li><b>8:04–8:24am:</b> the reader batches page-turn events every ~30 s. The API writes them to the event stream and updates the student's <code>progress</code> row (pages, minutes).</li>
+      <li><b>During class:</b> Ms. Ortiz's live view reads 28 <code>progress</code> rows every 15 s and sees who hasn't started.</li>
+      <li><b>Overnight:</b> the warehouse rolls events into per-school, per-grade, per-week aggregates; the district dashboard reads those.</li>
+    </ol>
+  </div>
+
+  <h2>6. Deep dive: rostering (where most real-world pain lives)</h2>
+  <p>Schools keep the official list of who is in which class in their SIS (PowerSchool, Infinite Campus, Skyward...). You get it through a rostering provider (Clever, ClassLink) or OneRoster, a standard format for rosters delivered as an API or CSV files. You don't control any of it, and it is messy.</p>
+  <ul>
+    <li><b>Identity key.</b> Every rostered record has a stable ID from the source. Key on <code>(district_id, source, source_id)</code>, never on email or name: kindergartners often have no email, names change, and two students can share a name.</li>
+    <li><b>Sync as diff + idempotent upsert.</b> Fetch the snapshot (or changes since the last cursor, where supported), stage it, diff against current state, then apply upserts in batches. Re-running a sync after a crash produces the same result.</li>
+    <li><b>Soft delete only.</b> A student missing from today's roster becomes <code>inactive</code>; their reading history stays. They often reappear (moved schools within the district, data entry error), and the same source ID reconnects their history.</li>
+    <li><b>Circuit breaker on bad data.</b> In August, a district's SIS export sometimes arrives half-empty. If a sync would deactivate more than ~10–20% of a district's students or sections, pause it, alert the district and your support team, and keep yesterday's roster. This single rule prevents the worst support incident of the year.</li>
+    <li><b>Co-teachers, substitutes, mid-year moves.</b> Enrollment rows carry a role; substitutes get time-boxed grants (<code>expires_at</code>); a student moving sections loses access to the old class immediately because permissions are checked against current enrollments on every request.</li>
+    <li><b>Visibility for admins.</b> A self-serve "roster health" page (last sync, counts, errors, unmatched SSO logins) turns August's #1 support ticket ("my class is empty") into something district staff can fix themselves.</li>
+  </ul>
+
+  <h2>7. Deep dive: sign-in that works for a 6-year-old</h2>
+  <ul>
+    <li><b>Delegate identity.</b> Districts already run an identity provider (Google Workspace for Education, Microsoft Entra ID) and often a launchpad (Clever, ClassLink). Support SAML 2.0 and OpenID Connect (OIDC), the two SSO standards, and the launchpads' OAuth flows. You never store student passwords.</li>
+    <li><b>K–2 logins.</b> Young students use QR-code badges (held up to the webcam) or picture passwords through the launchpad. Design for it from day one; "type your email" fails in kindergarten.</li>
+    <li><b>Shared devices.</b> Chromebook carts move between classes. Sessions should end at logout or after a short idle time, and the app must never show the previous child's name on a shared device.</li>
+    <li><b>The IdP is in your login path.</b> If Google or Clever is slow at 8:01am, your login is slow. Set timeouts, show a clear message that names the cause, and monitor IdP latency separately so you know whose problem it is.</li>
+  </ul>
+
+  <h2>8. Deep dive: multi-tenancy and authorization</h2>
+  <p>A <b>tenant</b> is a customer whose data must be isolated, here a district. Three models:</p>
+  <table class="tbl">
+    <thead><tr><th>Model</th><th>How</th><th>Gives you</th><th>At the cost of</th></tr></thead>
+    <tbody>
+      <tr><td>Pooled</td><td>Shared tables, every row has <code>district_id</code></td><td>Cheap, simple ops, one schema migration</td><td>Isolation depends on every query being correct; noisy neighbors</td></tr>
+      <tr><td>Siloed</td><td>A database (or schema) per district</td><td>Strong isolation, per-district restore and deletion</td><td>300 databases to migrate and monitor</td></tr>
+      <tr><td>Bridge</td><td>Pooled by default; the largest districts get dedicated databases</td><td>Isolation and capacity where it matters</td><td>Two deployment shapes to support</td></tr>
+    </tbody>
+  </table>
+  <p>I'd start pooled with <b>defense in depth</b>, and move the biggest districts (the largest US districts have hundreds of thousands of students) to dedicated databases when their size or contract requires it:</p>
+  <pre><code class="lang-sql">-- Postgres row-level security: the database itself refuses cross-tenant rows
+ALTER TABLE assignments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY district_isolation ON assignments
+  USING (district_id = current_setting('app.district_id')::bigint);
+
+-- per request, inside the transaction, set from the authenticated session:
+SET LOCAL app.district_id = '31';</code></pre>
+  <p>Even if a developer forgets a <code>WHERE district_id = ...</code>, the database returns nothing from other districts. Apply the same idea everywhere data lives: cache keys prefixed with the district, object storage paths per district, search indexes filtered by district, and tests that try to read another tenant's IDs and must fail.</p>
+  <p><b>Authorization</b> sits inside the tenant boundary. Roles are granted at a node in the org tree (district → school → section). The check: "does this user hold a role at this resource's node or an ancestor?" A teacher can see a student's progress if they teach a section the student is enrolled in; a school admin if the student's school is theirs; a district admin anywhere in the district. Every endpoint that takes an ID checks it (the classic bug is an insecure direct object reference: changing <code>/students/123</code> to <code>/students/124</code>).</p>
+
+  <h2>9. Deep dive: privacy by design (FERPA, COPPA, state laws)</h2>
+  <p>Not legal advice, but these rules shape the architecture, and naming them concretely is a strong signal.</p>
+  <ul>
+    <li><b>FERPA</b> (US federal law on student education records): districts can share records with vendors acting as a "school official" for a legitimate educational purpose, under the district's control. Engineering meaning: use data only for the contracted service, honor the district's requests (export, correct, delete), and keep access logs.</li>
+    <li><b>COPPA</b> (children under 13 online): normally requires verifiable parental consent; under FTC guidance schools can authorize collection for educational use only, not commercial use. Meaning: no ad networks or third-party tracking scripts on student pages, no marketing to students.</li>
+    <li><b>State laws and DPAs:</b> many states restrict selling student data and targeted advertising (California's SOPIPA was an early model), and districts sign data privacy agreements, often standardized templates. These commonly require deletion at contract end, breach notification, and limits on subprocessors (your vendors, including any LLM provider).</li>
+  </ul>
+  <p>What that turns into in the system:</p>
+  <ul>
+    <li><b>Minimize:</b> store first name and last initial where full names aren't needed; don't collect birthdates if grade is enough.</li>
+    <li><b>Pseudonymize analytics:</b> the warehouse and any AI prompts use opaque IDs; the mapping to names lives only in the core DB.</li>
+    <li><b>Encrypt</b> in transit and at rest; restrict and log staff access to student data (support tooling shows what it needs, with audit trails).</li>
+    <li><b>Retention and deletion:</b> per-district retention settings; a deletion job that cascades across DB, warehouse, object storage, caches and search, and produces a certificate for the district. Backups age out on a known schedule.</li>
+  </ul>
+
+  <h2>10. Deep dive: back-to-school and the 8am spike</h2>
+  <ul>
+    <li><b>Know your calendar.</b> Districts start school on different dates (much of the South in early August, the Northeast after Labor Day), so load arrives in waves. Each day spikes at bell times in each time zone; Mondays and the first week are the worst; state testing windows in spring are another peak.</li>
+    <li><b>Pre-scale, don't just autoscale.</b> Reactive autoscaling takes minutes to add capacity; the burst lasts minutes. Schedule capacity to be up before 7:30am in each time zone, and warm caches (rosters for today's active sections) before the bell.</li>
+    <li><b>Make login and home cheap.</b> Cache <code>/v1/me</code> per user for the morning, serve book assets from the CDN, and keep the first screen to a handful of API calls.</li>
+    <li><b>Rate limit by user and district, never by IP.</b> 1,500 Chromebooks behind one school NAT share one public IP.</li>
+    <li><b>Roster storms.</b> In the same weeks, every district re-syncs daily. Run syncs on a separate worker pool with its own DB connection budget and concurrency limit per district, mostly overnight, so a 60,000-student import never slows a classroom.</li>
+    <li><b>Hostile networks.</b> School content filters block unknown domains: publish a short, stable allowlist of domains to IT admins. Some filters break WebSockets: the live features need a polling fallback. A school's shared internet link can be saturated: smaller assets, progressive loading.</li>
+    <li><b>Operational rules.</b> No deploys during school hours in any US time zone; change freeze for the first weeks of school; big migrations in summer. A status page districts can check before they open a ticket.</li>
+  </ul>
+
+  <h2>11. Deep dive: two kinds of reports</h2>
+  <p>"Who in my class hasn't started?" and "minutes read per school this semester" look similar but have opposite needs.</p>
+  <ul>
+    <li><b>Teacher live view:</b> must be seconds fresh, touches ~30 students. Served from the OLTP database: the <code>progress</code> row per (assignment, student) is updated as events arrive. Reading 30 rows by primary key is trivial.</li>
+    <li><b>District reports:</b> can be hours old, touch millions of events. Served from the warehouse: events land via the stream, are deduplicated by <code>event_id</code> (clients retry on flaky Wi-Fi, and offline reading uploads late), and rolled up nightly or hourly into per-school/grade/week tables. Dashboards read the rollups, never raw events.</li>
+  </ul>
+  <p>Separating them (CQRS: different models for writes and for heavy reads) means a superintendent's semester report can never slow down a classroom.</p>
+
+  <h2>12. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Pooled tenancy + row-level security</td><td>Low cost, one schema, isolation enforced by the DB</td><td>Noisy neighbors; RLS must be set on every connection</td><td>Most districts</td></tr>
+      <tr><td>Dedicated DB for large districts</td><td>Isolation, capacity, per-tenant restore</td><td>Operational complexity</td><td>Very large districts or contract requirements</td></tr>
+      <tr><td>Soft-delete roster records</td><td>History survives moves and bad syncs</td><td>Filtering inactive everywhere; retention jobs</td><td>Always for students</td></tr>
+      <tr><td>Scheduled pre-scaling</td><td>Capacity ready before the bell</td><td>Paying for idle capacity for a while each morning</td><td>Predictable daily spikes (school)</td></tr>
+      <tr><td>OLTP live view + warehouse reports</td><td>Fresh classroom data and heavy reports, isolated</td><td>Two read paths, events pipeline to run</td><td>Both teachers and admins need reporting</td></tr>
+    </tbody>
+  </table>
+
+  <h2>13. Follow-up questions and strong answers</h2>
+  <h3>"A teacher says her class is empty on the first day. Walk me through it."</h3>
+  <p>Check roster health for the district: did last night's sync run, and was it paused by the deactivation guard? Is the section in the source data, and is the teacher's enrollment there? Is she logging in with an SSO identity that's matched to her rostered user (a common mismatch: a personal Google account)? The admin page shows each of these, and an on-demand re-sync fixes most cases in minutes.</p>
+  <h3>"How would you add an AI tutor safely?"</h3>
+  <p>Send the model pseudonymous context (reading level, the passage, the question), not names; make sure the LLM provider is a listed subprocessor in the DPA with no training on the data; per-district budgets and rate limits; safety filters tuned for children; teacher visibility into conversations; retention matching the district's policy.</p>
+  <h3>"How do you handle a district leaving?"</h3>
+  <p>Export their data on request in a standard format, then run the cascading deletion job per the contract's timeline, including warehouse partitions and object storage prefixes, and send a deletion confirmation. Siloed or prefix-partitioned storage makes this much easier, which is a good argument for keeping <code>district_id</code> in every key.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"The scale is modest: about 10,000 to 40,000 requests a second for ten minutes at bell time. The hard parts are school realities. Rosters come from SIS systems via Clever or OneRoster, so sync is a diff with idempotent upserts keyed on source IDs, soft deletes only, and a guard that pauses any sync that would deactivate a big share of a district. Identity is delegated to the district's SSO, with QR badges for the youngest kids. Tenancy is pooled with district_id on every row and Postgres row-level security as a backstop. Privacy rules mean minimal data, pseudonymous analytics, no third-party trackers, and deletion that cascades everywhere. And because 8am is predictable, I pre-scale per time zone and never deploy during school hours."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Treating it like a generic consumer app: email-and-password signup, rate limiting by IP, users as the top-level entity, and hard deletes when someone disappears from a roster. Each one breaks in a real district: kindergartners can't type, a whole school shares one IP, the district (not the user) is the customer and the privacy boundary, and a bad SIS export would wipe a year of reading history.</p></div>
+
+  <h2>14. Your turn</h2>
+  <p>A state contracts you for its <b>reading assessment window</b>: 200,000 students in grades 3–8 take a 40-minute timed test during the same two weeks, often whole schools at once. No answer may be lost, even if Wi-Fi drops.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Load:</b> if a school of 600 students starts at 9:00 and 20% of a state's schools test in the same morning slot, that's tens of thousands of simultaneous starts. Pre-scale for it from the published testing calendar; freeze deploys for the window.</p>
+    <p><b>Never lose an answer:</b> every answer is saved locally first (browser storage) and then sent with an idempotency key <code>(attempt_id, question_id, revision)</code>. The server keeps the highest revision. If the network drops, the student keeps working; the client syncs when it returns. The UI shows "saved" vs "saved on this device" honestly.</p>
+    <p><b>Timer:</b> server-authoritative. Store <code>started_at</code> and allowed duration (including accommodations like extended time per student); the client displays a countdown but the server enforces the deadline, accepting answers written before the deadline plus a short grace window for sync.</p>
+    <p><b>Content:</b> test content loads at start from the CDN, with items not public before the window; preload to survive a later network drop.</p>
+    <p><b>Integrity and privacy:</b> results are education records: tenant-isolated, pseudonymous in analytics, delivered to the state and districts per the DPA. Scoring runs asynchronously after submission; proctors see a live status board (started, in progress, submitted, disconnected) built from heartbeats.</p>
+  </details>
+
+  <div data-quiz='[{"q":"Which key should identify a rostered student across syncs?","o":["Their email address","Their full name and grade","The district plus the source system plus the source ID","The SSO login time"],"a":2,"why":"Young students often have no email and names collide or change; the source ID is stable."},{"q":"Tonight sync would deactivate 45 percent of a district students. What should happen?","o":["Apply it; the SIS is the source of truth","Pause the sync, alert the district and support, and keep the current roster","Delete those students permanently","Email every affected student"],"a":1,"why":"A half-empty SIS export is a classic back-to-school failure. A guard rail prevents mass deactivation."},{"q":"Why is per-IP rate limiting a bad fit for schools?","o":["School IP addresses change on every request","Hundreds or thousands of devices share one public IP behind the school NAT","IP addresses are personal data under FERPA","Load balancers cannot see IPs"],"a":1,"why":"Limit by user and district instead."},{"q":"What does Postgres row-level security add to a pooled multi-tenant design?","o":["Faster queries","The database refuses rows from other districts even if application code forgets a filter","Automatic sharding","Encryption of every column"],"a":1,"why":"Defense in depth: the tenant filter is enforced below the application."},{"q":"Why serve the teacher live view and the district report from different stores?","o":["Teachers and admins use different browsers","The live view needs seconds-fresh data for about 30 students, while reports scan millions of events and can be hours old","Warehouses cannot store numbers","It is required by COPPA"],"a":1,"why":"Separating read paths keeps heavy reports from slowing classrooms."},{"q":"8:00am logins are predictable. What is the best capacity strategy?","o":["Rely only on reactive autoscaling","Scheduled pre-scaling per time zone before the bell, plus warm caches","Ask schools to stagger bell times","Disable SSO in the morning"],"a":1,"why":"Bursts last minutes; reactive scaling takes minutes. Scale ahead of known peaks."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>The district is the tenant and the privacy boundary: district_id everywhere, row-level security, dedicated DBs for the largest districts.</li>
+    <li>Rostering is diff plus idempotent upsert on source IDs, soft deletes only, and a guard against mass deactivation.</li>
+    <li>Delegate identity to district SSO; design K–2 login (badges) and shared devices from day one.</li>
+    <li>Privacy law shapes the data model: minimize, pseudonymize analytics, no trackers, cascading deletion, audited access.</li>
+    <li>School-time traffic is spiky but predictable: pre-scale per time zone, limit by user not IP, isolate roster syncs, and never deploy during school hours.</li>
+  </ul>
+</template>

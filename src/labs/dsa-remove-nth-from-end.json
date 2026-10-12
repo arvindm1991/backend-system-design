@@ -1,0 +1,40 @@
+{
+  "id": "dsa-remove-nth-from-end",
+  "title": "Remove Nth Node From End of List",
+  "minutes": 25,
+  "prompt": "<p>A playlist of read-aloud chapters is a singly linked list. Remove the <b>n-th node from the end</b> and return the head. Try to do it in <b>one pass</b>.</p>\n<p>Write <code>removeNthFromEnd(head, n)</code>. Helpers <code>ListNode</code>, <code>fromArray</code>, <code>toArray</code> are at the top; keep them.</p>\n<ul>\n<li><code>toArray(removeNthFromEnd(fromArray([1, 2, 3, 4, 5]), 2))</code> gives <code>[1, 2, 3, 5]</code></li>\n<li><code>toArray(removeNthFromEnd(fromArray([1]), 1))</code> gives <code>[]</code></li>\n<li><code>toArray(removeNthFromEnd(fromArray([1, 2]), 2))</code> gives <code>[2]</code> (removing the head)</li>\n</ul>\n<p>Constraints: 1 to 30 nodes; <code>1 &lt;= n &lt;= length</code>. Target: O(n) time, O(1) space.</p>",
+  "starter": "// ---- Helpers: keep these. The tests use ListNode, fromArray and toArray. ----\nclass ListNode {\n  constructor(val, next = null) {\n    this.val = val;\n    this.next = next;\n  }\n}\n\n// fromArray([1, 2, 3]) builds 1 -> 2 -> 3 and returns the head (null for []).\nfunction fromArray(values) {\n  let head = null;\n  for (let i = values.length - 1; i >= 0; i--) {\n    head = new ListNode(values[i], head);\n  }\n  return head;\n}\n\n// toArray(head) walks the list and returns [1, 2, 3]. Handy for console.log too.\nfunction toArray(head) {\n  const values = [];\n  let node = head;\n  while (node) {\n    values.push(node.val);\n    if (values.length > 10000) throw new Error('list is too long: did you accidentally create a cycle?');\n    node = node.next;\n  }\n  return values;\n}\n// ---- End of helpers ----\n\nfunction removeNthFromEnd(head, n) {\n  // TODO: two pointers with a gap of n between them, starting from a dummy node.\n  return head;\n}",
+  "solution": "// ---- Helpers: keep these. The tests use ListNode, fromArray and toArray. ----\nclass ListNode {\n  constructor(val, next = null) {\n    this.val = val;\n    this.next = next;\n  }\n}\n\n// fromArray([1, 2, 3]) builds 1 -> 2 -> 3 and returns the head (null for []).\nfunction fromArray(values) {\n  let head = null;\n  for (let i = values.length - 1; i >= 0; i--) {\n    head = new ListNode(values[i], head);\n  }\n  return head;\n}\n\n// toArray(head) walks the list and returns [1, 2, 3]. Handy for console.log too.\nfunction toArray(head) {\n  const values = [];\n  let node = head;\n  while (node) {\n    values.push(node.val);\n    if (values.length > 10000) throw new Error('list is too long: did you accidentally create a cycle?');\n    node = node.next;\n  }\n  return values;\n}\n// ---- End of helpers ----\n\nfunction removeNthFromEnd(head, n) {\n  const dummy = new ListNode(0, head); // lets us remove the real head like any other node\n  let fast = dummy;\n  let slow = dummy;\n  // Move fast n + 1 steps ahead, so the gap between slow and fast is n nodes.\n  for (let step = 0; step <= n; step++) {\n    fast = fast.next;\n  }\n  // Move both until fast falls off the end. slow is now just BEFORE the node to remove.\n  while (fast !== null) {\n    fast = fast.next;\n    slow = slow.next;\n  }\n  slow.next = slow.next.next;\n  return dummy.next;\n}",
+  "tests": [
+    {
+      "name": "removes the 2nd from the end",
+      "code": "assertEqual(toArray(removeNthFromEnd(fromArray([1, 2, 3, 4, 5]), 2)), [1, 2, 3, 5]);"
+    },
+    {
+      "name": "removes the last node",
+      "code": "assertEqual(toArray(removeNthFromEnd(fromArray([1, 2, 3]), 1)), [1, 2]);"
+    },
+    {
+      "name": "removes the head",
+      "code": "assertEqual(toArray(removeNthFromEnd(fromArray([1, 2]), 2)), [2], 'a dummy head handles this case');"
+    },
+    {
+      "name": "single node list becomes empty",
+      "code": "assertEqual(removeNthFromEnd(fromArray([1]), 1), null);"
+    },
+    {
+      "name": "duplicate values: removes by position, not value",
+      "code": "assertEqual(toArray(removeNthFromEnd(fromArray([4, 4, 4, 4]), 3)), [4, 4, 4]);\nassertEqual(toArray(removeNthFromEnd(fromArray([7, 8, 7, 9]), 2)), [7, 8, 9]);"
+    },
+    {
+      "name": "negatives, middle removal",
+      "code": "assertEqual(toArray(removeNthFromEnd(fromArray([-1, -2, -3, -4, -5, -6]), 4)), [-1, -2, -4, -5, -6]);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: \"n-th from the end\" in a singly linked list (you can't walk backwards) = two pointers with a fixed <b>gap</b>. When the front one hits the end, the back one is n from the end.</p>",
+    "<p>To delete a node you need the node <b>before</b> it. Start both pointers at a dummy node in front of the head, move <code>fast</code> n + 1 steps ahead, then move both until <code>fast</code> is <code>null</code>. Now <code>slow.next</code> is the node to delete.</p>",
+    "<p>Shape:</p><pre><code>const dummy = new ListNode(0, head);\nlet fast = dummy, slow = dummy;\nfor (let step = 0; step &lt;= n; step++) fast = fast.next;\nwhile (fast !== null) { fast = fast.next; slow = slow.next; }\nslow.next = slow.next.next;\nreturn dummy.next;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(L)</b> for a list of length L, one pass. <b>Space O(1)</b>. The two-pass version (count the length, then walk to position L - n) is also O(L) and perfectly fine to say first; the gap trick just does it in one walk.</p>\n<p><b>Say it:</b> \"I'll put a dummy before the head so removing the head isn't a special case, then use two pointers n + 1 apart. When the front pointer runs off the end, the back pointer sits right before the node to delete. One pass, O(1) space.\"</p>"
+}

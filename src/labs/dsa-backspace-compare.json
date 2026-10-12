@@ -1,0 +1,40 @@
+{
+  "id": "dsa-backspace-compare",
+  "title": "Backspace string compare",
+  "minutes": 15,
+  "prompt": "<p>PageTurn&#39;s input log records each keystroke a student types, with <code>#</code> meaning <b>backspace</b>. A backspace deletes the most recent remaining character; a backspace on empty text does nothing.</p>\n<p>Write <code>sameFinalText(logA, logB)</code> that returns <code>true</code> if the two logs produce the same final text.</p>\n<p>Examples:</p>\n<ul>\n<li><code>sameFinalText(&quot;cat#r&quot;, &quot;cax#r&quot;)</code> → <code>true</code> (both become &quot;car&quot;)</li>\n<li><code>sameFinalText(&quot;ab##&quot;, &quot;c#d#&quot;)</code> → <code>true</code> (both become &quot;&quot;)</li>\n<li><code>sameFinalText(&quot;a#c&quot;, &quot;b&quot;)</code> → <code>false</code> (&quot;c&quot; vs &quot;b&quot;)</li>\n</ul>\n<p>Constraints: 0 ≤ length of each log ≤ 200; logs contain lowercase letters and <code>#</code>.</p>",
+  "starter": "function sameFinalText(logA, logB) {\n  // TODO: build each final text with a stack (push letters, pop on '#'), then compare.\n  return logA === logB;\n}",
+  "solution": "function finalText(log) {\n  const typed = [];\n  for (const ch of log) {\n    if (ch === '#') {\n      if (typed.length > 0) typed.pop();\n    } else {\n      typed.push(ch);\n    }\n  }\n  return typed.join('');\n}\n\nfunction sameFinalText(logA, logB) {\n  return finalText(logA) === finalText(logB);\n}",
+  "tests": [
+    {
+      "name": "one backspace each",
+      "code": "assertEqual(sameFinalText('cat#r', 'cax#r'), true);\nassertEqual(sameFinalText('ab#c', 'ad#c'), true);"
+    },
+    {
+      "name": "everything deleted on both sides",
+      "code": "assertEqual(sameFinalText('ab##', 'c#d#'), true);"
+    },
+    {
+      "name": "different results",
+      "code": "assertEqual(sameFinalText('a#c', 'b'), false);\nassertEqual(sameFinalText('abc', 'abc#'), false);"
+    },
+    {
+      "name": "backspace on empty text does nothing",
+      "code": "assertEqual(sameFinalText('a##c', '#a#c'), true);\nassertEqual(sameFinalText('###x', 'x'), true);"
+    },
+    {
+      "name": "empty logs",
+      "code": "assertEqual(sameFinalText('', '###'), true);\nassertEqual(sameFinalText('', 'a'), false);"
+    },
+    {
+      "name": "backspaces deep in the log",
+      "code": "assertEqual(sameFinalText('xy#z', 'xzz#'), true);\nassertEqual(sameFinalText('bxj##tw', 'bxo#j##tw'), true);\nassertEqual(sameFinalText('bxj##tw', 'bxj###tw'), false);"
+    }
+  ],
+  "hints": [
+    "<p>A backspace undoes the <b>most recent</b> character: that&#39;s the undo shape of a stack.</p>",
+    "<p>Write a helper <code>finalText(log)</code>: push each letter onto an array; on <code>#</code>, pop if the array isn&#39;t empty. Join the array. Then compare the two final texts.</p>",
+    "<p>Shape:</p><pre><code>function finalText(log) {\n  const typed = [];\n  for (const ch of log) {\n    if (ch === '#') { if (typed.length &gt; 0) typed.pop(); }\n    else typed.push(ch);\n  }\n  return typed.join('');\n}</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n + m), space O(n + m)</b> for logs of length n and m. Each character is pushed and popped at most once. Deleting characters one at a time by rebuilding the string is O(n²).</p><p>Follow-up an interviewer may ask: do it in O(1) extra space. Walk both logs <b>backward</b> with two pointers, keeping a count of pending backspaces; skip characters that a later <code>#</code> cancels, then compare the next real characters. Same O(n + m) time, no arrays.</p><p><b>In an interview:</b> &quot;A backspace cancels the most recent character, so I&#39;ll build each final string with a stack: push letters, pop on #. That&#39;s O(n + m) time and space. If memory matters, I can walk both strings backward with two pointers for O(1) space.&quot;</p>"
+}

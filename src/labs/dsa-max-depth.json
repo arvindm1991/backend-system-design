@@ -1,0 +1,40 @@
+{
+  "id": "dsa-max-depth",
+  "title": "Maximum Depth of Binary Tree",
+  "minutes": 15,
+  "prompt": "<p>Return the <b>maximum depth</b> of a binary tree: the number of nodes on the longest path from the root down to a leaf. An empty tree has depth 0; a single node has depth 1.</p>\n<p>Write <code>maxDepth(root)</code>. The helpers <code>TreeNode</code>, <code>fromArray</code> and <code>toArray</code> are at the top; keep them. <code>fromArray</code> takes LeetCode-style level order, where <code>null</code> means \"no child here\".</p>\n<ul>\n<li><code>maxDepth(fromArray([3, 9, 20, null, null, 15, 7]))</code> returns <code>3</code></li>\n<li><code>maxDepth(fromArray([1, null, 2]))</code> returns <code>2</code></li>\n<li><code>maxDepth(null)</code> returns <code>0</code></li>\n</ul>\n<p>Constraints: 0 to 10<sup>4</sup> nodes. Target: O(n).</p>",
+  "starter": "// ---- Helpers: keep these. The tests use TreeNode and fromArray. ----\nclass TreeNode {\n  constructor(val, left = null, right = null) {\n    this.val = val;\n    this.left = left;\n    this.right = right;\n  }\n}\n\n// fromArray([3, 9, 20, null, null, 15, 7]) builds a tree from level order (LeetCode style).\n// null means \"no child here\". Returns the root (null for []).\nfunction fromArray(values) {\n  if (values.length === 0 || values[0] === null) return null;\n  const root = new TreeNode(values[0]);\n  const queue = [root];\n  let front = 0;\n  let i = 1;\n  while (i < values.length) {\n    const parent = queue[front];\n    front++;\n    if (i < values.length && values[i] !== null) {\n      parent.left = new TreeNode(values[i]);\n      queue.push(parent.left);\n    }\n    i++;\n    if (i < values.length && values[i] !== null) {\n      parent.right = new TreeNode(values[i]);\n      queue.push(parent.right);\n    }\n    i++;\n  }\n  return root;\n}\n\n// toArray(root) is the reverse: level order with nulls for gaps, trailing nulls removed.\nfunction toArray(root) {\n  const values = [];\n  const queue = [root];\n  let front = 0;\n  while (front < queue.length) {\n    const node = queue[front];\n    front++;\n    if (node === null) {\n      values.push(null);\n      continue;\n    }\n    values.push(node.val);\n    queue.push(node.left, node.right);\n  }\n  while (values.length > 0 && values[values.length - 1] === null) values.pop();\n  return values;\n}\n// ---- End of helpers ----\n\nfunction maxDepth(root) {\n  // TODO: base case first. Then trust maxDepth on the children.\n}",
+  "solution": "// ---- Helpers: keep these. The tests use TreeNode and fromArray. ----\nclass TreeNode {\n  constructor(val, left = null, right = null) {\n    this.val = val;\n    this.left = left;\n    this.right = right;\n  }\n}\n\n// fromArray([3, 9, 20, null, null, 15, 7]) builds a tree from level order (LeetCode style).\n// null means \"no child here\". Returns the root (null for []).\nfunction fromArray(values) {\n  if (values.length === 0 || values[0] === null) return null;\n  const root = new TreeNode(values[0]);\n  const queue = [root];\n  let front = 0;\n  let i = 1;\n  while (i < values.length) {\n    const parent = queue[front];\n    front++;\n    if (i < values.length && values[i] !== null) {\n      parent.left = new TreeNode(values[i]);\n      queue.push(parent.left);\n    }\n    i++;\n    if (i < values.length && values[i] !== null) {\n      parent.right = new TreeNode(values[i]);\n      queue.push(parent.right);\n    }\n    i++;\n  }\n  return root;\n}\n\n// toArray(root) is the reverse: level order with nulls for gaps, trailing nulls removed.\nfunction toArray(root) {\n  const values = [];\n  const queue = [root];\n  let front = 0;\n  while (front < queue.length) {\n    const node = queue[front];\n    front++;\n    if (node === null) {\n      values.push(null);\n      continue;\n    }\n    values.push(node.val);\n    queue.push(node.left, node.right);\n  }\n  while (values.length > 0 && values[values.length - 1] === null) values.pop();\n  return values;\n}\n// ---- End of helpers ----\n\nfunction maxDepth(root) {\n  if (root === null) return 0;          // base case: an empty tree has no depth\n  const leftDepth = maxDepth(root.left);   // trust the function on the smaller trees\n  const rightDepth = maxDepth(root.right);\n  return 1 + Math.max(leftDepth, rightDepth); // this node + the deeper side\n}",
+  "tests": [
+    {
+      "name": "classic example has depth 3",
+      "code": "assertEqual(maxDepth(fromArray([3, 9, 20, null, null, 15, 7])), 3);"
+    },
+    {
+      "name": "right-leaning tree",
+      "code": "assertEqual(maxDepth(fromArray([1, null, 2])), 2);"
+    },
+    {
+      "name": "empty tree is 0",
+      "code": "assertEqual(maxDepth(null), 0);"
+    },
+    {
+      "name": "single node is 1",
+      "code": "assertEqual(maxDepth(fromArray([42])), 1);"
+    },
+    {
+      "name": "a long chain down the left",
+      "code": "const root = new TreeNode(1, new TreeNode(2, new TreeNode(3, new TreeNode(4, new TreeNode(5)))));\nassertEqual(maxDepth(root), 5);"
+    },
+    {
+      "name": "deepest leaf is on the left, with negatives",
+      "code": "assertEqual(maxDepth(fromArray([-1, -2, -3, -4, null, null, null, -5])), 4);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: a question about a whole tree whose answer can be built from the answers for the left and right subtrees = <b>recursive DFS</b>.</p>",
+    "<p>Base case: an empty tree (<code>null</code>) has depth 0. Otherwise, assume <code>maxDepth</code> already works for the two children (trust it), and combine.</p>",
+    "<p>Shape:</p><pre><code>if (root === null) return 0;\nreturn 1 + Math.max(maxDepth(root.left), maxDepth(root.right));</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n)</b>: every node is visited once. <b>Space O(h)</b> for the call stack, where h is the height: O(log n) for a balanced tree, O(n) for a chain. A BFS that counts levels gives the same answer with a queue.</p>\n<p><b>Say it:</b> \"Recursive DFS. Base case null returns 0. Otherwise one plus the max of the two subtree depths. O(n) time, O(h) stack space.\"</p>"
+}

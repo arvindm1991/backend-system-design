@@ -1,0 +1,216 @@
+<template id="tpl-caching" data-title="Caching" data-part="Part 2 · Scaling building blocks" data-order="60">
+  <h1>Caching</h1>
+  <p class="lede">After this lesson you will know where caches live (browser, CDN, app, Redis, database), how to choose between cache-aside and write-through, how to set TTLs and invalidate safely, and how to stop the two classic cache disasters: the stampede and the hot key. You will also build an LRU cache with expiry.</p>
+
+  <h2>1. The problem: everyone asks the same question</h2>
+  <p>Back to PageTurn, the reading app with 200,000 students. At 8:05am about 40,000 students open the app in one minute. The first thing each one sees is the home screen, and the home screen shows the <b>book catalog for their grade</b>: titles, covers, reading levels.</p>
+  <p>The catalog query joins four tables and takes about <b>40 ms</b> of database time. At peak, the home screen alone is roughly 700 requests per second. 700 × 40 ms = 28 seconds of database work every second. A database with 16 cores can do at most ~16 seconds of work per second. It falls over.</p>
+  <p>But look at what is being asked. There are only 13 grade levels. The 4th-grade catalog is the same for every 4th grader, and it changes maybe once a week when a librarian adds a book. The database is computing the same 13 answers 40,000 times.</p>
+  <p>A <b>cache</b> is a fast store that keeps the answer to a question you have already computed, so the next asker gets it without redoing the work. If the 13 catalogs sit in memory, each request costs well under a millisecond instead of 40 ms of database time.</p>
+
+  <h2>2. Hit ratio: the number that matters</h2>
+  <p>A <b>cache hit</b> means the answer was in the cache. A <b>miss</b> means it wasn&#39;t, so you go to the source (the database) and usually store the result. The <b>hit ratio</b> is hits ÷ total requests.</p>
+  <p>The hit ratio decides how much load the database still sees:</p>
+  <table class="tbl">
+    <thead><tr><th>Hit ratio</th><th>Requests reaching the DB (of 700/s)</th><th>DB load reduction</th></tr></thead>
+    <tbody>
+      <tr><td>0%</td><td>700/s</td><td>none</td></tr>
+      <tr><td>90%</td><td>70/s</td><td>10x</td></tr>
+      <tr><td>99%</td><td>7/s</td><td>100x</td></tr>
+      <tr><td>99.9%</td><td>0.7/s</td><td>1,000x</td></tr>
+    </tbody>
+  </table>
+  <p>Going from 90% to 99% looks like a small change, but it cuts database load by another 10x. That&#39;s why caching works best for data that is <b>read far more often than it changes</b> and is <b>shared by many users</b>: catalogs, book metadata, configuration, a district&#39;s settings. It works badly for data each user reads once.</p>
+  <p>Rough speed differences (order of magnitude, they vary by setup): reading from memory inside your process takes well under a microsecond; a Redis call in the same data center is around 0.2–1 ms including the network; an indexed database query is 1–10 ms; a heavy join can be 10–100+ ms.</p>
+
+  <h2>3. Where caches live</h2>
+  <p>&quot;Add a cache&quot; is ambiguous. There are at least five places, and a real system uses several at once. The closer to the user, the faster and cheaper the hit, and the harder it is to invalidate.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 250" width="100%" role="img" aria-label="Request flow through cache layers: browser, CDN, app in-process cache, Redis, database buffer cache" style="font-family:inherit">
+      <defs><marker id="cach-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <g style="font-size:13px">
+        <rect x="8" y="40" width="112" height="70" rx="8" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="64" y="66" text-anchor="middle" style="fill:currentColor;font-weight:600">Browser</text>
+        <text x="64" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">HTTP cache</text>
+        <text x="64" y="100" text-anchor="middle" style="fill:var(--muted);font-size:12px">0 ms</text>
+        <rect x="148" y="40" width="112" height="70" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="204" y="66" text-anchor="middle" style="fill:currentColor;font-weight:600">CDN edge</text>
+        <text x="204" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">covers, books</text>
+        <text x="204" y="100" text-anchor="middle" style="fill:var(--muted);font-size:12px">~10–30 ms</text>
+        <rect x="288" y="40" width="112" height="70" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="344" y="66" text-anchor="middle" style="fill:currentColor;font-weight:600">App server</text>
+        <text x="344" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">in-process LRU</text>
+        <text x="344" y="100" text-anchor="middle" style="fill:var(--muted);font-size:12px">&lt; 0.01 ms</text>
+        <rect x="428" y="40" width="112" height="70" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="484" y="66" text-anchor="middle" style="fill:currentColor;font-weight:600">Redis</text>
+        <text x="484" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">shared cache</text>
+        <text x="484" y="100" text-anchor="middle" style="fill:var(--muted);font-size:12px">~0.5 ms</text>
+        <rect x="568" y="40" width="124" height="70" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="630" y="66" text-anchor="middle" style="fill:currentColor;font-weight:600">Postgres</text>
+        <text x="630" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">buffer cache</text>
+        <text x="630" y="100" text-anchor="middle" style="fill:var(--muted);font-size:12px">1–40 ms</text>
+      </g>
+      <line x1="120" y1="75" x2="144" y2="75" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cach-arr)"/>
+      <line x1="260" y1="75" x2="284" y2="75" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cach-arr)"/>
+      <line x1="400" y1="75" x2="424" y2="75" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cach-arr)"/>
+      <line x1="540" y1="75" x2="564" y2="75" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cach-arr)"/>
+      <text x="350" y="20" text-anchor="middle" style="fill:var(--muted);font-size:12px">each layer answers if it can; only misses travel right</text>
+      <line x1="40" y1="150" x2="660" y2="150" style="stroke:var(--line);stroke-width:1.5" marker-end="url(#cach-arr)"/>
+      <text x="40" y="172" style="fill:currentColor;font-size:12px">closer to user: faster, cheaper per hit</text>
+      <text x="660" y="172" text-anchor="end" style="fill:currentColor;font-size:12px">closer to data: fresher, easier to invalidate</text>
+      <rect x="148" y="196" width="252" height="36" rx="6" style="fill:none;stroke:var(--line);stroke-dasharray:4 4"/>
+      <text x="274" y="219" text-anchor="middle" style="fill:var(--muted);font-size:12px">per user / per region copies: hard to purge</text>
+      <rect x="428" y="196" width="264" height="36" rx="6" style="fill:none;stroke:var(--accent);stroke-dasharray:4 4"/>
+      <text x="560" y="219" text-anchor="middle" style="fill:var(--muted);font-size:12px">one shared copy: delete a key and it&#39;s gone</text>
+    </svg>
+    <figcaption>The cache layers between a student&#39;s tablet and the database. Latencies are rough orders of magnitude.</figcaption>
+  </figure>
+  <table class="tbl">
+    <thead><tr><th>Layer</th><th>Good for (PageTurn)</th><th>Controlled by</th><th>Watch out for</th></tr></thead>
+    <tbody>
+      <tr><td>Browser</td><td>App JS/CSS bundles, cover images</td><td><code>Cache-Control</code> headers</td><td>You can&#39;t purge it. Use versioned file names (<code>app.3f9a.js</code>).</td></tr>
+      <tr><td>CDN</td><td>Book files, audio, covers, public pages</td><td>Headers + CDN purge API</td><td>Never cache a personalized response publicly.</td></tr>
+      <tr><td>In-process (app memory)</td><td>Tiny, very hot data: feature flags, grade catalogs</td><td>Your code, short TTL</td><td>Each server has its own copy; they drift apart.</td></tr>
+      <tr><td>Distributed (Redis, Memcached)</td><td>Catalogs, sessions, computed dashboards</td><td>Your code</td><td>Network hop; it becomes a dependency that can fail.</td></tr>
+      <tr><td>Database buffer cache</td><td>Hot rows and index pages</td><td>The database, automatically</td><td>It doesn&#39;t save the work of a heavy join.</td></tr>
+    </tbody>
+  </table>
+  <p>For HTTP caches you speak in headers. A cover image that never changes at a given URL:</p>
+  <pre><code class="lang-http">HTTP/1.1 200 OK
+Content-Type: image/webp
+Cache-Control: public, max-age=31536000, immutable</code></pre>
+  <p>A student&#39;s own progress, which must never be stored by a shared cache:</p>
+  <pre><code class="lang-http">HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: private, no-store</code></pre>
+
+  <h2>4. Patterns: who fills the cache, who updates it</h2>
+  <p><b>Cache-aside</b> (also called lazy loading) is the default. Your app checks the cache; on a miss it reads the database and puts the result in the cache. The cache knows nothing about the database.</p>
+  <pre><code class="lang-js">async function getCatalog(grade) {
+  const key = `catalog:v3:grade:${grade}`;
+  const cached = await redis.get(key);
+  if (cached) return JSON.parse(cached);            // hit: ~0.5 ms
+
+  const rows = await db.query(CATALOG_SQL, [grade]); // miss: ~40 ms
+  await redis.set(key, JSON.stringify(rows), { EX: 300 }); // keep 5 minutes
+  return rows;
+}
+
+async function addBookToCatalog(book) {
+  await db.query(INSERT_BOOK_SQL, [book.id, book.grade /* ... */]);
+  await redis.del(`catalog:v3:grade:${book.grade}`); // invalidate after the write
+}</code></pre>
+  <p><b>Write-through</b>: every write goes to the cache and the database together, so the cache is always populated and fresh for that key. <b>Write-behind</b> (write-back): writes go to the cache first and are flushed to the database later in batches. <b>Read-through</b>: like cache-aside, but a caching library or service does the miss-handling for you.</p>
+  <table class="tbl">
+    <thead><tr><th>Pattern</th><th>Gives you</th><th>Costs you</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Cache-aside</td><td>Simple; cache holds only what&#39;s read; cache outage just means slower</td><td>First read is a miss; stale window until TTL or delete</td><td>Default for read-heavy data</td></tr>
+      <tr><td>Write-through</td><td>Reads right after writes are hits and fresh</td><td>Every write pays two writes; you cache data nobody reads</td><td>Data is read soon after it&#39;s written (a teacher&#39;s just-saved class settings)</td></tr>
+      <tr><td>Write-behind</td><td>Very fast writes; batches absorb spikes</td><td>Data loss if the cache dies before flushing; complex</td><td>High-volume, loss-tolerant counters (page-view counts)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. TTLs and invalidation</h2>
+  <p>A <b>TTL</b> (time to live) is how long an entry may stay before it expires. It is your safety net: even if you forget to invalidate, data is never more than TTL old. Pick it by asking &quot;how stale can this be before a user notices or it matters?&quot;</p>
+  <ul>
+    <li>Grade catalog: 5 minutes. A new book appearing 5 minutes late is fine.</li>
+    <li>District settings (which features are enabled): 1 minute.</li>
+    <li>A student&#39;s current page: don&#39;t cache it in a shared cache at all, or invalidate on every write.</li>
+  </ul>
+  <p><b>Invalidation</b> means removing or updating a cached entry when the underlying data changes. The safe default in cache-aside is: <b>write the database, then delete the cache key</b>. Delete rather than overwrite, because the next reader will rebuild it from the database, the source of truth.</p>
+  <p>Even that has a race. Here it is with real timings:</p>
+  <div class="trace">
+    <p><b>Trace: a stale catalog that lives for 5 minutes</b></p>
+    <ol>
+      <li><b>t=0 ms.</b> Reader R misses on <code>catalog:v3:grade:4</code> and starts the 40 ms database query. It reads the old catalog (no &quot;Wonder&quot;).</li>
+      <li><b>t=10 ms.</b> Librarian L inserts &quot;Wonder&quot; into the database.</li>
+      <li><b>t=12 ms.</b> L deletes <code>catalog:v3:grade:4</code>. The key isn&#39;t there yet, so nothing happens.</li>
+      <li><b>t=40 ms.</b> R&#39;s query returns the <i>old</i> rows. R writes them to the cache with a 300 s TTL.</li>
+      <li><b>Result:</b> the cache holds a catalog without &quot;Wonder&quot; until t ≈ 300 s, even though the delete &quot;happened&quot;.</li>
+    </ol>
+  </div>
+  <p>This is rare (it needs a miss and a write within the same few milliseconds) and the TTL bounds it, which is why cache-aside with delete-on-write plus a TTL is good enough for most data. For stricter needs: delete again a second or so after the write (&quot;delayed double delete&quot;), or put a version number in the key (<code>catalog:v3:grade:4:rev:182</code>) that you bump on every change so old entries are simply never read again.</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Caching a personalized API response at a shared layer. If <code>GET /api/home</code> returns Maya&#39;s name and progress and the CDN caches it with <code>public</code>, the next student in her region sees Maya&#39;s home screen. That is a privacy incident in a school product. Cache the <i>shared</i> parts (the grade catalog) and assemble the personal parts per request, and send <code>Cache-Control: private</code> on anything user-specific.</p></div>
+
+  <h2>6. Stampedes: when a popular key expires</h2>
+  <p>PageTurn has a district leaderboard: the top readers this week across 300 schools. It takes a <b>2-second</b> query to compute, so it&#39;s cached for 10 minutes. Every student&#39;s home screen shows it.</p>
+  <p>At 8:05:00 the key expires. In the next 2 seconds, while the first request is still computing, 1,400 more requests arrive (700/s × 2 s). Each one misses. Each one starts the same 2-second query. The database now has 1,400 copies of its most expensive query running at once, slows to a crawl, and every other query in the app slows with it. This is a <b>cache stampede</b> (also called the thundering herd or dog-piling).</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 210" width="100%" role="img" aria-label="Timeline: without coalescing, 1400 misses each hit the database; with coalescing, one query runs and the others wait for it" style="font-family:inherit">
+      <defs><marker id="cach-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <text x="10" y="22" style="fill:currentColor;font-size:13px;font-weight:600">Without protection</text>
+      <line x1="10" y1="40" x2="660" y2="40" style="stroke:var(--line)"/>
+      <text x="10" y="58" style="fill:var(--muted);font-size:12px">8:05:00 key expires</text>
+      <g style="stroke:var(--accent);stroke-width:1.5">
+        <line x1="180" y1="70" x2="180" y2="96"/><line x1="200" y1="70" x2="200" y2="96"/><line x1="220" y1="70" x2="220" y2="96"/><line x1="240" y1="70" x2="240" y2="96"/><line x1="260" y1="70" x2="260" y2="96"/><line x1="280" y1="70" x2="280" y2="96"/><line x1="300" y1="70" x2="300" y2="96"/><line x1="320" y1="70" x2="320" y2="96"/><line x1="340" y1="70" x2="340" y2="96"/><line x1="360" y1="70" x2="360" y2="96"/>
+      </g>
+      <text x="380" y="88" style="fill:currentColor;font-size:12px">1,400 misses → 1,400 identical 2 s queries → DB saturated</text>
+      <text x="10" y="132" style="fill:currentColor;font-size:13px;font-weight:600">With request coalescing</text>
+      <line x1="10" y1="150" x2="660" y2="150" style="stroke:var(--line)"/>
+      <rect x="180" y="160" width="180" height="22" rx="4" style="fill:var(--surface);stroke:var(--accent);stroke-width:1.5"/>
+      <text x="270" y="176" text-anchor="middle" style="fill:currentColor;font-size:12px">1 query (2 s)</text>
+      <line x1="364" y1="171" x2="400" y2="171" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#cach-arr2)"/>
+      <text x="408" y="176" style="fill:currentColor;font-size:12px">1,399 waiters get the same result</text>
+      <text x="10" y="200" style="fill:var(--muted);font-size:12px">(or serve the stale value while one request refreshes it)</text>
+    </svg>
+    <figcaption>A stampede is many misses for the same key at the same moment. Coalescing turns them into one database query.</figcaption>
+  </figure>
+  <p>Fixes, from simplest to strongest:</p>
+  <ul>
+    <li><b>TTL jitter.</b> If you cache many keys at the same moment (say, all 13 catalogs at deploy time) with the same 300 s TTL, they all expire together. Use 300 s ± 10% random so expiries spread out. Fixes synchronized expiry, not a single hot key.</li>
+    <li><b>Request coalescing</b> (single-flight). Only one request recomputes a given key; the others wait for its result. Inside one server, keep a map of in-flight promises. Across servers, the first one takes a short lock in Redis (<code>SET lock:leaderboard 1 NX PX 5000</code>) and the rest briefly wait or serve stale.</li>
+    <li><b>Stale-while-revalidate.</b> Store the value with a &quot;soft&quot; expiry earlier than the real one. After the soft expiry, keep serving the old value instantly while <i>one</i> background refresh runs. Users never wait. CDNs support this as a header: <code>Cache-Control: max-age=600, stale-while-revalidate=60</code>.</li>
+    <li><b>Refresh ahead of time.</b> For a handful of known-expensive keys, a scheduled job recomputes the leaderboard every 5 minutes and writes it. Readers never miss.</li>
+  </ul>
+  <pre><code class="lang-js">// Single-flight inside one app server: concurrent misses share one promise.
+const inFlight = new Map();
+async function getLeaderboard() {
+  const hit = await redis.get('leaderboard:district:42');
+  if (hit) return JSON.parse(hit);
+  if (!inFlight.has('lb')) {
+    inFlight.set('lb', computeLeaderboard()               // the 2 s query
+      .then(async (v) =&gt; { await redis.set('leaderboard:district:42', JSON.stringify(v), { EX: 600 }); return v; })
+      .finally(() =&gt; inFlight.delete('lb')));
+  }
+  return inFlight.get('lb');
+}</code></pre>
+
+  <h2>7. Hot keys</h2>
+  <p>A <b>hot key</b> is a single cache key that receives a big share of all traffic. When Redis runs as a cluster, each key lives on one node. If the whole district is assigned the same book on Monday, <code>book:holes:meta</code> might get 20,000 reads per second, all to one Redis node, while the other nodes idle. That node&#39;s CPU or network maxes out first.</p>
+  <p>Fixes:</p>
+  <ul>
+    <li><b>A small in-process cache in front of Redis</b> with a short TTL (1–5 seconds). With 26 app servers, Redis sees at most ~26 reads per second per hot key instead of 20,000. The cost is up to 5 s of extra staleness.</li>
+    <li><b>Key replication.</b> Store copies as <code>book:holes:meta#0</code> … <code>#7</code> on different nodes and read a random one. Writes must update all copies.</li>
+    <li><b>Read replicas</b> of the cache node so reads spread across several machines.</li>
+  </ul>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;The catalog is read-heavy and shared, so I&#39;d use cache-aside in Redis with a 5-minute TTL and delete-on-write. For expensive keys like the leaderboard I&#39;d add stale-while-revalidate or single-flight so an expiry can&#39;t stampede the database, and for hot keys a tiny in-process cache with a few seconds of TTL. Personal data gets <code>Cache-Control: private</code> and never touches the CDN.&quot;</p></div>
+
+  <h2>8. Eviction: when the cache is full</h2>
+  <p>Memory is finite. When the cache is full and a new entry arrives, something must go. The <b>eviction policy</b> picks the victim.</p>
+  <ul>
+    <li><b>LRU</b> (least recently used): evict the entry nobody has touched for the longest. Great default: recently used things tend to be used again.</li>
+    <li><b>LFU</b> (least frequently used): evict the entry with the fewest uses. Better when a few items are steadily popular and a one-time scan shouldn&#39;t push them out.</li>
+    <li><b>TTL-based</b>: expired entries go first.</li>
+  </ul>
+  <p>Redis lets you choose (for example <code>allkeys-lru</code> or <code>allkeys-lfu</code>) and approximates them by sampling rather than keeping a perfect ordering. In the lab you&#39;ll build an exact LRU with TTLs using a JavaScript <code>Map</code>.</p>
+  <div data-lab="lru-cache"></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"The catalog endpoint gets 1,000 requests/s. The cache hit ratio rises from 90% to 99%. What happens to database load for this endpoint?","o":["Drops by about 9%","Drops from 100/s to 10/s, a 10x reduction","Drops from 900/s to 990/s","Stays the same; only latency changes"],"a":1,"why":"At 90% hits, 10% (100/s) reach the database. At 99%, only 1% (10/s) do. Small-looking hit ratio gains cut backend load dramatically."},
+    {"q":"In cache-aside, after updating a book in the database, what should you do with the cache?","o":["Nothing; the TTL will handle it","Write the new value to the cache before the database write","Delete the cache key after the database write","Flush the whole cache"],"a":2,"why":"Write the source of truth first, then delete the key so the next reader rebuilds it from fresh data. The TTL is a safety net, not the main mechanism."},
+    {"q":"A 2-second leaderboard query is cached for 10 minutes. When it expires at peak, the database slows down for everyone. What is this, and what is a good fix?","o":["A hot key; shard Redis","A cache stampede; single-flight or stale-while-revalidate","Replication lag; read from the primary","An eviction storm; switch to LFU"],"a":1,"why":"Many concurrent misses for one expensive key all recompute it at once. Let one request recompute (single-flight) or keep serving the stale value while one refresh runs."},
+    {"q":"Which response is safe to cache on a CDN with Cache-Control: public?","o":["GET /api/home with the student&#39;s name and progress","POST /api/progress","GET /api/teacher/gradebook","GET /covers/holes.4c1e.webp"],"a":3,"why":"A versioned cover image is the same for everyone and never changes at that URL. Personalized or write responses must not be cached publicly."},
+    {"q":"One Redis node is at 100% CPU because every student is reading the same assigned book. What is the cheapest effective fix?","o":["Add a 2-second in-process cache on each app server in front of Redis","Increase the TTL to a day","Switch Redis eviction to LRU","Move the book metadata into the CDN with Cache-Control: private"],"a":0,"why":"A tiny local cache means each app server asks Redis about the hot key at most once every couple of seconds, so Redis load for it drops from thousands per second to a few dozen."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Cache data that is <b>read much more than it changes</b> and is <b>shared</b>; the <b>hit ratio</b> decides how much load you remove.</li>
+    <li>Caches live in the browser, CDN, app memory, a shared store like Redis, and the database. Closer to the user is faster but harder to invalidate.</li>
+    <li><b>Cache-aside + TTL + delete-on-write</b> is the default. Write-through for read-after-write data; write-behind only for loss-tolerant data.</li>
+    <li>Never cache personalized responses at a shared layer: <code>Cache-Control: private</code>.</li>
+    <li>Prevent <b>stampedes</b> with single-flight, stale-while-revalidate, refresh-ahead and TTL jitter; tame <b>hot keys</b> with a tiny local cache or key copies.</li>
+    <li>When full, an <b>eviction policy</b> (LRU, LFU) decides what goes.</li>
+  </ul>
+</template>

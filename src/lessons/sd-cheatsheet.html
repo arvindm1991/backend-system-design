@@ -1,0 +1,214 @@
+<template id="tpl-sd-cheatsheet" data-title="System design cheatsheet" data-part="Part 4 · System design" data-order="220">
+  <h1>System design cheatsheet</h1>
+  <p class="lede">One page to skim the night before and glance at during practice: the latency and capacity numbers worth knowing (as honest ranges), the conversions that make estimates fast, the building blocks and when to reach for each, and a phrasebook of trade-off sentences you can say out loud. Numbers here are rough and hardware-dependent; their job is to get you within a factor of a few, which is all an interview needs.</p>
+
+  <h2>1. Latency numbers</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 800 436" width="100%" role="img" aria-label="Latency numbers on a log scale" xmlns="http://www.w3.org/2000/svg" style="max-width:800px;font-family:inherit">
+
+<line x1="270.0" y1="34" x2="270.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="318.0" y1="34" x2="318.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="366.0" y1="34" x2="366.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="414.0" y1="34" x2="414.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="462.0" y1="34" x2="462.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="510.0" y1="34" x2="510.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="558.0" y1="34" x2="558.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="606.0" y1="34" x2="606.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="654.0" y1="34" x2="654.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="702.0" y1="34" x2="702.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<line x1="750.0" y1="34" x2="750.0" y2="376" stroke="var(--line)" stroke-width="1"/>
+<rect x="270" y="44" width="3.0" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="72" width="96.0" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="100" width="158.4" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="128" width="225.6" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="156" width="262.9" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="184" width="273.6" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="212" width="273.6" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="240" width="302.4" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="268" width="331.3" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="296" width="376.6" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="324" width="379.3" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<rect x="270" y="352" width="432.0" height="18" rx="3" fill="var(--accent)" fill-opacity=".55"/>
+<text x="270.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">1 ns</text>
+<text x="318.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">10 ns</text>
+<text x="366.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">100 ns</text>
+<text x="414.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">1 µs</text>
+<text x="462.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">10 µs</text>
+<text x="510.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">100 µs</text>
+<text x="558.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">1 ms</text>
+<text x="606.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">10 ms</text>
+<text x="654.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">100 ms</text>
+<text x="702.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">1 s</text>
+<text x="750.0" y="28" text-anchor="middle" font-size="12" fill="var(--muted)">10 s</text>
+<text x="260" y="58" text-anchor="end" font-size="12" fill="currentColor">L1 cache reference</text>
+<text x="279" y="58" text-anchor="start" font-size="12" fill="var(--muted)">~1 ns</text>
+<text x="260" y="86" text-anchor="end" font-size="12" fill="currentColor">Main memory reference</text>
+<text x="372.0" y="86" text-anchor="start" font-size="12" fill="var(--muted)">~100 ns</text>
+<text x="260" y="114" text-anchor="end" font-size="12" fill="currentColor">Compress 1 KB (fast codec)</text>
+<text x="434.4494397918711" y="114" text-anchor="start" font-size="12" fill="var(--muted)">~2 µs</text>
+<text x="260" y="142" text-anchor="end" font-size="12" fill="currentColor">NVMe SSD random read</text>
+<text x="501.5505602081289" y="142" text-anchor="start" font-size="12" fill="var(--muted)">~20-100 µs</text>
+<text x="260" y="170" text-anchor="end" font-size="12" fill="currentColor">Round trip, same datacenter</text>
+<text x="538.9018202265438" y="170" text-anchor="start" font-size="12" fill="var(--muted)">~0.1-0.5 ms</text>
+<text x="260" y="198" text-anchor="end" font-size="12" fill="currentColor">Redis GET over the network</text>
+<text x="549.5505602081289" y="198" text-anchor="start" font-size="12" fill="var(--muted)">~0.2-1 ms</text>
+<text x="260" y="226" text-anchor="end" font-size="12" fill="currentColor">Read 1 MB sequentially, NVMe</text>
+<text x="549.5505602081289" y="226" text-anchor="start" font-size="12" fill="var(--muted)">~0.2-1 ms</text>
+<text x="260" y="254" text-anchor="end" font-size="12" fill="currentColor">Indexed SQL query (incl. network)</text>
+<text x="578.4494397918711" y="254" text-anchor="start" font-size="12" fill="var(--muted)">~1-5 ms</text>
+<text x="260" y="282" text-anchor="end" font-size="12" fill="currentColor">Disk (HDD) seek</text>
+<text x="607.3483193756133" y="282" text-anchor="start" font-size="12" fill="var(--muted)">~5-10 ms</text>
+<text x="260" y="310" text-anchor="end" font-size="12" fill="currentColor">Round trip, US coast to coast</text>
+<text x="652.5647059206843" y="310" text-anchor="start" font-size="12" fill="var(--muted)">~60-80 ms</text>
+<text x="260" y="338" text-anchor="end" font-size="12" fill="currentColor">Round trip, US East &lt;-&gt; Europe</text>
+<text x="655.3483193756133" y="338" text-anchor="start" font-size="12" fill="var(--muted)">~70-100 ms</text>
+<text x="260" y="366" text-anchor="end" font-size="12" fill="currentColor">LLM time to first token</text>
+<text x="708.0" y="366" text-anchor="start" font-size="12" fill="var(--muted)">~0.3-2 s</text>
+<text x="400" y="404" text-anchor="middle" font-size="12" fill="var(--muted)">Each gridline is 10x. Rough modern figures; your hardware and cloud will differ.</text>
+</svg>
+    <figcaption>Log scale: each gridline is 10× the previous. Memory is ~1,000× faster than a network round trip in the same datacenter, which is ~100× faster than crossing a continent.</figcaption>
+  </figure>
+  <table class="tbl">
+    <thead><tr><th>Operation</th><th>Rough time</th><th>What it means for design</th></tr></thead>
+    <tbody>
+      <tr><td>Main memory read</td><td>~100 ns</td><td>In-process caches are effectively free</td></tr>
+      <tr><td>NVMe SSD random read</td><td>~20–100 µs</td><td>An indexed lookup that misses RAM is still sub-millisecond</td></tr>
+      <tr><td>Network round trip, same datacenter</td><td>~0.1–0.5 ms</td><td>Each service hop costs this; 10 sequential hops add up</td></tr>
+      <tr><td>Redis GET over the network</td><td>~0.2–1 ms</td><td>Fine once per request; not 200 times in a loop</td></tr>
+      <tr><td>Simple indexed SQL query</td><td>~1–5 ms</td><td>N+1 queries (one per item in a list) turn 5 ms into 500 ms</td></tr>
+      <tr><td>Cross-availability-zone round trip</td><td>~0.5–2 ms</td><td>Synchronous replication across zones is affordable</td></tr>
+      <tr><td>US coast to coast round trip</td><td>~60–80 ms</td><td>Synchronous cross-region writes hurt; replicate async</td></tr>
+      <tr><td>US East ↔ Europe round trip</td><td>~70–100 ms</td><td>Serve users from a nearby region or CDN</td></tr>
+      <tr><td>TLS + TCP setup on a new connection</td><td>~1–2 round trips</td><td>Reuse connections (keep-alive, HTTP/2)</td></tr>
+      <tr><td>LLM time to first token</td><td>~0.3–2 s</td><td>Stream; show progress; never block a page on it</td></tr>
+      <tr><td>Human perception</td><td>~100 ms feels instant; ~1 s keeps flow; ~10 s loses attention</td><td>Budget backward from what the user feels</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2. Conversions that make estimates fast</h2>
+  <table class="tbl">
+    <thead><tr><th>Fact</th><th>Use it as</th></tr></thead>
+    <tbody>
+      <tr><td>1 day = 86,400 s</td><td>≈ 10<sup>5</sup> s (round down to be conservative on peaks)</td></tr>
+      <tr><td>1 million per day</td><td>≈ 12 per second</td></tr>
+      <tr><td>1 billion per day</td><td>≈ 12,000 per second</td></tr>
+      <tr><td>1 month</td><td>≈ 2.6 million seconds</td></tr>
+      <tr><td>Peak vs average</td><td>2–5× for smooth consumer traffic; 10×+ for spiky (school bells, on-sales, launches)</td></tr>
+      <tr><td>2<sup>10</sup>, 2<sup>20</sup>, 2<sup>30</sup>, 2<sup>40</sup></td><td>≈ thousand (KB), million (MB), billion (GB), trillion (TB)</td></tr>
+      <tr><td>1 Gbps</td><td>≈ 125 MB/s (divide bits by 8)</td></tr>
+      <tr><td>Little's Law</td><td>things in flight = arrival rate × time each takes (1,000 req/s × 0.2 s = 200 concurrent)</td></tr>
+      <tr><td>Read:write ratio</td><td>Most products are 10:1 to 100:1 read-heavy; chat and logging are write-heavy</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. Sizes worth remembering</h2>
+  <table class="tbl">
+    <thead><tr><th>Thing</th><th>Rough size</th></tr></thead>
+    <tbody>
+      <tr><td>ASCII character / UTF-8 character</td><td>1 byte / 1–4 bytes</td></tr>
+      <tr><td>Integer / bigint / timestamp</td><td>4 / 8 / 8 bytes</td></tr>
+      <tr><td>UUID</td><td>16 bytes binary, 36 characters as text</td></tr>
+      <tr><td>Typical DB row with indexes</td><td>100 bytes – 1 KB</td></tr>
+      <tr><td>Short post or chat message with metadata</td><td>~300 bytes – 1 KB</td></tr>
+      <tr><td>Page of text (~500 words)</td><td>~3 KB, ~650 LLM tokens</td></tr>
+      <tr><td>LLM token (English)</td><td>~4 characters, ~0.75 words</td></tr>
+      <tr><td>Phone photo (compressed)</td><td>~1–5 MB; thumbnail ~10–50 KB</td></tr>
+      <tr><td>1 minute of speech audio (Opus/AAC)</td><td>~150 KB – 1 MB</td></tr>
+      <tr><td>1 minute of 1080p video</td><td>~40–100 MB (5–12 Mbps)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. Rough capacity per box (honest ranges)</h2>
+  <p>These vary by 10× with hardware, payload and code quality. Say the range and the assumption: "assuming simple indexed reads on a large instance".</p>
+  <table class="tbl">
+    <thead><tr><th>Component</th><th>Rough capacity</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Stateless app server</td><td>~1,000–10,000 req/s doing real work</td><td>Much more for trivial endpoints; scale horizontally behind a load balancer</td></tr>
+      <tr><td>Postgres / MySQL primary: reads</td><td>~10,000–50,000+ simple indexed queries/s</td><td>Add read replicas and caches before sharding</td></tr>
+      <tr><td>Postgres / MySQL primary: writes</td><td>~1,000–10,000+ transactions/s</td><td>Batching and commit settings matter a lot; sharding is the big step</td></tr>
+      <tr><td>Single SQL database size</td><td>Comfortable into the low TBs; many run 10+ TB</td><td>Backups, migrations and index builds get slow first</td></tr>
+      <tr><td>Redis node</td><td>~100,000–200,000 simple ops/s; more with pipelining</td><td>Bounded by RAM (tens to hundreds of GB); single-threaded command execution</td></tr>
+      <tr><td>Kafka cluster</td><td>Hundreds of thousands to millions of messages/s</td><td>Throughput scales with partitions; ordering is per partition</td></tr>
+      <tr><td>WebSocket / SSE server</td><td>~10,000–100,000 open connections comfortably</td><td>Hundreds of thousands with tuning; memory per connection is the limit</td></tr>
+      <tr><td>Object storage (S3-style)</td><td>Effectively unlimited capacity</td><td>Request rates are per key prefix (S3 documents thousands of requests/s per prefix); latency tens of ms</td></tr>
+      <tr><td>Search node (Elasticsearch/OpenSearch)</td><td>Hundreds to thousands of queries/s</td><td>Depends heavily on query complexity and index size</td></tr>
+      <tr><td>CDN</td><td>Serves most static traffic at the edge</td><td>90%+ hit ratio for static assets is normal</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. A 60-second estimate, worked</h2>
+  <div class="trace">
+    <ol>
+      <li>Prompt: "photo sharing app, 20 million daily users".</li>
+      <li><b>Writes:</b> 1 in 10 users uploads 2 photos/day = 4 M uploads/day ≈ 4 × 12 = <b>~50 uploads/s</b>, peak ~150–250.</li>
+      <li><b>Reads:</b> each user views ~50 photos/day = 1 B views/day ≈ <b>12,000/s</b>, peak ~40,000. Read-heavy 250:1, so cache and CDN matter most.</li>
+      <li><b>Storage:</b> 4 M × 3 MB = 12 TB/day ≈ <b>4 PB/year</b> (plus thumbnails). Object storage, not a database.</li>
+      <li><b>Bandwidth:</b> 40,000 views/s × 200 KB (sized-down images) = 8 GB/s ≈ 64 Gbps at peak. That's a CDN's job.</li>
+      <li><b>Metadata:</b> 4 M rows/day × 500 B = 2 GB/day ≈ 0.7 TB/year: one SQL database with replicas for years.</li>
+      <li><b>Say:</b> "So the hard parts are blob storage and delivery, not the database."</li>
+    </ol>
+  </div>
+
+  <h2>6. Building blocks and when to use each</h2>
+  <table class="tbl">
+    <thead><tr><th>Block</th><th>Reach for it when</th><th>Watch out for</th></tr></thead>
+    <tbody>
+      <tr><td>Load balancer</td><td>More than one app server; health checks; TLS termination</td><td>Sticky sessions undo statelessness; long-lived connections need special timeouts</td></tr>
+      <tr><td>CDN</td><td>Static assets, media, cacheable GETs, global users</td><td>Invalidation lag; never cache personalized responses publicly</td></tr>
+      <tr><td>Cache (Redis/Memcached)</td><td>Read-heavy hot data; counters; sessions; rate limits</td><td>Staleness, invalidation, stampedes on expiry, hot keys</td></tr>
+      <tr><td>Relational DB (Postgres/MySQL)</td><td>Default for core data: relations, transactions, constraints</td><td>Write scaling needs sharding; schema migrations at size</td></tr>
+      <tr><td>Read replicas</td><td>Read load exceeds one primary</td><td>Replication lag breaks read-your-writes; route those reads to the primary</td></tr>
+      <tr><td>Sharding / partitioning</td><td>Data or writes exceed one primary</td><td>Cross-shard queries and transactions; choose the shard key by access pattern</td></tr>
+      <tr><td>Key-value / wide-column (DynamoDB, Cassandra)</td><td>Massive scale, known access patterns, high write rates</td><td>Limited queries; design tables per query; eventual consistency options</td></tr>
+      <tr><td>Document store (MongoDB)</td><td>Nested, flexible records read as a whole</td><td>Cross-document joins and transactions are weaker or costlier</td></tr>
+      <tr><td>Search index (Elasticsearch/OpenSearch)</td><td>Full-text search, filters, facets, relevance ranking</td><td>It's a derived copy: sync it from the source of truth; not a primary store</td></tr>
+      <tr><td>Object storage (S3)</td><td>Files, media, backups, data lake, large blobs</td><td>Not for small, frequently updated records; use presigned URLs for uploads</td></tr>
+      <tr><td>Queue (SQS, RabbitMQ)</td><td>Background jobs, smoothing spikes, retries</td><td>At-least-once delivery: consumers must be idempotent; dead-letter queues</td></tr>
+      <tr><td>Log / stream (Kafka, Kinesis)</td><td>Event streams, many consumers, replay, analytics pipelines</td><td>Ordering only within a partition; operational weight</td></tr>
+      <tr><td>Pub/sub</td><td>Fan out messages to many subscribers (realtime, invalidations)</td><td>Fire-and-forget variants drop messages when subscribers are down</td></tr>
+      <tr><td>WebSocket / SSE gateway</td><td>Server push: chat, live dashboards, streaming LLM output</td><td>Stateful connections, reconnect storms, proxies and filters</td></tr>
+      <tr><td>Workflow / scheduler</td><td>Multi-step jobs, retries over hours, cron-like schedules</td><td>Idempotent steps; visibility into stuck jobs</td></tr>
+      <tr><td>Data warehouse (BigQuery, Snowflake, ClickHouse)</td><td>Analytics and reports over large history</td><td>Not for per-request reads; data arrives with some delay</td></tr>
+      <tr><td>Vector database / index</td><td>Semantic search, retrieval for LLMs (RAG)</td><td>Approximate results; keep metadata filters and permissions in sync</td></tr>
+    </tbody>
+  </table>
+
+  <h2>7. Trade-off phrasebook</h2>
+  <p>Fill in the numbers from your design. Each one follows "X gives A at the cost of B; choose it when C".</p>
+  <ul>
+    <li><b>Cache:</b> "A cache gives us ~1 ms reads and takes load off the database, at the cost of serving data up to TTL seconds stale; fine here because [requirement]."</li>
+    <li><b>Sync vs async:</b> "Doing this in a background job makes the request fast and lets us retry, at the cost of the result not being visible immediately; I'd show a 'processing' state."</li>
+    <li><b>Consistency:</b> "Strong consistency here costs us latency and some availability during failures; I'll spend it on [money, inventory, permissions] and use eventual consistency for [feeds, counts, analytics]."</li>
+    <li><b>Read replicas:</b> "Replicas scale reads at the cost of replication lag, so right after a user writes, I'll read their own data from the primary."</li>
+    <li><b>Denormalize:</b> "Storing the author's name on each post saves a join on every read, at the cost of updating many rows if the name changes, which is rare."</li>
+    <li><b>Precompute vs on demand:</b> "Precomputing makes reads a lookup at the cost of storage and freshness; computing on demand is always fresh but slower. Reads outnumber writes 100:1, so precompute."</li>
+    <li><b>Push vs pull:</b> "Fan-out on write makes reads cheap at the cost of write amplification for large audiences; I'll pull for the few huge accounts."</li>
+    <li><b>SQL vs NoSQL:</b> "Postgres gives us transactions and flexible queries; a wide-column store gives easier horizontal write scaling but only the queries we design for. At [N] writes/s, Postgres is enough."</li>
+    <li><b>Fail open vs closed:</b> "If the limiter is down we fail open, trading a brief window of abuse for keeping the product up; for login and costly operations we fail closed."</li>
+    <li><b>At-least-once:</b> "The queue delivers at least once, so I'll make the consumer idempotent with a dedupe key rather than chase exactly-once."</li>
+    <li><b>Monolith vs services:</b> "One deployable keeps the team fast at the cost of coupling; I'd split out only the parts with very different scaling or reliability needs, like the WebSocket gateway."</li>
+    <li><b>Build vs buy:</b> "A managed service costs more per unit but saves on-call and months of work; I'd buy until scale or a hard requirement says otherwise."</li>
+    <li><b>Multi-region:</b> "Active-active across regions improves latency and survives a region outage, at the cost of conflict handling; I'd start active-passive with async replication and a tested failover."</li>
+  </ul>
+
+  <h2>8. Questions to ask, and failure prompts to ask yourself</h2>
+  <ul>
+    <li><b>Requirements:</b> Who are the users? Top 3 actions? How many users, how fast growing? Read or write heavy? How fresh must data be? What must never happen (double charge, data leak)? Any compliance or privacy rules? Mobile, web, or both?</li>
+    <li><b>Failure prompts for each arrow in your diagram:</b> What if this call is slow? Fails? Happens twice? Happens out of order? What if this box is down for 5 minutes? What's the first thing to break at 10× traffic?</li>
+  </ul>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Let me do rough numbers so we know what kind of problem this is: 20 million daily users, about 50 uploads a second but 12,000 views a second, roughly 4 petabytes a year of photos. That tells me the database is the easy part; the design is really about object storage and CDN delivery. I'll treat these as within a factor of a few; tell me if your numbers differ."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Unit slips and false precision. Mixing up bits and bytes (a "1 Gbps" link moves ~125 MB/s, not 1 GB/s), forgetting to convert per-day to per-second, or quoting "Postgres does 47,000 QPS" as if it were a law of nature. Round aggressively, label units on every number, give ranges for hardware-dependent figures, and say what each number means for the design.</p></div>
+
+  <div data-quiz='[{"q":"About how many requests per second is 1 billion requests per day?","o":["About 1,200","About 12,000","About 120,000","About 1.2 million"],"a":1,"why":"1 billion divided by roughly 86,400 seconds is about 11,600."},{"q":"A 1 Gbps network link moves roughly how much data per second?","o":["1 GB","125 MB","8 GB","10 MB"],"a":1,"why":"Divide bits by 8: 1,000 Mbps is about 125 MB per second."},{"q":"Which is the slowest?","o":["Main memory read","Redis GET in the same datacenter","SSD random read","Round trip from the US East Coast to Europe"],"a":3,"why":"Crossing an ocean is tens of milliseconds; the others are nanoseconds to about a millisecond."},{"q":"Using Little Law, 2,000 requests per second that each take 0.5 seconds means about how many in flight?","o":["4","1,000","2,000","4,000"],"a":1,"why":"Concurrency equals rate times duration: 2,000 times 0.5 equals 1,000."},{"q":"You need full-text search over product descriptions stored in Postgres. What is the usual building block?","o":["Make the search index the only copy of the data","A search index kept in sync from the database as a derived copy","A message queue","Object storage"],"a":1,"why":"Search engines are great at relevance and filtering but should be fed from the source of truth."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Memory ≈ 100 ns, same-datacenter hop ≈ 0.5 ms, cross-continent ≈ 70–100 ms: count your hops.</li>
+    <li>1 M/day ≈ 12/s; peaks are 2–5× average, 10×+ for event-driven spikes; Little's Law sizes concurrency.</li>
+    <li>Per-box capacities are ranges: say the range and the assumption.</li>
+    <li>Every building block earns its place with a requirement, and each has a known failure mode.</li>
+    <li>Speak trade-offs as "X gives A at the cost of B; choose it when C", with numbers.</li>
+  </ul>
+</template>

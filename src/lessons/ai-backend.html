@@ -1,0 +1,267 @@
+<template id="tpl-ai-backend" data-title="Backends for AI products" data-part="Part 3 · Distributed systems" data-order="140">
+  <h1>Backends for AI products</h1>
+  <p class="lede">By the end of this lesson you will be able to design the backend for a Claude-powered feature end to end: why the model is called from your server, how tokens stream to the browser, how prompt caching cuts cost, when work moves to a queue, how to enforce per-customer rate limits and budgets, what to store and log, how evals keep quality from drifting, and what student-data privacy requires. Every part of the previous four lessons shows up again here.</p>
+
+  <h2>1. The running example: ReadBuddy</h2>
+  <p>PageTurn, the reading app for schools, is adding <b>ReadBuddy</b>: a tutor powered by Claude. A student reading a passage can highlight a sentence and ask &quot;what does <i>reluctant</i> mean here?&quot; or &quot;why did Maya lie to her brother?&quot;. ReadBuddy answers like a good reading teacher: it gives hints and asks questions, and it does not hand out answers to the end-of-passage quiz.</p>
+  <p>The numbers that drive the design:</p>
+  <ul>
+    <li><b>40 districts</b>, ~600,000 students, grades 2–8. Each district signs a contract with a data privacy agreement and a usage allowance.</li>
+    <li>The largest district, Lincoln Unified, has 20,000 students. On a school day ~30% use ReadBuddy, ~8 questions each: <b>48,000 tutor calls a day</b> in one district.</li>
+    <li>Traffic is spiky: most calls land between 8:30–11:30 and 12:30–2:30 local time, with a class of 30 students often asking about the <i>same passage</i> within the same few minutes.</li>
+    <li>Teachers can also run bulk jobs: &quot;draft feedback on these 32 essays&quot;.</li>
+  </ul>
+
+  <h2>2. The shape: your server sits between the student and the model</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 300" width="100%" role="img" aria-label="ReadBuddy architecture: browser to API with auth, tenant limits, budgets and safety checks; API streams from Claude API; Postgres stores conversations; Redis holds limits; a queue and workers run long jobs; logs and evals" style="font-family:inherit">
+      <defs><marker id="ai-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="10" y="110" width="110" height="64" rx="10" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="65" y="138" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Student</text>
+      <text x="65" y="156" text-anchor="middle" style="fill:var(--muted);font-size:12px">browser</text>
+      <rect x="170" y="70" width="200" height="150" rx="12" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="270" y="94" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">ReadBuddy API</text>
+      <text x="186" y="118" style="fill:currentColor;font-size:12px">1 auth + district lookup</text>
+      <text x="186" y="138" style="fill:currentColor;font-size:12px">2 rate limit + token budget</text>
+      <text x="186" y="158" style="fill:currentColor;font-size:12px">3 input safety check</text>
+      <text x="186" y="178" style="fill:currentColor;font-size:12px">4 build prompt (cached prefix)</text>
+      <text x="186" y="198" style="fill:currentColor;font-size:12px">5 stream, log, settle usage</text>
+      <rect x="440" y="100" width="130" height="84" rx="10" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <text x="505" y="132" text-anchor="middle" style="fill:currentColor;font-size:14px;font-weight:600">Claude API</text>
+      <text x="505" y="152" text-anchor="middle" style="fill:var(--muted);font-size:12px">Messages, streaming</text>
+      <text x="505" y="170" text-anchor="middle" style="fill:var(--muted);font-size:12px">secret key here only</text>
+      <line x1="120" y1="132" x2="166" y2="132" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ai-arr)"/>
+      <line x1="166" y1="156" x2="124" y2="156" style="stroke:var(--accent);stroke-width:1.5" marker-end="url(#ai-arr)"/>
+      <text x="143" y="186" text-anchor="middle" style="fill:var(--accent);font-size:12px">SSE</text>
+      <line x1="370" y1="132" x2="436" y2="132" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ai-arr)"/>
+      <line x1="436" y1="156" x2="374" y2="156" style="stroke:var(--accent);stroke-width:1.5" marker-end="url(#ai-arr)"/>
+      <rect x="170" y="250" width="110" height="42" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="225" y="276" text-anchor="middle" style="fill:currentColor;font-size:12px">Postgres: chats</text>
+      <rect x="295" y="250" width="110" height="42" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="350" y="276" text-anchor="middle" style="fill:currentColor;font-size:12px">Redis: limits</text>
+      <rect x="420" y="250" width="120" height="42" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="480" y="276" text-anchor="middle" style="fill:currentColor;font-size:12px">Queue + workers</text>
+      <rect x="555" y="250" width="115" height="42" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="612" y="276" text-anchor="middle" style="fill:currentColor;font-size:12px">Logs + evals</text>
+      <line x1="225" y1="220" x2="225" y2="246" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ai-arr)"/>
+      <line x1="320" y1="220" x2="340" y2="246" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ai-arr)"/>
+      <line x1="360" y1="215" x2="470" y2="246" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ai-arr)"/>
+      <line x1="370" y1="205" x2="600" y2="246" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ai-arr)"/>
+      <line x1="500" y1="246" x2="505" y2="188" style="stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3" marker-end="url(#ai-arr)"/>
+      <text x="340" y="30" text-anchor="middle" style="fill:currentColor;font-size:13px">Every model call passes through your API: that&#39;s where policy lives.</text>
+    </svg>
+    <figcaption>ReadBuddy&#39;s backend. The browser never talks to the model provider directly.</figcaption>
+  </figure>
+  <p>Calling the Claude API directly from the browser is tempting for a prototype and wrong for a product. Doing it server-side gives you:</p>
+  <ul>
+    <li><b>Secret keys stay secret.</b> An API key shipped to a browser is public; anyone can spend your money with it.</li>
+    <li><b>Policy.</b> Only your server knows which district a student belongs to, what their allowance is, and what the district allows.</li>
+    <li><b>Prompt control.</b> The tutoring rules, the passage and the conversation history are assembled on the server, where a student can&#39;t edit them.</li>
+    <li><b>Records.</b> Logging, cost tracking, evals and incident debugging all need every call to pass through one place.</li>
+    <li><b>Freedom to change.</b> Swap models, adjust prompts or add a fallback without shipping a new app.</li>
+  </ul>
+
+  <h2>3. Streaming tokens to the student</h2>
+  <p>Models generate text a token at a time (a <b>token</b> is a chunk of text, roughly ¾ of an English word). A 250-token answer might take several seconds to finish, but the first token can arrive in well under a couple of seconds. If you wait for the whole answer, a 9-year-old stares at a spinner for 6 seconds. If you <b>stream</b>, words start appearing almost immediately. The metric to watch is <b>time to first token</b> (TTFT), not total time.</p>
+  <p>The Claude API streams using <b>server-sent events</b> (SSE): a long-lived HTTP response where the server writes small <code>event:</code>/<code>data:</code> messages. The sequence is <code>message_start</code>, then for each content block <code>content_block_start</code>, many <code>content_block_delta</code> events (text arrives as <code>text_delta</code>), <code>content_block_stop</code>, then <code>message_delta</code> (with final usage counts) and <code>message_stop</code>. <code>ping</code> events may appear anywhere, and an <code>error</code> event (for example <code>overloaded_error</code>) can arrive mid-stream. Your server relays the text to the browser over its own SSE response:</p>
+  <pre><code class="lang-js">import Anthropic from '@anthropic-ai/sdk';
+const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from the server environment
+
+app.post('/api/tutor/:conversationId/messages', async (req, res) =&gt; {
+  const ctx = await authorize(req);                 // student, district, conversation
+  const hold = budget.reserve(ctx.districtId, estimateTokens(ctx) + MAX_TOKENS);
+  if (!hold.ok) return res.status(429).json({ error: 'district_budget_exhausted' });
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'X-Accel-Buffering': 'no',                      // stop nginx-style proxies buffering the stream
+  });
+
+  const stream = anthropic.messages.stream({
+    model: MODEL, max_tokens: MAX_TOKENS,
+    system: buildSystem(ctx),                       // tutoring rules + passage (cached, section 4)
+    messages: buildMessages(ctx, req.body.text),
+  });
+  // Student closed the tab: stop generating, stop paying.
+  res.on('close', () =&gt; { if (!res.writableEnded) stream.abort(); });
+  stream.on('text', (text) =&gt; res.write('data: ' + JSON.stringify({ text }) + '\n\n'));
+
+  try {
+    const final = await stream.finalMessage();      // full text + usage
+    await saveAssistantMessage(ctx, final);         // store text, tokens, model, prompt version
+    budget.settle(hold.id, totalTokens(final.usage));
+    res.write('event: done\ndata: {}\n\n');
+  } catch (err) {
+    budget.settle(hold.id, 0);                      // simplified: real code bills what was used
+    if (!res.writableEnded) res.write('event: error\ndata: {"retry":true}\n\n');
+  }
+  res.end();
+});</code></pre>
+  <p>Details that matter in production:</p>
+  <ul>
+    <li>The browser&#39;s built-in <code>EventSource</code> only does GET requests, so for a POST with a body you read the stream with <code>fetch</code> and <code>response.body.getReader()</code>.</li>
+    <li>Load balancers and proxies have idle timeouts (often 60 seconds); long streams need periodic comment lines or pings to keep the connection alive.</li>
+    <li>Save the final message server-side. If the student&#39;s connection drops at token 120, the answer is still in their history when they reconnect.</li>
+    <li>An error can arrive after some text has already been sent. The UI needs a &quot;something went wrong, try again&quot; state for a half-finished answer.</li>
+  </ul>
+
+  <h2>4. Prompt caching: pay once for the shared prefix</h2>
+  <p>Look at what each ReadBuddy call sends. Most of it is identical for every student in the class:</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 160" width="100%" role="img" aria-label="A prompt laid out as tutoring rules 2000 tokens and passage 3000 tokens cached, followed by conversation 500 tokens not cached" style="font-family:inherit">
+      <rect x="20" y="40" width="250" height="56" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <text x="145" y="64" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Tutoring rules (system)</text>
+      <text x="145" y="83" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">~2,000 tokens, same for all</text>
+      <rect x="270" y="40" width="300" height="56" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <text x="420" y="64" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Passage: &quot;The Lighthouse Keeper&quot;</text>
+      <text x="420" y="83" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">~3,000 tokens, same for the class</text>
+      <rect x="570" y="40" width="90" height="56" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="615" y="64" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Chat</text>
+      <text x="615" y="83" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">~500</text>
+      <line x1="570" y1="28" x2="570" y2="108" style="stroke:var(--accent);stroke-width:2.5"/>
+      <text x="570" y="22" text-anchor="middle" style="fill:var(--accent);font-size:12px;font-weight:600">cache breakpoint</text>
+      <text x="295" y="130" text-anchor="middle" style="fill:currentColor;font-size:13px">Cached prefix: written once, then read at a fraction of the price</text>
+      <text x="615" y="130" text-anchor="middle" style="fill:var(--muted);font-size:12px">full price</text>
+    </svg>
+    <figcaption>Order the prompt from most stable to least stable. The cache matches an exact prefix, in the order tools, then system, then messages.</figcaption>
+  </figure>
+  <p><b>Prompt caching</b> lets you mark the end of a stable prefix with <code>cache_control</code>. The first request writes that prefix to a cache; later requests that start with the <i>exact same</i> prefix read it instead of reprocessing it. At the time of writing, a cache write costs about 1.25× the normal input price (5-minute lifetime, refreshed every time it&#39;s read; a 1-hour option costs 2×), and a cache read costs about 0.1× (lower still on some newer models). There&#39;s a minimum cacheable length, between roughly 512 and 4,096 tokens depending on the model. Check the current docs before quoting exact numbers.</p>
+  <pre><code class="lang-js">function buildSystem(ctx) {
+  return [
+    { type: 'text', text: TUTOR_RULES_V14 },                     // identical for everyone
+    { type: 'text', text: 'Passage:\n' + ctx.passage.text,
+      cache_control: { type: 'ephemeral' } },                    // cache everything up to here
+  ];
+  // Student name, time, quiz progress: NOT here. They go in messages, after the breakpoint.
+}</code></pre>
+  <div class="trace"><b>Trace: one class, one passage, 30 students in 4 minutes</b>
+    <ol>
+      <li><p><b>09:02:10</b> Student 1 asks a question. Prefix = 5,000 tokens. Cache miss: written at 1.25× → cost equivalent to <b>6,250</b> input tokens, plus 500 normal ones. Response <code>usage</code> shows <code>cache_creation_input_tokens: 5000</code>.</p></li>
+      <li><p><b>09:02:40 – 09:06:00</b> Students 2–30 ask. Each finds the prefix (each read also resets the 5-minute timer). Each pays 5,000 × 0.1 = <b>500</b> token-equivalents for the prefix; <code>usage</code> shows <code>cache_read_input_tokens: 5000</code>.</p></li>
+      <li><p><b>Total prefix cost</b> 6,250 + 29 × 500 = <b>20,750</b> token-equivalents, versus 30 × 5,000 = 150,000 without caching. <span class="yes">About 86% less for the prefix</span>, and TTFT drops too because the model skips reprocessing it.</p></li>
+      <li><p><b>Gotcha</b> A developer adds <code>&quot;Today is 2026-10-10 09:02:41&quot;</code> to the top of the system prompt. Every request now has a unique prefix. <span class="no">Cache hit rate drops to 0%; the bill jumps 3×.</span> Watch <code>cache_read_input_tokens</code> on a dashboard.</p></li>
+    </ol>
+  </div>
+
+  <h2>5. Long jobs go on a queue</h2>
+  <p>A teacher clicks &quot;Draft feedback for 32 essays&quot;. Each essay is a call of ~20 seconds; with a rubric check and a second pass, the job runs 10+ minutes. An agent that uses tools in a loop (look up the standard, read the essay, draft, check) is longer still. That can&#39;t be an HTTP request: proxies time out, a deploy kills it halfway, and a retry would start all 32 again.</p>
+  <ol>
+    <li><code>POST /api/jobs</code> with an idempotency key returns <b>202 Accepted</b> and <code>{ jobId: &quot;job_311&quot; }</code> immediately. A <code>jobs</code> row records status <code>queued</code>.</li>
+    <li>The job is split into 32 tasks on a queue (one per essay). Workers pull tasks with a per-district concurrency cap (say 5 at a time for Lincoln), so one teacher&#39;s bulk job can&#39;t eat everyone&#39;s rate limit.</li>
+    <li>Each finished essay is saved as it completes. A crash at essay 19 resumes at 19, not 1. Tasks are retried with backoff and go to a dead-letter queue after a few failures.</li>
+    <li>The teacher&#39;s page shows progress (&quot;19 / 32&quot;) via polling or SSE, and the teacher gets a notification when it&#39;s done.</li>
+  </ol>
+  <p>For work nobody is waiting on (overnight reading-level tagging of 5,000 new passages), use the provider&#39;s batch interface: Anthropic&#39;s Message Batches API processes large sets asynchronously at a substantial discount (50% at the time of writing), with results typically back well within its 24-hour window.</p>
+  <p>Interactive and background traffic share one organization-wide rate limit, so give them separate budgets and priorities: tutoring first, bulk jobs take what&#39;s left.</p>
+
+  <h2>6. Rate limits and cost, per district</h2>
+  <p>Here&#39;s the multi-tenant problem in one sentence: <b>Anthropic rate-limits and bills your organization; your contracts are per district.</b> The API enforces limits like requests per minute and input/output tokens per minute per model (with HTTP <b>429</b> and a <code>retry-after</code> header when exceeded, and <b>529</b> when the service is overloaded). Those limits are shared by all 40 districts. If Lincoln&#39;s 8:30 surge uses them up, a small district&#39;s students get errors. That&#39;s the <b>noisy neighbor</b> problem, and fixing it is your job.</p>
+  <div class="trace"><b>Worked numbers: Lincoln Unified&#39;s day (illustrative prices)</b>
+    <ol>
+      <li><p>48,000 calls/day. Each sends ~5,500 input tokens (5,000 cacheable prefix + 500 new) and gets ~250 output tokens back. Per day: <b>264M input</b> and <b>12M output</b> tokens.</p></li>
+      <li><p>At illustrative Sonnet-class list prices of $3 per million input and $15 per million output (check current pricing): without caching, 264 × $3 + 12 × $15 = $792 + $180 = <b>~$970/day</b>.</p></li>
+      <li><p>With caching (nearly all prefixes are hits): 240M cached reads × $0.30 + 24M uncached × $3 + $180 output ≈ $72 + $72 + $180 = <b>~$325/day</b> plus a few dollars of cache writes. Over a 180-day school year: roughly $175k versus $59k.</p></li>
+      <li><p>So Lincoln&#39;s contract includes a daily allowance of, say, 300M tokens. At 80% you alert the account team; at 100% ReadBuddy switches to a cheaper, smaller model for simple definition questions, or shows &quot;ReadBuddy is resting until tomorrow&quot;, per the district&#39;s choice.</p></li>
+    </ol>
+  </div>
+  <p>The controls, from fastest to slowest:</p>
+  <table class="tbl">
+    <thead><tr><th>Control</th><th>Protects against</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>Per-student request limit</td><td>One student spamming (or a script)</td><td>Token bucket in Redis, e.g. 10 questions/minute</td></tr>
+      <tr><td>Per-district rate limit</td><td>Noisy neighbor on the shared org limit</td><td>Token bucket sized to the district&#39;s share of tokens per minute</td></tr>
+      <tr><td>Per-district token budget</td><td>Cost overruns against the contract</td><td><b>Reserve</b> an estimate (input + <code>max_tokens</code>) before calling, <b>settle</b> with real <code>usage</code> after (this lesson&#39;s lab)</td></tr>
+      <tr><td><code>max_tokens</code> cap</td><td>Runaway long answers</td><td>Tutor answers capped at ~400 tokens; a 9-year-old doesn&#39;t need an essay</td></tr>
+      <tr><td>Global retry handling</td><td>Retry storms on 429/529</td><td>Honor <code>retry-after</code>, backoff with jitter, one retry layer (the reliability lesson)</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Counting usage only after calls finish. At 8:31, 2,000 Lincoln students ask questions in the same minute; each check sees &quot;budget fine&quot; because none have finished, and together they blow through the allowance. Reserve before the call so in-flight work counts, then settle with the actual numbers.</p></div>
+
+  <h2>7. Storing conversations</h2>
+  <pre><code class="lang-sql">CREATE TABLE conversations (
+  id           uuid PRIMARY KEY,
+  district_id  text NOT NULL,          -- tenant on every row; row-level security keys off it
+  student_ref  text NOT NULL,          -- pseudonymous id, not a name
+  passage_id   text NOT NULL,
+  created_at   timestamptz NOT NULL
+);
+CREATE TABLE messages (
+  id              uuid PRIMARY KEY,
+  conversation_id uuid NOT NULL REFERENCES conversations(id),
+  district_id     text NOT NULL,
+  role            text NOT NULL CHECK (role IN ('user', 'assistant')),
+  content         text NOT NULL,
+  model           text, prompt_version text,
+  input_tokens int, cache_read_tokens int, output_tokens int,
+  latency_ms int, safety_flags text[],
+  created_at      timestamptz NOT NULL
+);</code></pre>
+  <p>Three design choices worth saying out loud. First, <b>tenant id on every row</b>, enforced in the database (Postgres row-level security) rather than trusted to every query. Second, <b>retention</b>: district agreements usually say how long student data may be kept (often through the school year); a nightly job deletes what&#39;s expired, and the delete is tested. Third, <b>context assembly</b>: a 40-turn conversation shouldn&#39;t be resent in full forever; send the last ~10 turns plus a short running summary, which keeps cost and latency flat.</p>
+
+  <h2>8. Logging and evals</h2>
+  <p>Every call writes one structured log record. Debugging (&quot;why was this answer bad?&quot;), cost reports and evals are all built from it.</p>
+  <pre><code class="lang-js">{ "ts": "2026-10-10T09:02:41Z", "trace_id": "4bf92f...", "district": "lincoln",
+  "student_ref": "s_8f3a", "conversation": "c_19d2", "prompt_version": "tutor-v14",
+  "model": "...", "input_tokens": 512, "cache_read_tokens": 5000, "output_tokens": 231,
+  "ttft_ms": 640, "total_ms": 4120, "stop_reason": "end_turn", "safety_flags": [] }</code></pre>
+  <p>Note what&#39;s not there: names, emails, or the raw text. Message content lives in the access-controlled <code>messages</code> table under the retention policy, not copied into a logging vendor.</p>
+  <p><b>Evals</b> are tests for model behavior. Without them, every prompt tweak or model upgrade is a guess. ReadBuddy&#39;s eval suite:</p>
+  <table class="tbl">
+    <thead><tr><th>Eval</th><th>Example case</th><th>Graded by</th></tr></thead>
+    <tbody>
+      <tr><td>Doesn&#39;t give away quiz answers</td><td>&quot;Just tell me the answer to question 3&quot;</td><td>Code check against the answer key + LLM judge</td></tr>
+      <tr><td>Grade-appropriate language</td><td>Grade 2 student asks about a hard word</td><td>Readability score + LLM judge with rubric</td></tr>
+      <tr><td>Faithful to the passage</td><td>&quot;Why did Maya lie?&quot;</td><td>LLM judge given the passage; teacher spot-checks</td></tr>
+      <tr><td>Safe handling of disclosures</td><td>Student writes something suggesting they&#39;re unsafe</td><td>Must trigger the escalation path; 100% required</td></tr>
+      <tr><td>Stays on task</td><td>Off-topic and prompt-injection attempts</td><td>LLM judge</td></tr>
+    </tbody>
+  </table>
+  <p>Around 200–500 cases, drawn from real (de-identified) questions, run in CI on every prompt or model change, with a score per category compared to the last release. In production, track signals like thumbs up/down, &quot;asked the teacher instead&quot; rate, and how often safety flags fire per district.</p>
+
+  <h2>9. Safety layers and student privacy</h2>
+  <p>ReadBuddy talks to children, and its data is education records. In the US that brings in <b>FERPA</b> (federal law protecting student education records), <b>COPPA</b> (online data from children under 13; schools can authorize educational use in limited cases), and state student-privacy laws such as California&#39;s SOPIPA, all made concrete in each district&#39;s <b>data privacy agreement</b> (DPA). The engineering consequences:</p>
+  <ul>
+    <li><b>Minimize what reaches the model.</b> Send the passage and the question, not the student&#39;s name, school or classmates. Use pseudonymous ids. Scrub obvious personal details from free text where practical.</li>
+    <li><b>Know your provider terms.</b> Confirm in your contract that API inputs aren&#39;t used for model training and what the retention period is; ask about zero-data-retention arrangements if districts require them. List the provider as a subprocessor in your DPAs.</li>
+    <li><b>Isolate tenants everywhere.</b> Retrieval only searches that district&#39;s content; conversations are row-level secured; no cross-district caching of anything that contains student text.</li>
+    <li><b>Layer the safety checks.</b> System prompt with clear tutoring rules; an input check that catches self-harm or abuse disclosures and routes them to a district-defined human escalation (usually a counselor), rather than just a refusal; output checks for off-limits content; no tools that could read another student&#39;s data, so a prompt injection has nothing to steal.</li>
+    <li><b>Keep teachers in the loop.</b> Essay feedback is a <i>draft</i> a teacher approves; teachers can see their students&#39; ReadBuddy conversations.</li>
+  </ul>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;The model is called only from our backend. Each request is authenticated, mapped to a district, checked against per-student and per-district rate limits and a reserved token budget, screened for safety, then streamed back over SSE. The tutoring rules and passage form a cached prompt prefix, which cuts input cost by most of the shared part. Bulk jobs go through a queue with per-district concurrency, and offline work uses the batch API. Every call logs tokens, latency, cache hits and prompt version, without names, and prompt or model changes must pass an eval suite. Student data is minimized, tenant-isolated and deleted on the district&#39;s schedule.&quot;</p></div>
+
+  <h2>10. End-to-end trace: one question</h2>
+  <div class="trace"><b>Trace: &quot;What does reluctant mean here?&quot;</b>
+    <ol>
+      <li><p><b>0 ms</b> Browser POSTs to <code>/api/tutor/c_19d2/messages</code> with the session cookie.</p></li>
+      <li><p><b>4 ms</b> Session → student <code>s_8f3a</code>, district <code>lincoln</code>, grade 4. Conversation belongs to this student (no IDOR).</p></li>
+      <li><p><b>6 ms</b> Redis: student bucket 7/10 left; district bucket fine. Budget reserve 5,500 + 400 = 5,900 tokens → <code>r_88213</code>.</p></li>
+      <li><p><b>15 ms</b> Input safety check passes. Prompt built: rules + passage (cached prefix) + last 6 turns + the question.</p></li>
+      <li><p><b>~650 ms</b> First token arrives and is relayed: &quot;Good question! Look at what Sam does right after...&quot;. The student sees text appearing.</p></li>
+      <li><p><b>~4.1 s</b> <code>message_stop</code>. Usage: 512 input, 5,000 cache read, 231 output. Message saved; budget settled at the actual usage; log record written; <code>event: done</code> sent.</p></li>
+    </ol>
+  </div>
+
+  <h2>11. Lab: a per-district token budget</h2>
+  <p>Build the reserve/settle/release budget from section 6, with UTC-day resets on an injected clock.</p>
+  <div data-lab="tenant-token-budget"></div>
+
+  <div data-quiz='[
+    {"q":"Why does ReadBuddy call the Claude API from its server instead of from the student&#39;s browser?","o":["Browsers cannot make HTTPS requests","Server-side keeps the API key secret and lets you enforce per-district limits, budgets, safety checks, prompt control and logging","The API only supports server IP addresses","Streaming only works server to server"],"a":1,"why":"A key in the browser is public. And all the policy (which district, how much budget, what prompt, what gets logged) needs a trusted place to run."},
+    {"q":"Which metric best captures whether a streamed tutor answer feels fast to a student?","o":["Total tokens generated","Time to first token","Requests per minute","Output tokens per minute"],"a":1,"why":"With streaming, the student starts reading as soon as the first tokens arrive, so time to first token is what they feel. Total time matters much less."},
+    {"q":"A developer adds the current timestamp to the very start of the system prompt. What happens to prompt caching?","o":["Nothing, caching ignores the system prompt","Cache hits drop to near zero, because every request now has a different prefix","Caching gets better, because the timestamp helps the cache expire","The API returns an error"],"a":1,"why":"The cache matches an exact prefix. Put stable content first (rules, passage) and per-request content after the breakpoint."},
+    {"q":"A teacher requests feedback on 32 essays, about 10 minutes of model work. What is the right design?","o":["One long HTTP request with a 15 minute timeout","Return 202 with a job id, split into per-essay tasks on a queue with per-district concurrency, save results as they finish, report progress","Run all 32 calls in parallel from the browser","Ask the teacher to submit one essay at a time"],"a":1,"why":"Long work belongs on a queue: it survives deploys and crashes, resumes where it stopped, avoids proxy timeouts and can be throttled so it does not starve interactive tutoring."},
+    {"q":"Why reserve tokens before the model call instead of only counting usage afterward?","o":["Reservations are cheaper for Anthropic","Many calls run concurrently; if you only count finished calls, a burst can overshoot the district budget before any of them is counted","The API requires a reservation id","It makes streaming faster"],"a":1,"why":"In-flight calls must count. Reserve input plus max_tokens, then settle with the real usage from the response, or release on failure."},
+    {"q":"Which practice best fits student-data privacy for ReadBuddy?","o":["Send the full student profile so answers are personalized","Copy every conversation into the logging vendor for debugging","Send pseudonymous ids and only the passage and question, isolate tenants, keep raw text out of logs and delete on the district schedule","Store conversations forever in case they are useful for training"],"a":2,"why":"Data minimization, tenant isolation, controlled retention and keeping personal data out of logs are what district agreements and laws like FERPA and COPPA push you toward."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Call the model only from your backend: that&#39;s where keys, tenant policy, prompts, safety and logging live.</li>
+    <li>Stream with SSE so time to first token is low; save the final message server-side and stop generation when the client leaves.</li>
+    <li>Order prompts stable-first and cache the shared prefix (rules + passage); reads cost a small fraction of normal input. Watch the cache hit rate.</li>
+    <li>Long jobs go to a queue with per-tenant concurrency; offline work goes to the batch API. Interactive traffic gets priority.</li>
+    <li>Provider limits and bills are per organization, so enforce per-district rate limits and reserve/settle token budgets yourself.</li>
+    <li>Store conversations with a tenant id on every row and a retention policy, log usage without personal data, gate every prompt or model change on evals, and minimize the student data that reaches the model.</li>
+  </ul>
+</template>

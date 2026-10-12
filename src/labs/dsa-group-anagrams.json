@@ -1,0 +1,40 @@
+{
+  "id": "dsa-group-anagrams",
+  "title": "Group Anagrams",
+  "minutes": 20,
+  "prompt": "<p>Given an array of lowercase words, group the words that are anagrams of each other (same letters, same counts, any order).</p>\n<p>Write <code>groupAnagrams(words)</code>. To make the answer predictable: return the groups <b>in the order their first word appears</b> in the input, and keep the words inside each group in input order.</p>\n<ul>\n<li><code>groupAnagrams([&#39;tea&#39;, &#39;eat&#39;, &#39;tan&#39;, &#39;ate&#39;, &#39;nat&#39;, &#39;bat&#39;])</code> → <code>[[&#39;tea&#39;, &#39;eat&#39;, &#39;ate&#39;], [&#39;tan&#39;, &#39;nat&#39;], [&#39;bat&#39;]]</code></li>\n<li><code>groupAnagrams([&#39;&#39;])</code> → <code>[[&#39;&#39;]]</code></li>\n<li><code>groupAnagrams([])</code> → <code>[]</code></li>\n</ul>\n<p>Constraints: up to 10^4 words, each up to 100 letters. Comparing every pair of words is too slow; aim for one pass with a <code>Map</code>.</p>",
+  "starter": "function groupAnagrams(words) {\n  // Brute force: compare every pair of words with an isAnagram check. O(n^2) pairs.\n  // Goal: give every word a key that is the same for all of its anagrams,\n  // then group by that key in a Map.\n  // TODO\n  return [];\n}",
+  "solution": "function groupAnagrams(words) {\n  const groups = new Map(); // signature -> words with that signature (Map keeps first-seen order)\n  for (const word of words) {\n    const signature = word.split('').sort().join(''); // 'tea' -> 'aet'\n    if (!groups.has(signature)) groups.set(signature, []);\n    groups.get(signature).push(word);\n  }\n  return [...groups.values()];\n}",
+  "tests": [
+    {
+      "name": "the classic example",
+      "code": "assertEqual(groupAnagrams(['tea', 'eat', 'tan', 'ate', 'nat', 'bat']), [['tea', 'eat', 'ate'], ['tan', 'nat'], ['bat']]);"
+    },
+    {
+      "name": "empty input and the empty word",
+      "code": "assertEqual(groupAnagrams([]), []);\nassertEqual(groupAnagrams(['']), [['']]);"
+    },
+    {
+      "name": "a single word",
+      "code": "assertEqual(groupAnagrams(['listen']), [['listen']]);"
+    },
+    {
+      "name": "duplicate words stay in the same group",
+      "code": "assertEqual(groupAnagrams(['dog', 'god', 'dog']), [['dog', 'god', 'dog']]);"
+    },
+    {
+      "name": "same letters but different counts are NOT anagrams",
+      "code": "assertEqual(groupAnagrams(['aab', 'abb', 'bab', 'baa']), [['aab', 'baa'], ['abb', 'bab']]);"
+    },
+    {
+      "name": "no two words are anagrams",
+      "code": "assertEqual(groupAnagrams(['cat', 'dog', 'bird']), [['cat'], ['dog'], ['bird']]);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: <b>anagram</b> + <b>group</b>. That is the &quot;group by a key&quot; shape: a <code>Map</code> from key to an array of words.</p>",
+    "<p>Idea: the key must be identical for every anagram and different otherwise. Sorting the word&#39;s letters works: <code>tea</code>, <code>eat</code> and <code>ate</code> all become <code>aet</code>.</p>",
+    "<p>Code shape: <code>const key = word.split(&#39;&#39;).sort().join(&#39;&#39;); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(word);</code> then <code>return [...groups.values()]</code>. A <code>Map</code> remembers insertion order, which gives you the required group order for free.</p>"
+  ],
+  "explain": "<p><b>Time O(n · k log k), space O(n · k)</b> for n words of length up to k: each word is sorted once to build its key, and each map operation is O(1). The brute force compared every pair of words, O(n²) comparisons; a signature lets each word find its group on its own.</p>\n<p>A faster key avoids sorting: count the 26 letters and use the counts as the key (for example <code>&#39;1#0#0#...&#39;</code>), giving O(n · k). Mention it as an optimization; the sorted key is clearer and usually fine.</p>\n<p><b>How to say it:</b> &quot;Anagrams share the same sorted letters, so I&#39;ll use that as a key in a hash map from key to list of words. One pass, O(n · k log k).&quot;</p>"
+}

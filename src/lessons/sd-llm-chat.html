@@ -1,0 +1,228 @@
+<template id="tpl-sd-llm-chat" data-title="Case: LLM chat product" data-part="Part 4 · System design" data-order="195">
+  <h1>Case study: A Claude.ai-style LLM chat product</h1>
+  <p class="lede">An LLM chat app breaks the usual web assumptions: one request can stream for 30 seconds, the expensive part runs on GPUs you may not own, the cost of a message grows as the conversation gets longer, and "regenerate" turns a list of messages into a tree. After this lesson you can design the full backend: streaming over SSE that survives disconnects, conversation storage with branching, context-window management, prompt caching, per-user and per-org limits, and cost tracking.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: a Claude.ai-like product. Dana, a teacher, pastes a 20-page curriculum PDF, asks for a week of lesson plans, watches the answer stream in, edits her second message, and regenerates. Her school pays for an organization plan.</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>Send a message and stream the reply token by token; stop generation mid-stream.</li>
+    <li>Conversation list and history; edit a previous message or regenerate a reply (creating branches).</li>
+    <li>Attachments (PDFs, images); a choice of models.</li>
+    <li>Usage limits per plan; org admins see usage.</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li>Time to first token (TTFT) small: the user should see text start within ~1–2 s (the model's own latency is most of it).</li>
+    <li>No lost replies: if the browser tab sleeps or Wi-Fi blips, the reply continues and can be resumed.</li>
+    <li>Cost-aware: per-message cost is tracked; abusive usage is capped.</li>
+    <li>Safety checks on inputs and outputs; privacy controls (delete conversations).</li>
+  </ul>
+  <p><b>Out of scope:</b> training the model, the inference server internals (batching, KV cache on GPUs), billing UI.</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Messages.</b> 10 million DAU × 15 messages/day = 150 M/day ≈ <b>1,700 messages/second</b>, peaking ~5,000.</li>
+      <li><b>Stream duration.</b> Average reply ~500 output tokens. At roughly 50 tokens/second (varies a lot by model and load), that's ~10 s of streaming.</li>
+      <li><b>Concurrent streams (Little's Law).</b> Things in the system = arrival rate × time each spends there. 1,700/s × 10 s ≈ <b>17,000 open streams</b> on average; at peak 5,000/s × 10–15 s ≈ <b>50,000–75,000</b>. Each is a held HTTP connection, so the API tier must be built for many long-lived connections, not short requests.</li>
+      <li><b>Tokens.</b> Each request re-sends the conversation as context. Average input ~4,000 tokens (system prompt + history + new message) → 150 M × 4,000 = <b>600 billion input tokens/day</b>, versus 150 M × 500 = 75 billion output tokens. Input volume dominates, which is why prompt caching matters.</li>
+      <li><b>Cost illustration.</b> At a hypothetical $3 per million input tokens, 600 B input tokens is ~$1.8 M/day before caching. If 70% of input tokens are a repeated prefix served from a prompt cache at a fraction of the price, the input bill drops by more than half. (Use your provider's real prices; the point is the shape.)</li>
+      <li><b>Storage.</b> ~3 KB of text per message (a 500-token reply is ~2 KB) → 450 GB/day ≈ 165 TB/year, plus attachments in object storage.</li>
+    </ol>
+  </div>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-http">POST /v1/conversations/c_5/messages
+Accept: text/event-stream
+Idempotency-Key: 0b9e...
+{ "parent_message_id": "m_41", "content": [ { "type": "text", "text": "Make Wednesday a lab day" } ],
+  "model": "large", "attachments": [ "f_77" ] }
+
+200 (Content-Type: text/event-stream)
+id: 1
+event: message_start
+data: {"user_message_id":"m_42","assistant_message_id":"m_43"}
+
+id: 2
+event: delta
+data: {"text":"Here is a revised "}
+...
+id: 311
+event: message_end
+data: {"stop_reason":"end_turn","usage":{"input_tokens":5120,"cached_input_tokens":4800,"output_tokens":612}}
+
+GET  /v1/messages/m_43/stream        Last-Event-ID: 57   -- resume after a disconnect
+POST /v1/messages/m_43/stop                                -- user pressed Stop
+GET  /v1/conversations?cursor=...                          -- sidebar list</code></pre>
+  <p>SSE (Server-Sent Events) is a one-way stream over plain HTTP: the server writes <code>event:</code>/<code>data:</code> lines and the browser's <code>EventSource</code> (or a fetch reader) consumes them. It's a good fit because the client only needs to receive, it works through most proxies, and the numbered <code>id:</code> lines make resume possible.</p>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">conversations (conversation_id PK, user_id, org_id, title, model,
+               current_leaf_id,                 -- which branch the UI shows
+               created_at, updated_at)
+messages      (message_id PK, conversation_id, parent_id,   -- a tree: edits and regenerations branch
+               role,                            -- user | assistant
+               content JSONB,                   -- blocks: text, image ref, tool use...
+               status,                          -- streaming | complete | stopped | error
+               model, input_tokens, cached_input_tokens, output_tokens,
+               created_at)
+attachments   (file_id PK, conversation_id, storage_key, mime, extracted_text_key, token_count)
+usage_ledger  (org_id, user_id, ts, message_id, model,
+               input_tokens, cached_input_tokens, output_tokens, cost_micros)</code></pre>
+  <p><b>Why a tree?</b> Dana edits message 2. You can't overwrite it: the old branch still exists and the UI lets her flip between versions ("2 / 2"). So each message points to its parent, and the conversation remembers the current leaf. The context for the next reply is the path from the root to that leaf.</p>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 800 410" width="100%" role="img" aria-label="LLM chat product architecture" xmlns="http://www.w3.org/2000/svg" style="max-width:800px;font-family:inherit">
+
+<rect x="10" y="180" width="100" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="60.0" y="205.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Client</text>
+<text x="60.0" y="220.0" text-anchor="middle" font-size="12" fill="var(--muted)">renders SSE</text>
+<rect x="170" y="180" width="150" height="56" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="245.0" y="205.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Chat API</text>
+<text x="245.0" y="220.0" text-anchor="middle" font-size="12" fill="var(--muted)">auth, limits, SSE</text>
+<rect x="170" y="40" width="150" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="245.0" y="65.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Quota store</text>
+<text x="245.0" y="80.0" text-anchor="middle" font-size="12" fill="var(--muted)">Redis: msgs, tokens</text>
+<path d="M170,323 a75.0,8 0 0,0 150,0 a75.0,8 0 0,0 -150,0 v60 a75.0,8 0 0,0 150,0 v-60" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="245.0" y="355.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Conversations DB</text>
+<text x="245.0" y="370.0" text-anchor="middle" font-size="12" fill="var(--muted)">messages (tree)</text>
+<rect x="375" y="180" width="150" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="450.0" y="205.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Context builder</text>
+<text x="450.0" y="220.0" text-anchor="middle" font-size="12" fill="var(--muted)">history, files, trim</text>
+<rect x="590" y="180" width="170" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="675.0" y="205.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Model gateway</text>
+<text x="675.0" y="220.0" text-anchor="middle" font-size="12" fill="var(--muted)">route, retry, safety</text>
+<rect x="590" y="40" width="170" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25" stroke-dasharray="5 4"/>
+<text x="675.0" y="73.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Inference / LLM API</text>
+<rect x="375" y="315" width="150" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="450.0" y="340.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Stream buffer</text>
+<text x="450.0" y="355.0" text-anchor="middle" font-size="12" fill="var(--muted)">per reply, for resume</text>
+<rect x="590" y="320" width="170" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="750" y1="328" x2="750" y2="358" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="743" y1="328" x2="743" y2="358" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="736" y1="328" x2="736" y2="358" stroke="currentColor" stroke-opacity=".45"/>
+<text x="663.0" y="348.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Usage events</text>
+<path d="M113.0,208.0 L167.0,208.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M167.0,208.0 L158.0,212.5 L158.0,203.5 Z" fill="currentColor"/>
+<path d="M113.0,208.0 L122.0,203.5 L122.0,212.5 Z" fill="currentColor"/>
+<path d="M245.0,180.0 L245.0,99.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M245.0,99.0 L249.5,108.0 L240.5,108.0 Z" fill="currentColor"/>
+<path d="M245.0,236.0 L245.0,312.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M245.0,312.0 L240.5,303.0 L249.5,303.0 Z" fill="currentColor"/>
+<path d="M320.0,208.0 L372.0,208.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M372.0,208.0 L363.0,212.5 L363.0,203.5 Z" fill="currentColor"/>
+<path d="M525.0,208.0 L587.0,208.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M587.0,208.0 L578.0,212.5 L578.0,203.5 Z" fill="currentColor"/>
+<path d="M675.0,177.0 L675.0,99.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M675.0,99.0 L679.5,108.0 L670.5,108.0 Z" fill="currentColor"/>
+<path d="M675.0,177.0 L670.5,168.0 L679.5,168.0 Z" fill="currentColor"/>
+<path d="M628.3,236.0 L499.2,313.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M499.2,313.5 L504.6,305.0 L509.3,312.7 Z" fill="currentColor"/>
+<path d="M407.5,315.0 L290.0,237.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M290.0,237.6 L300.0,238.8 L295.1,246.4 Z" fill="currentColor"/>
+<path d="M675.0,236.0 L675.0,317.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M675.0,317.0 L670.5,308.0 L679.5,308.0 Z" fill="currentColor"/>
+<text x="140.0" y="250.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">POST, then</text>
+<text x="140.0" y="264.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">SSE tokens</text>
+<text x="267.0" y="143.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">check</text>
+<text x="253.0" y="274.0" text-anchor="start" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">save turn,</text>
+<text x="253.0" y="288.0" text-anchor="start" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">load history</text>
+<text x="556.0" y="202.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">prompt</text>
+<text x="701.0" y="142.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">tokens</text>
+<text x="583.8" y="270.7" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">append</text>
+<text x="332.8" y="276.3" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">tail</text>
+<text x="701.0" y="280.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">usage</text>
+</svg>
+    <figcaption>The Chat API authenticates, checks quotas, saves the user turn and opens the SSE stream. The context builder assembles the prompt. The model gateway calls inference and appends tokens to a per-reply stream buffer that the Chat API tails, so the generation is decoupled from the browser connection. Usage events feed billing and analytics.</figcaption>
+  </figure>
+  <div class="trace">
+    <ol>
+      <li>Dana's message arrives. The Chat API checks her plan limits and her org's token budget (Redis), saves the user message <code>m_42</code> and an empty assistant message <code>m_43</code> with status <code>streaming</code>, and opens the SSE response.</li>
+      <li>The context builder loads the path root → <code>m_42</code>, the extracted text of the PDF (about 9,000 tokens), and the system prompt, and trims to a token budget (deep dive 2).</li>
+      <li>The model gateway picks a healthy inference endpoint for the requested model, sends the prompt with prompt caching enabled, and starts receiving tokens.</li>
+      <li>Each chunk is appended to the stream buffer for <code>m_43</code> with an increasing event ID. The Chat API tails that buffer and writes SSE events to Dana's browser.</li>
+      <li>At the end, the gateway writes the final text, status <code>complete</code>, and token counts to the messages table, and emits a usage event (input 5,120, cached 4,800, output 612) for billing.</li>
+      <li>Separately, after the first exchange, a background job asks a small, cheap model for a conversation title.</li>
+    </ol>
+  </div>
+
+  <h2>6. Deep dive: streaming that survives disconnects</h2>
+  <p>The naive design ties generation to the HTTP connection: browser → server → model, tokens flow back through the same pipe. When Dana's laptop sleeps for 5 seconds, the connection drops, the server cancels the model call, and the reply is lost, after you already paid for half of it.</p>
+  <p>Decouple them:</p>
+  <ul>
+    <li><b>Generation runs on its own.</b> The gateway's work isn't tied to the client connection. It writes tokens into a short-lived, per-reply buffer (e.g. a Redis Stream keyed by <code>m_43</code> with a TTL of ~10 minutes), and flushes the accumulated text to the database every second or so and at the end.</li>
+    <li><b>Clients are readers.</b> The SSE handler replays the buffer from the client's last event ID and then tails it. On reconnect, the browser sends <code>Last-Event-ID: 57</code>; the server replays from 58 and continues. A second tab can watch the same reply.</li>
+    <li><b>Stop is explicit.</b> Pressing Stop calls <code>POST /stop</code>, which cancels the model call, saves the partial text with status <code>stopped</code>, and bills the tokens actually generated. A dropped connection is not a stop.</li>
+    <li><b>Long-lived connections.</b> 50,000–75,000 concurrent streams at peak means async I/O servers (Node, Go, async Python), generous idle timeouts on load balancers, and SSE comment lines every ~15 s as keep-alives so proxies don't close quiet streams.</li>
+  </ul>
+
+  <h2>7. Deep dive: context windows, prompt caching, and cost</h2>
+  <p>Every turn re-sends the conversation. Turn 30 of a long chat might carry 60,000 tokens of history to produce a 300-token answer. Three levers:</p>
+  <ol>
+    <li><b>Prompt caching.</b> Providers can cache the processed form of a prompt prefix so a repeated prefix is cheaper and faster on the next call (cached input is billed at a fraction of normal input, for a limited time window). To get hits, keep the prefix byte-for-byte stable: system prompt first, then attachments, then history in order, and append only. Putting the current time or a random ID at the top of the system prompt silently destroys your cache hit rate.</li>
+    <li><b>Token budget and trimming.</b> Set a context budget per model and plan, below the model's hard limit. When the conversation exceeds it: drop or summarize the oldest turns (store the summary so you compute it once), and for big documents retrieve only relevant chunks (retrieval-augmented generation, RAG) instead of pasting all 200 pages.</li>
+    <li><b>Model routing.</b> Titles, summaries, and safety classification go to small, cheap models. The user's chosen model handles the actual reply.</li>
+  </ol>
+  <p>Record <code>input_tokens</code>, <code>cached_input_tokens</code> and <code>output_tokens</code> per message. Cost per active user per day becomes a dashboard number, and a regression (like a prompt change that broke caching) shows up the next morning instead of on the monthly invoice.</p>
+
+  <h2>8. Deep dive: limits, capacity, and failure</h2>
+  <ul>
+    <li><b>Per-user limits by plan.</b> A rolling window (e.g. N messages per several hours, weighted by model size and context length) implemented as a token bucket where a message's cost reflects its tokens.</li>
+    <li><b>Per-org budgets.</b> Monthly or per-minute token budgets per organization; reserve an estimate before the call, reconcile with actual usage after.</li>
+    <li><b>Concurrency caps.</b> 1–3 simultaneous generations per user. Stops runaway scripts and keeps GPU capacity fair.</li>
+    <li><b>Admission control.</b> GPU capacity is finite and can't autoscale in seconds. When the gateway sees inference saturated (queue time rising, overload errors), it queues briefly, then degrades: free tier gets a smaller model or a "high demand" message; paid tiers keep priority.</li>
+    <li><b>Gateway resilience.</b> Timeout on time-to-first-token (not just total time), retry overloaded calls with backoff on another region or endpoint, but only before any tokens have streamed (once text is on screen, a silent retry would produce a different answer).</li>
+    <li><b>Safety.</b> A fast classifier on input before calling the model; output checks on the stream, which may need to cut a reply mid-stream. Log flagged content to a restricted review queue with its own retention policy.</li>
+  </ul>
+
+  <h2>9. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>SSE</td><td>Simple one-way streaming over HTTP, resumable by event ID</td><td>Client-to-server messages need separate requests</td><td>Streaming replies (the common case)</td></tr>
+      <tr><td>WebSocket</td><td>Two-way, low overhead per message</td><td>Stateful connections, more infra, blocked by some networks</td><td>Voice, live collaboration, agent UIs with frequent client events</td></tr>
+      <tr><td>Decoupled generation + buffer</td><td>No lost replies, multi-tab, resume</td><td>Extra store and cleanup</td><td>Any product where replies are expensive (all of them)</td></tr>
+      <tr><td>Message tree</td><td>Edit and regenerate without losing history</td><td>Context = path walk; more complex UI state</td><td>Edit or regenerate exists</td></tr>
+      <tr><td>Summarize old turns</td><td>Lower cost, fits the window</td><td>Loses detail; summary can be wrong</td><td>Long chats; keep recent turns verbatim</td></tr>
+      <tr><td>Stable prompt prefix</td><td>Cache hits: lower cost and latency</td><td>Constraints on prompt layout</td><td>Always</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Follow-up questions and strong answers</h2>
+  <h3>"How do you store 165 TB/year of messages?"</h3>
+  <p>Partition by conversation (most reads are "load this conversation") and keep recent conversations in the primary store; older content can move to cheaper storage and be rehydrated on open. Postgres with partitioning works for a long time; a wide-column store fits when write volume outgrows it. Deletion requests must cascade to attachments, caches, search indexes and analytics copies.</p>
+  <h3>"How would you add conversation search?"</h3>
+  <p>Index titles and message text into a search engine, partitioned by user (or org) so queries never scan others' data and permissions are enforced by the index key. Update asynchronously from message-complete events.</p>
+  <h3>"How do you know a prompt change made answers better?"</h3>
+  <p>Offline evals: a fixed set of representative conversations scored by rubric or by a grader model, run before shipping. Online: thumbs up/down, regenerate rate, conversation length, and A/B tests behind flags.</p>
+  <h3>"A school district asks: where does our data go?"</h3>
+  <p>Org-level settings: data retention period, whether conversations can be used for improvement (off by default for education), region pinning if required, admin export and deletion. Log access to conversation content by staff.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Little's Law says 1,700 messages a second times 10 seconds of streaming is about 17,000 open streams, peaking near 70,000, so the API tier is built for long-lived SSE connections. I'd decouple generation from the connection: tokens go into a per-reply buffer with event IDs, so a dropped tab resumes with Last-Event-ID instead of losing a paid-for reply. Messages form a tree for edits and regenerations. Input tokens dominate cost because history is resent every turn, so I keep the prompt prefix stable for caching, trim or summarize old turns, and meter cached and uncached tokens per message."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Designing it like a normal request/response API: "the client POSTs, the server calls the model, returns the answer." That ignores 10–30 second responses, streaming, disconnects mid-reply, GPU capacity limits that can't autoscale instantly, and costs that grow with conversation length. Say "streaming", "resume", "admission control", and "tokens per message" early.</p></div>
+
+  <h2>11. Your turn</h2>
+  <p>Add an <b>agent mode</b>: the assistant can run for up to 10 minutes, calling tools (web search, code execution, reading the user's files), while the user may close the tab and come back.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>It's a job, not a request.</b> <code>POST /v1/agent-runs</code> creates a run row and enqueues it; returns <code>run_id</code> immediately. Workers execute the loop: call model → maybe call a tool → append result → call model again.</p>
+    <p><b>Durable state.</b> After every step, checkpoint the run (messages so far, tool results, step count) to the database. If a worker dies, another resumes from the last checkpoint. Tool calls with side effects get idempotency keys (<code>run_id:step</code>) so a resumed step doesn't, say, send an email twice.</p>
+    <p><b>Progress.</b> Each step emits events to the run's event log; the UI subscribes via SSE with <code>Last-Event-ID</code>, exactly like replies. Closed tab? On return, replay the log. Long runs also trigger a notification when finished.</p>
+    <p><b>Budgets and safety.</b> Max steps, max tokens, max wall-clock time, and per-org concurrency caps on runs. Tools run sandboxed with least privilege; reads of user files are permission-checked per call. User can cancel at any step.</p>
+    <p><b>Trade-off:</b> durable step-by-step execution gives crash recovery and resumability at the cost of a write per step and more complex state; obviously worth it when a run costs minutes of GPU time.</p>
+  </details>
+
+  <div data-quiz='[{"q":"1,700 messages per second each stream for about 10 seconds. Roughly how many streams are open at once?","o":["170","1,700","17,000","1.7 million"],"a":2,"why":"Little Law: concurrency equals arrival rate times duration."},{"q":"Why decouple model generation from the client HTTP connection?","o":["To make responses shorter","So a dropped or sleeping client can resume the same reply instead of losing a reply that is already being paid for","Because SSE cannot carry JSON","To avoid storing messages"],"a":1,"why":"Tokens go to a buffer with event IDs; clients replay and tail it."},{"q":"Why does input token volume usually exceed output volume in chat?","o":["Users type more than the model writes","Each turn re-sends the system prompt and conversation history as context","Output tokens are compressed","Providers double count input"],"a":1,"why":"History is resent every turn, so long chats carry large prompts."},{"q":"Which change would most likely destroy prompt cache hit rates?","o":["Appending new turns at the end","Putting the current timestamp at the start of the system prompt","Storing usage per message","Using SSE instead of WebSockets"],"a":1,"why":"Caching works on a stable prefix; changing early bytes invalidates everything after them."},{"q":"Why store messages as a tree with parent pointers?","o":["Trees are faster than tables","Edits and regenerations create branches, and the old branch must remain viewable","SQL requires it","To support prompt caching"],"a":1,"why":"The context for a reply is the path from root to the current leaf."},{"q":"Inference capacity is saturated. What is a sensible degradation?","o":["Crash the API","Queue briefly, then route free-tier traffic to a smaller model or show a high-demand message while paid tiers keep priority","Silently drop half the messages","Retry every request immediately in a loop"],"a":1,"why":"Admission control protects capacity and keeps behavior predictable."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Little's Law sizes the streaming tier: tens of thousands of concurrent SSE connections.</li>
+    <li>Generation is decoupled from the connection via a per-reply buffer with event IDs: resume, multi-tab, explicit Stop.</li>
+    <li>Messages form a tree; context is the root-to-leaf path, trimmed or summarized to a token budget.</li>
+    <li>Input tokens dominate cost: stable prompt prefixes for caching, small models for side tasks, per-message metering.</li>
+    <li>Limits at several levels (user, org, concurrency, global admission control) and safety checks around the model.</li>
+  </ul>
+</template>

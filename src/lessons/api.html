@@ -1,0 +1,262 @@
+<template id="tpl-api" data-title="API design" data-part="Part 1 · Foundations" data-order="20">
+  <h1>API design</h1>
+  <p class="lede">An API is a promise you can't easily take back. This lesson designs PageTurn's API end to end: resources and URLs, response shapes, pagination that doesn't skip or repeat rows, filtering, errors, versioning, retries that don't double-save, and how to tell other systems that something happened. You'll leave able to sketch the API step of a system design interview in five minutes and defend each choice.</p>
+
+  <h2>1. The running example: three kinds of clients</h2>
+  <p>PageTurn's backend has three kinds of callers, and each one changes what "good API" means:</p>
+  <ul>
+    <li><b>The web and iPad apps</b> (your own React code). You can change them, but old iPad app versions stay installed for months.</li>
+    <li><b>A district's student-information system</b> that syncs rosters every night with a script someone wrote in 2019. You can't change it at all.</li>
+    <li><b>An LMS like Google Classroom or Canvas</b> that wants to hear about finished assignments as they happen.</li>
+  </ul>
+  <p>The first group makes you care about round trips and payload size. The second makes you care about never breaking anything. The third raises the question of who calls whom. Keep all three in mind.</p>
+
+  <h2>2. Resources: nouns in the URL, verbs in the method</h2>
+  <p><b>REST</b> (Representational State Transfer) is a style, not a standard. In practice it means: model your system as <b>resources</b> (things with an ID), give each a URL, and use HTTP methods for the actions. Start by listing the nouns in the product: <i>schools, classes, students, books, assignments, reading sessions</i>.</p>
+  <table class="tbl">
+    <thead><tr><th>Endpoint</th><th>Does</th><th>Returns</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /v1/classes/c1</code></td><td>Read one class</td><td><code>200</code> class</td></tr>
+      <tr><td><code>GET /v1/classes/c1/students</code></td><td>List students in a class</td><td><code>200</code> page of students</td></tr>
+      <tr><td><code>POST /v1/classes/c1/assignments</code></td><td>Create an assignment</td><td><code>201</code> + <code>Location</code></td></tr>
+      <tr><td><code>PATCH /v1/assignments/a9</code></td><td>Change the due date</td><td><code>200</code> updated assignment</td></tr>
+      <tr><td><code>DELETE /v1/assignments/a9</code></td><td>Remove it</td><td><code>204</code></td></tr>
+      <tr><td><code>POST /v1/reading-sessions</code></td><td>Student finished reading for a while</td><td><code>201</code> session</td></tr>
+      <tr><td><code>GET /v1/reading-sessions?classId=c1&amp;since=…</code></td><td>Teacher's activity feed</td><td><code>200</code> page</td></tr>
+    </tbody>
+  </table>
+  <p>A few rules of thumb carry most of the weight:</p>
+  <ul>
+    <li><b>Plural nouns, no verbs</b>: <code>POST /assignments</code>, not <code>POST /createAssignment</code>. The method is the verb.</li>
+    <li><b>Nest only one level, for ownership</b>: <code>/classes/c1/assignments</code> reads well. <code>/districts/d1/schools/s1/classes/c1/assignments/a9</code> doesn't; once something has a global ID, address it directly as <code>/assignments/a9</code>.</li>
+    <li><b>Real actions that aren't CRUD are fine as sub-resources</b>: <code>POST /assignments/a9/submissions</code> or <code>POST /assignments/a9/publish</code>. Don't contort a "publish" into a PATCH of a status field if publishing also emails 28 families.</li>
+    <li><b>IDs are opaque strings</b>, even if they're numbers in the database today. <code>"a9"</code> or <code>"asg_01HF3…"</code>. You'll thank yourself when you shard or merge systems.</li>
+  </ul>
+
+  <h2>3. Response shapes: boring and consistent</h2>
+  <p>The best API responses are predictable. Same field casing everywhere, same timestamp format, same wrapper for lists:</p>
+  <pre><code class="lang-json">{
+  "id": "a9",
+  "classId": "c1",
+  "bookId": "b42",
+  "title": "Read chapters 3–4 of Charlotte's Web",
+  "dueAt": "2026-10-16T15:00:00Z",
+  "status": "published",
+  "createdAt": "2026-10-09T17:42:10Z"
+}</code></pre>
+  <ul>
+    <li><b>Timestamps in UTC, ISO 8601</b> (<code>2026-10-16T15:00:00Z</code>). The client converts to local time. A due date of "3pm" means different things in Livermore and New York.</li>
+    <li><b>Return the created or updated object</b> from POST and PATCH, so the client doesn't need a second GET.</li>
+    <li><b>Lists are objects, not bare arrays</b>: <code>{ "items": [...], "nextCursor": "..." }</code>. A bare array leaves you no place to add pagination later without breaking clients.</li>
+    <li><b>Don't leak your tables.</b> The response is a contract; the schema is an implementation detail. If you rename a column, the API shouldn't change.</li>
+  </ul>
+
+  <h2>4. Pagination: offset versus cursor</h2>
+  <p>Ms. Lee's activity feed shows reading sessions, newest first, 20 at a time. Her class logs about 300 sessions a day. How does the client ask for "the next 20"?</p>
+  <h3>Offset pagination</h3>
+  <p>The obvious way: <code>GET /reading-sessions?classId=c1&amp;limit=20&amp;offset=20</code>. In SQL, <code>ORDER BY created_at DESC LIMIT 20 OFFSET 20</code>. It's easy, and it lets you jump to page 37. It has two problems.</p>
+  <div class="trace">
+    <b>Trace · offset pagination while students keep reading</b>
+    <ol>
+      <li><p>8:40:00. Ms. Lee loads page 1 (<code>offset=0, limit=3</code> to keep it small): sessions <b>s10, s9, s8</b>.</p></li>
+      <li><p>8:40:20. Two students finish reading. Sessions <b>s11</b> and <b>s12</b> are inserted at the top. The list is now s12, s11, s10, s9, s8, s7, …</p></li>
+      <li><p>8:40:30. She scrolls. The app asks for <code>offset=3, limit=3</code>. Positions 3–5 are now <b>s9, s8, s7</b>.</p></li>
+      <li><p>She sees <span class="no">s9 and s8 twice</span>. If sessions had been <i>deleted</i> instead, she would have silently <span class="no">skipped</span> rows.</p></li>
+    </ol>
+  </div>
+  <p>The second problem is cost. <code>OFFSET 10000</code> doesn't jump to row 10,000; the database reads 10,000 rows and throws them away. Deep pages get slower and slower.</p>
+
+  <h3>Cursor (keyset) pagination</h3>
+  <p>Instead of "skip N rows", say "give me rows after <i>this one</i>". The response includes a <b>cursor</b> that encodes the sort key of the last row returned. The client sends it back for the next page:</p>
+  <pre><code class="lang-http">GET /v1/reading-sessions?classId=c1&amp;limit=3
+
+200 OK
+{ "items": [ {"id":"s10",...}, {"id":"s9",...}, {"id":"s8","createdAt":"2026-10-09T15:38:02Z",...} ],
+  "nextCursor": "WyIyMDI2LTEwLTA5VDE1OjM4OjAyWiIsInM4Il0" }
+
+GET /v1/reading-sessions?classId=c1&amp;limit=3&amp;cursor=WyIyMDI2LTEwLTA5VDE1OjM4OjAyWiIsInM4Il0</code></pre>
+  <p>The cursor is just <code>["2026-10-09T15:38:02Z","s8"]</code> in base64. The server turns it into a <code>WHERE</code> clause:</p>
+  <pre><code class="lang-sql">SELECT * FROM reading_sessions
+ WHERE class_id = $1
+   AND (created_at, id) &lt; ($2, $3)        -- strictly after s8 in our order
+ ORDER BY created_at DESC, id DESC
+ LIMIT 21;                                 -- one extra row tells us if there's a next page</code></pre>
+  <p>Now new rows at the top can't shift anything: "after s8" means the same thing no matter what was inserted. And with an index on <code>(class_id, created_at, id)</code> the database jumps straight to s8, so page 500 costs the same as page 1. The <code>id</code> is there as a <b>tie-breaker</b>: two sessions saved in the same millisecond still have a definite order.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 230" role="img" aria-label="Offset pagination: after two new rows are inserted, offset 3 lands on s9 and s8 again. Cursor pagination: 'after s8' continues at s7 regardless of inserts.">
+      <g font-size="13">
+        <text x="20" y="22" font-weight="600" fill="currentColor">Offset: "skip 3"</text>
+        <text x="370" y="22" font-weight="600" fill="currentColor">Cursor: "after s8"</text>
+        <g font-family="var(--font-mono)" font-size="12" text-anchor="middle">
+          <!-- offset column -->
+          <rect x="20" y="36" width="56" height="26" rx="5" fill="var(--ok-soft)" stroke="var(--ok)"/><text x="48" y="54" fill="currentColor">s12</text>
+          <rect x="82" y="36" width="56" height="26" rx="5" fill="var(--ok-soft)" stroke="var(--ok)"/><text x="110" y="54" fill="currentColor">s11</text>
+          <rect x="144" y="36" width="56" height="26" rx="5" fill="var(--surface)" stroke="var(--line)"/><text x="172" y="54" fill="currentColor">s10</text>
+          <rect x="206" y="36" width="56" height="26" rx="5" fill="var(--bad-soft)" stroke="var(--bad)"/><text x="234" y="54" fill="currentColor">s9</text>
+          <rect x="268" y="36" width="56" height="26" rx="5" fill="var(--bad-soft)" stroke="var(--bad)"/><text x="296" y="54" fill="currentColor">s8</text>
+          <rect x="20" y="70" width="56" height="26" rx="5" fill="var(--bad-soft)" stroke="var(--bad)"/><text x="48" y="88" fill="currentColor">s7</text>
+          <rect x="82" y="70" width="56" height="26" rx="5" fill="var(--surface)" stroke="var(--line)"/><text x="110" y="88" fill="currentColor">s6</text>
+          <!-- cursor column -->
+          <rect x="370" y="36" width="56" height="26" rx="5" fill="var(--ok-soft)" stroke="var(--ok)"/><text x="398" y="54" fill="currentColor">s12</text>
+          <rect x="432" y="36" width="56" height="26" rx="5" fill="var(--ok-soft)" stroke="var(--ok)"/><text x="460" y="54" fill="currentColor">s11</text>
+          <rect x="494" y="36" width="56" height="26" rx="5" fill="var(--surface)" stroke="var(--line)"/><text x="522" y="54" fill="currentColor">s10</text>
+          <rect x="556" y="36" width="56" height="26" rx="5" fill="var(--surface)" stroke="var(--line)"/><text x="584" y="54" fill="currentColor">s9</text>
+          <rect x="618" y="36" width="56" height="26" rx="5" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/><text x="646" y="54" fill="currentColor">s8</text>
+          <rect x="370" y="70" width="56" height="26" rx="5" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="398" y="88" fill="currentColor">s7</text>
+          <rect x="432" y="70" width="56" height="26" rx="5" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="460" y="88" fill="currentColor">s6</text>
+          <rect x="494" y="70" width="56" height="26" rx="5" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="522" y="88" fill="currentColor">s5</text>
+        </g>
+        <text x="20" y="134" fill="var(--bad)" font-weight="600">page 2 = positions 3–5 = s9, s8, s7</text>
+        <text x="20" y="154" fill="var(--muted)">s9 and s8 were already on page 1. Duplicates.</text>
+        <text x="370" y="134" fill="var(--accent)" font-weight="600">page 2 = 3 rows after s8 = s7, s6, s5</text>
+        <text x="370" y="154" fill="var(--muted)">New rows at the top don't move the bookmark.</text>
+        <rect x="20" y="176" width="16" height="12" rx="3" fill="var(--ok-soft)" stroke="var(--ok)"/><text x="44" y="186" fill="var(--muted)" font-size="12">inserted after page 1 loaded (page 1 was s10, s9, s8)</text>
+        <text x="20" y="214" fill="var(--muted)" font-size="12">Offset counts positions. Cursor remembers a row. Only the row survives inserts and deletes.</text>
+      </g>
+    </svg>
+    <figcaption>The same scroll, two ways. Red: what offset 3–5 returns after two inserts. Blue: what "after s8" returns.</figcaption>
+  </figure>
+  <table class="tbl">
+    <thead><tr><th></th><th>Offset</th><th>Cursor</th></tr></thead>
+    <tbody>
+      <tr><td>Jump to page N</td><td>Yes</td><td>No, only next (and previous with a second cursor)</td></tr>
+      <tr><td>Stable under inserts/deletes</td><td>No: duplicates and skips</td><td>Yes</td></tr>
+      <tr><td>Cost of deep pages</td><td>Grows with the offset</td><td>Constant with the right index</td></tr>
+      <tr><td>Total count</td><td>Often shown (costs a <code>COUNT(*)</code>)</td><td>Usually not shown</td></tr>
+      <tr><td>Choose when</td><td>Small, slow-changing admin tables with page numbers</td><td>Feeds, infinite scroll, sync jobs, any big or busy list</td></tr>
+    </tbody>
+  </table>
+  <p>Offset gives you page numbers at the cost of correctness on changing data and slow deep pages; choose it for small admin tables. Cursor gives you stable, fast pages at the cost of no jumping; choose it for feeds and for anything a machine pages through, like the nightly roster sync.</p>
+
+  <div data-lab="cursor-pagination"></div>
+
+  <h2>5. Filtering and sorting</h2>
+  <p>Filters are query parameters: <code>GET /v1/assignments?classId=c1&amp;status=published&amp;dueBefore=2026-10-20T00:00:00Z&amp;sort=-dueAt</code>. Two rules keep this safe and fast:</p>
+  <ul>
+    <li><b>Allow-list everything.</b> Only accept known filter and sort fields, and map them to columns yourself. Never paste a client's <code>sort</code> value into SQL; that's an injection hole and also lets anyone sort by an unindexed column and slow your database down.</li>
+    <li><b>Every filter you expose is an index you owe.</b> If teachers filter by <code>classId</code> and <code>status</code>, you need an index that serves that query. Exposing "filter by anything" is how APIs end up with 30-second requests.</li>
+  </ul>
+
+  <h2>6. Errors: one shape, useful codes</h2>
+  <p>Clients branch on errors, so make them machine-readable. Pick one shape and use it everywhere:</p>
+  <pre><code class="lang-http">HTTP/1.1 422 Unprocessable Content
+Content-Type: application/json
+
+{
+  "error": {
+    "code": "due_date_in_past",
+    "message": "dueAt must be in the future.",
+    "field": "dueAt",
+    "requestId": "req_8Kd2mL"
+  }
+}</code></pre>
+  <ul>
+    <li><b>The status code</b> tells generic software what happened (4xx: don't retry as-is; 5xx: maybe retry).</li>
+    <li><b>A stable <code>code</code> string</b> tells your app which message to show. Never make clients parse <code>message</code>; you'll want to reword it.</li>
+    <li><b><code>field</code></b> lets the form highlight the right input.</li>
+    <li><b><code>requestId</code></b> connects a user's screenshot to your logs.</li>
+  </ul>
+  <p>And never put stack traces or SQL in error responses. They help attackers more than users.</p>
+
+  <h2>7. Versioning: how not to break the 2019 script</h2>
+  <p>The district's roster script reads <code>student.grade</code> as a number. If you change it to <code>"4th"</code>, rostering breaks for 40 schools at 2am. The rule: <b>additive changes are safe, everything else is breaking.</b></p>
+  <table class="tbl">
+    <thead><tr><th>Safe (no new version)</th><th>Breaking (needs a new version)</th></tr></thead>
+    <tbody>
+      <tr><td>Adding a new endpoint</td><td>Removing or renaming a field or endpoint</td></tr>
+      <tr><td>Adding an optional request field</td><td>Making an optional field required</td></tr>
+      <tr><td>Adding a response field</td><td>Changing a field's type or meaning</td></tr>
+      <tr><td>Adding a new enum value*</td><td>Changing default behavior (e.g. sort order)</td></tr>
+    </tbody>
+    <caption>* Only if clients were told to ignore unknown values. Say so in your docs from day one.</caption>
+  </table>
+  <p>Where to put the version is mostly taste. <b>In the URL</b> (<code>/v1/</code>) is the most visible and easiest to route and debug. <b>In a header</b> (Stripe uses a dated version like <code>2026-09-01</code> pinned per account) is more flexible but invisible in logs. Either way, the real work is keeping v1 alive while clients move, and measuring who still calls it before you turn it off.</p>
+
+  <h2>8. Retries without duplicates: idempotency keys</h2>
+  <p>Here's a problem that will happen thousands of times a day. Ana finishes 15 minutes of reading on a school iPad. The app sends <code>POST /v1/reading-sessions</code>. The school Wi-Fi drops the response. The app never hears back.</p>
+  <p>Did the server save it? The app can't know. If it retries and the first request <i>did</i> succeed, Ana gets 30 minutes and two "books finished". If it doesn't retry and the first one failed, her reading is lost. POST isn't idempotent, so neither choice is safe.</p>
+  <p>The fix is an <b>idempotency key</b>: the client generates a unique ID for the <i>intent</i> ("this one reading session") and sends it with every attempt. The server remembers keys it has processed and, on a repeat, returns the stored result instead of doing the work again.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 300" role="img" aria-label="Idempotency key flow: the first POST saves the session and stores the key with the response; the response is lost; the retry with the same key finds the stored response and returns it without creating a second session.">
+      <defs><marker id="api-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+      <marker id="api-ah-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker></defs>
+      <g font-size="13" text-anchor="middle">
+        <rect x="30" y="8" width="120" height="36" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="90" y="31" font-weight="600" fill="currentColor">iPad app</text>
+        <rect x="290" y="8" width="120" height="36" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text x="350" y="31" font-weight="600" fill="currentColor">API server</text>
+        <rect x="550" y="8" width="120" height="36" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text x="610" y="31" font-weight="600" fill="currentColor">Database</text>
+        <g stroke="var(--line)" stroke-width="1.5" stroke-dasharray="4 4"><path d="M90 44 V 292"/><path d="M350 44 V 292"/><path d="M610 44 V 292"/></g>
+        <path d="M92 76 H 346" stroke="currentColor" stroke-width="1.5" marker-end="url(#api-ah)"/>
+        <text x="218" y="68" fill="currentColor">POST /reading-sessions</text>
+        <text x="218" y="92" font-size="12" fill="var(--muted)" font-family="var(--font-mono)">Idempotency-Key: 7f3e…</text>
+        <path d="M354 108 H 606" stroke="currentColor" stroke-width="1.5" marker-end="url(#api-ah)"/>
+        <text x="480" y="100" font-size="12" fill="currentColor">one transaction: insert session s91</text>
+        <text x="480" y="124" font-size="12" fill="currentColor">+ save key 7f3e → (201, s91)</text>
+        <path d="M346 148 H 200" stroke="var(--bad)" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <text x="180" y="153" fill="var(--bad)" font-weight="700">✕</text>
+        <text x="270" y="140" font-size="12" fill="var(--bad)">201 lost (Wi-Fi)</text>
+        <text x="90" y="182" font-size="12" fill="var(--muted)">timeout, retry in 1s</text>
+        <path d="M92 210 H 346" stroke="currentColor" stroke-width="1.5" marker-end="url(#api-ah)"/>
+        <text x="218" y="202" fill="currentColor">same POST, same key 7f3e…</text>
+        <path d="M354 234 H 606" stroke="currentColor" stroke-width="1.5" marker-end="url(#api-ah)"/>
+        <text x="480" y="226" font-size="12" fill="currentColor">key 7f3e seen → stored response</text>
+        <path d="M346 272 H 94" stroke="var(--ok)" stroke-width="2" marker-end="url(#api-ah-ok)"/>
+        <text x="218" y="264" fill="var(--ok)" font-weight="600">201 s91 (no second insert)</text>
+      </g>
+    </svg>
+    <figcaption>The key names the intent, not the attempt. Every retry of the same intent carries the same key.</figcaption>
+  </figure>
+  <div class="trace">
+    <b>Trace · Ana's session, with a key</b>
+    <ol>
+      <li><p>App creates key <code>7f3e9a…</code> (a random UUID) when Ana taps <b>Done</b>, and stores it with the pending session on the device.</p></li>
+      <li><p>Attempt 1: server checks table <code>idempotency_keys</code> for <code>(user u-ana, 7f3e…)</code>. Not found. In <b>one transaction</b> it inserts session <code>s91</code> (15 minutes) and the key row with the response <code>201 {"id":"s91",...}</code>. Response is lost.</p></li>
+      <li><p>Attempt 2, one second later, same key. Server finds the key row and returns the saved <code>201 {"id":"s91"}</code>. <span class="yes">Database still has exactly one session.</span></p></li>
+      <li><p>If attempt 2 arrives <i>while</i> attempt 1 is still running, the unique constraint on the key makes one of them wait or get <code>409</code>, and the client retries again later. Never both inserted.</p></li>
+      <li><p>Key rows expire after 24 hours. Same key with a <i>different</i> body? Return <code>422</code>: that's a client bug.</p></li>
+    </ol>
+  </div>
+  <p>Stripe made this pattern famous with its <code>Idempotency-Key</code> header for payments. It's the same idea you'll use for queues and events in Parts 2 and 3: you can't prevent duplicate messages on a real network, so make duplicates harmless.</p>
+
+  <h2>9. Telling other systems: polling versus webhooks</h2>
+  <p>Canvas wants to know when a student submits an assignment so it can update its gradebook. Two options:</p>
+  <ul>
+    <li><b>Polling</b>: Canvas calls <code>GET /v1/submissions?updatedSince=…</code> every 5 minutes. Simple, and Canvas controls the pace. But it's up to 5 minutes stale, and 2,000 districts polling every 5 minutes is about 7 requests a second that mostly return nothing.</li>
+    <li><b>Webhooks</b>: Canvas registers a URL, and PageTurn sends <code>POST https://canvas.example/hooks/pageturn</code> with the event as soon as it happens. Near-instant and efficient. But now <i>you</i> are the client of someone else's server, which might be down, slow or wrong.</li>
+  </ul>
+  <p>Webhooks done properly need four things: <b>retries with backoff</b> when the receiver fails (for hours, not seconds), an <b>event ID</b> so the receiver can drop duplicates, a <b>signature</b> (an HMAC of the body with a shared secret, in a header) so the receiver knows it's really you, and <b>small payloads</b> ("submission sub_88 was created") so receivers fetch details through your normal, authorized API. Many teams offer both: webhooks for speed, and a polling endpoint with <code>updatedSince</code> for catching up after an outage.</p>
+
+  <h2>10. REST, GraphQL or RPC?</h2>
+  <p>REST isn't the only option. The question is who your clients are and what they need.</p>
+  <table class="tbl">
+    <thead><tr><th>Style</th><th>Looks like</th><th>Gives you</th><th>Costs you</th><th>Choose when</th></tr></thead>
+    <tbody>
+      <tr><td>REST</td><td><code>GET /classes/c1/students</code></td><td>Simple, cacheable by HTTP, universally understood, easy for partners</td><td>Over- or under-fetching; a screen may need 4 calls</td><td>Public and partner APIs, most CRUD products</td></tr>
+      <tr><td>GraphQL</td><td><code>POST /graphql</code> with a query naming exact fields</td><td>One round trip per screen, client picks fields, typed schema</td><td>Harder caching, rate limiting by query cost, N+1 traps in resolvers</td><td>Many client screens with varied data needs (web + iPad + mobile)</td></tr>
+      <tr><td>RPC (gRPC, tRPC)</td><td><code>assignments.publish({ id })</code></td><td>Feels like a function call; fast binary (gRPC); end-to-end types (tRPC)</td><td>Less discoverable; gRPC isn't browser-native</td><td>Service-to-service inside your backend; a TypeScript monorepo</td></tr>
+    </tbody>
+  </table>
+  <p>For PageTurn: REST for the public and district APIs, because partners need boring and stable. If the iPad and web apps start needing five calls per screen, a GraphQL or tRPC layer for your own clients is reasonable, with REST kept for everyone else.</p>
+
+  <div class="callout key"><span class="callout-label">Say it in the interview</span><p>"Here's the API: resources are classes, assignments and reading sessions. <code>POST /reading-sessions</code> takes an Idempotency-Key header because students are on flaky school Wi-Fi and the client will retry. The teacher feed is <code>GET /reading-sessions?classId=</code> with cursor pagination on (created_at, id), because sessions arrive constantly and offset would show duplicates. Errors have a stable code field. For the LMS integration I'd send signed webhooks with retries and an event ID, plus an updatedSince endpoint for catch-up."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><b>Retrying non-idempotent requests blindly.</b> Mobile SDKs, load balancers and job runners all retry on timeouts. If <code>POST /reading-sessions</code> or <code>POST /payments</code> has no idempotency key, a timeout plus an automatic retry equals a duplicate, and you'll find out from a parent asking why their card was charged twice. Decide on day one which writes can be retried, and give those an idempotency key.</p></div>
+
+  <div data-quiz='[
+    {"q":"The teacher feed uses offset pagination. Two sessions are inserted while Ms. Lee reads page 1. What does she see on page 2?","o":["Exactly the next rows","The last two rows of page 1 again","An error","The two new sessions"],"a":1,"why":"Offset counts positions. Two inserts at the top push everything down by two, so offset 3 now starts two rows earlier than before and repeats them. Deletes would cause skips instead."},
+    {"q":"Why does a cursor encode both created_at and id, not just created_at?","o":["To make the cursor longer and harder to guess","So rows with the same timestamp still have a definite order and none are skipped or repeated","Because Postgres requires it","So the client can sort by id"],"a":1,"why":"Timestamps collide. Without a tie-breaker, two rows with the same created_at have no defined order, and the WHERE created_at &lt; x condition could skip one of them. (created_at, id) is unique, so the order is total."},
+    {"q":"Which change can you ship to /v1 without a new version?","o":["Renaming studentName to name","Adding an optional lexileLevel field to the student response","Changing grade from a number to a string","Making dueAt required on create"],"a":1,"why":"Adding a response field is additive: existing clients ignore it. The others change or remove something a client may depend on."},
+    {"q":"A POST /reading-sessions request times out on the client. With an idempotency key, what should the app do?","o":["Nothing; assume it failed","Retry with a new key","Retry with the same key","Call GET to check, then decide"],"a":2,"why":"The key identifies the intent. Retrying with the same key either does the work (if attempt 1 failed) or returns the stored result (if it succeeded). A new key would create a duplicate."},
+    {"q":"Canvas needs submission updates within seconds, and you have 2,000 districts. What is the strongest design?","o":["Canvas polls every second","Signed webhooks with retries and event IDs, plus an updatedSince endpoint for catch-up","Webhooks only, fire and forget","A WebSocket from every Canvas server"],"a":1,"why":"Webhooks give low latency without wasted polling. Retries handle receiver downtime, event IDs make duplicates harmless, signatures prove origin, and updatedSince lets a receiver recover from anything missed."},
+    {"q":"Your own iPad app needs data from 5 REST endpoints to draw one screen. Which is the most reasonable fix?","o":["Switch the public API to GraphQL for everyone","Add a GraphQL or tRPC layer (or one screen-specific endpoint) for your own clients, keep REST for partners","Call the 5 endpoints one after another","Return the entire database in one endpoint"],"a":1,"why":"The problem is round trips for your own client. A client-focused layer or a backend-for-frontend endpoint solves it without forcing partners off a stable REST API."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Model <b>resources</b> (nouns) with opaque string IDs; HTTP methods are the verbs. Nest one level for ownership at most.</li>
+    <li>Keep shapes boring: UTC ISO timestamps, lists wrapped in an object, return what you created, don't leak table structure.</li>
+    <li><b>Cursor pagination</b> on a unique sort key is stable and fast; offset gives page numbers but duplicates or skips rows on busy lists and gets slow when deep.</li>
+    <li>Errors: right status code plus a stable <code>code</code>, <code>field</code> and <code>requestId</code>. Only additive changes are safe within a version.</li>
+    <li><b>Idempotency keys</b> make retries of POSTs safe: the key names the intent, the server stores key → result in the same transaction as the work.</li>
+    <li>Webhooks push changes fast but need retries, event IDs and signatures; polling with <code>updatedSince</code> is the simple, robust fallback.</li>
+  </ul>
+</template>

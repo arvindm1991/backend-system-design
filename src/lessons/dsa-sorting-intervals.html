@@ -1,0 +1,253 @@
+<template id="tpl-dsa-sorting-intervals" data-title="Sorting, intervals &amp; greedy" data-part="Part 5 · Coding patterns (DSA)" data-order="370">
+  <h1>Sorting, intervals &amp; greedy</h1>
+  <p class="lede">After this lesson you will treat sorting as a <b>tool</b> rather than a goal: you sort first so the rest of the problem becomes one easy pass. You will recognize interval problems on sight (bookings, meetings, time ranges), solve the three classics (merge, minimum rooms, maximum non-overlapping), know why "sort by end time" is the greedy choice that works, and write correct custom comparators in JavaScript.</p>
+
+  <p>Running example for the whole lesson: <b>the school library at a reading-app school.</b> Teachers book the library in blocks of hours. The front desk needs to know when the library is busy, how many rooms they need, and which requests to accept. All three questions are interval problems, and all three start with the same move: sort.</p>
+
+  <h2>1. Why sort first? Sorting puts related things next to each other</h2>
+  <p>Here is a warm-up. A teacher pastes in a list of 5,000 student ids and asks "are there any duplicates?"</p>
+  <p><b>Brute force:</b> compare every id with every other id. That is about 5,000 × 5,000 / 2 = 12.5 million comparisons. The <b>repeated work</b> is that you keep re-scanning the whole list for each id. In Big-O terms (see the lesson <i>How to attack any problem</i>) this is <b>O(n²)</b>: double the list, four times the work.</p>
+  <p><b>Sort first:</b> after sorting, equal ids sit right next to each other. One pass comparing each id with its neighbour finds any duplicate. The sort costs O(n log n) and the pass costs O(n), so the whole thing is <b>O(n log n)</b>. (A hash set gets you O(n) here, which is even better; sorting shines when you need <i>order</i>, not just "have I seen this?".)</p>
+  <p>That is the whole idea of this lesson. <b>Sorting turns "compare everything with everything" into "compare each thing with its neighbour."</b></p>
+
+  <h3>Why sorting costs O(n log n)</h3>
+  <p>Think of merge sort, the easiest one to picture. Split the list in half, split the halves in half, and keep going until every piece has one item. With 8 items that takes 3 rounds of splitting (8 → 4 → 2 → 1), because log₂ 8 = 3. Then merge pieces back together pairwise. Each merge round touches all 8 items once. So the total is about 8 items × 3 rounds = 24 steps: <b>n × log n</b>.</p>
+  <table class="tbl">
+    <thead><tr><th>n</th><th>n log n (sort)</th><th>n² (compare all pairs)</th></tr></thead>
+    <tbody>
+      <tr><td>10</td><td>~33</td><td>100</td></tr>
+      <tr><td>1,000</td><td>~10,000</td><td>1,000,000</td></tr>
+      <tr><td>100,000</td><td>~1,700,000</td><td>10,000,000,000</td></tr>
+    </tbody>
+  </table>
+  <p>At 100,000 items, sorting is a few milliseconds; comparing all pairs is many seconds. That gap is why "sort first" is one of the top speed-up moves. JavaScript&#39;s built-in <code>sort</code> is O(n log n) (V8 uses TimSort), and a general comparison sort can&#39;t do better, so when you sort you have "spent" O(n log n) and everything after it should be O(n) or less to keep that as your final answer.</p>
+
+  <h2>2. Sorting in JavaScript: comparators and the traps</h2>
+  <p>JavaScript&#39;s <code>sort</code> has a famous trap. Without a comparator, it converts values to <b>strings</b> and sorts alphabetically:</p>
+  <pre><code class="lang-js">[10, 9, 1, 100].sort();                  // [1, 10, 100, 9]   (string order!)
+[10, 9, 1, 100].sort((a, b) =&gt; a - b);  // [1, 9, 10, 100]   ascending
+[10, 9, 1, 100].sort((a, b) =&gt; b - a);  // [100, 10, 9, 1]   descending</code></pre>
+  <p>A <b>comparator</b> is a function <code>(a, b)</code> that returns a negative number if <code>a</code> should come first, positive if <code>b</code> should come first, and 0 if they tie. <code>a - b</code> does exactly that for numbers.</p>
+  <p>For intervals and records you sort by a field, and break ties with a second field:</p>
+  <pre><code class="lang-js">// Sort bookings by start hour; if two start at the same time, shorter one first.
+// (In TypeScript you would just add types: (a: [number, number], b: [number, number]) =&gt; number)
+bookings.sort((a, b) =&gt; {
+  if (a[0] !== b[0]) return a[0] - b[0]; // primary key: start
+  return a[1] - b[1];                     // tie-breaker: end
+});
+
+// Strings: use localeCompare, never a - b (that gives NaN).
+students.sort((a, b) =&gt; a.name.localeCompare(b.name));</code></pre>
+  <p>Two more facts you need. <code>sort</code> <b>mutates</b> the array in place (copy first with <code>slice()</code> if the caller still needs the original order). And since ES2019, <code>sort</code> is <b>stable</b>: items that compare equal keep their original relative order.</p>
+
+  <h2>3. The trigger: when to reach for sort, intervals and greedy</h2>
+  <ul>
+    <li><b>"Intervals", "ranges", "meetings", "bookings", "start and end times"</b> → sort by start (to merge or count overlaps) or by end (to pick as many as possible).</li>
+    <li><b>"Merge overlapping ..."</b>, <b>"insert an interval"</b>, <b>"free time"</b> → sort by start, then one pass.</li>
+    <li><b>"Minimum number of rooms / servers / platforms"</b> → maximum overlap at any moment: sort and sweep.</li>
+    <li><b>"Maximum number of non-overlapping ..."</b>, <b>"minimum to remove so none overlap"</b>, <b>"fewest arrows"</b> → greedy, sort by end.</li>
+    <li><b>"Closest pair"</b>, <b>"find duplicates"</b>, <b>"group things that are close"</b> → sort so neighbours are close.</li>
+    <li>The brute force compares <b>every pair</b> and the answer only depends on order → sort first.</li>
+  </ul>
+
+  <h2>4. The one fact about intervals you need</h2>
+  <p>An interval is a pair <code>[start, end]</code>. When do two intervals overlap? Picture two bars on a timeline. They <b>don&#39;t</b> overlap only if one ends before the other starts. So for <code>A = [a1, a2]</code> and <code>B = [b1, b2]</code>:</p>
+  <pre><code class="lang-js">// Overlap if each one starts before the other one ends.
+const overlaps = a1 &lt; b2 &amp;&amp; b1 &lt; a2;      // touching ([1,2] and [2,3]) does NOT count
+const overlapsOrTouches = a1 &lt;= b2 &amp;&amp; b1 &lt;= a2; // touching counts</code></pre>
+  <p>Whether touching counts is a detail every problem decides differently. <b>Ask in the interview.</b> "Merge Intervals" merges touching ones; "Meeting Rooms" lets a meeting start the minute another ends.</p>
+  <p>Now the key insight. If intervals are <b>sorted by start</b>, then when you look at interval number i, every earlier interval started no later than it. So you only need to compare it with the block you built most recently, not with every earlier interval.</p>
+
+  <h2>5. Worked problem 1: merge the library bookings</h2>
+  <p>Requests for today (hours on a 24-hour clock): <code>[[13, 15], [9, 11], [10, 12], [16, 17], [14, 16]]</code>. The front desk wants "when is the library busy?" as a clean list.</p>
+  <p><b>Brute force:</b> take any two intervals that overlap, merge them, and start over until no pair overlaps. Each round checks every pair (O(n²)), and you may need up to n rounds: <b>O(n³)</b> in the worst case. The repeated work: re-checking pairs that are nowhere near each other in time.</p>
+  <p><b>With sorting:</b> sort by start, then one pass. Keep a list <code>merged</code>; for each interval, either stretch the last merged block or start a new one.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 280" width="100%" role="img" aria-label="Five sorted library bookings on a timeline from 8 to 18, merged into two busy blocks 9 to 12 and 13 to 17" style="font-family:inherit">
+      <defs><marker id="dsi-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <g style="font-size:12px">
+        <text x="10" y="22" style="fill:var(--muted)">sorted by start</text>
+        <rect x="115" y="34" width="110" height="20" rx="4" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="170" y="48" text-anchor="middle" style="fill:currentColor">[9, 11]</text>
+        <rect x="170" y="62" width="110" height="20" rx="4" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="225" y="76" text-anchor="middle" style="fill:currentColor">[10, 12]</text>
+        <rect x="335" y="90" width="110" height="20" rx="4" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="390" y="104" text-anchor="middle" style="fill:currentColor">[13, 15]</text>
+        <rect x="390" y="118" width="110" height="20" rx="4" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="445" y="132" text-anchor="middle" style="fill:currentColor">[14, 16]</text>
+        <rect x="500" y="146" width="55" height="20" rx="4" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="527" y="160" text-anchor="middle" style="fill:currentColor">[16,17]</text>
+        <line x1="60" y1="190" x2="625" y2="190" style="stroke:var(--line);stroke-width:1.5" marker-end="url(#dsi-arr)"/>
+        <text x="60" y="207" text-anchor="middle" style="fill:var(--muted)">8</text>
+        <text x="115" y="207" text-anchor="middle" style="fill:var(--muted)">9</text>
+        <text x="170" y="207" text-anchor="middle" style="fill:var(--muted)">10</text>
+        <text x="225" y="207" text-anchor="middle" style="fill:var(--muted)">11</text>
+        <text x="280" y="207" text-anchor="middle" style="fill:var(--muted)">12</text>
+        <text x="335" y="207" text-anchor="middle" style="fill:var(--muted)">13</text>
+        <text x="390" y="207" text-anchor="middle" style="fill:var(--muted)">14</text>
+        <text x="445" y="207" text-anchor="middle" style="fill:var(--muted)">15</text>
+        <text x="500" y="207" text-anchor="middle" style="fill:var(--muted)">16</text>
+        <text x="555" y="207" text-anchor="middle" style="fill:var(--muted)">17</text>
+        <text x="610" y="207" text-anchor="middle" style="fill:var(--muted)">18</text>
+        <line x1="500" y1="142" x2="500" y2="170" style="stroke:var(--accent);stroke-dasharray:3 3"/>
+        <text x="562" y="160" style="fill:var(--accent)">touches: merges</text>
+        <text x="10" y="236" style="fill:var(--muted)">merged</text>
+        <rect x="115" y="244" width="165" height="24" rx="5" style="fill:var(--accent);opacity:0.25;stroke:var(--accent);stroke-width:2"/>
+        <text x="197" y="261" text-anchor="middle" style="fill:currentColor;font-weight:600">[9, 12]</text>
+        <rect x="335" y="244" width="220" height="24" rx="5" style="fill:var(--accent);opacity:0.25;stroke:var(--accent);stroke-width:2"/>
+        <text x="445" y="261" text-anchor="middle" style="fill:currentColor;font-weight:600">[13, 17]</text>
+      </g>
+    </svg>
+    <figcaption>After sorting by start, each booking only needs to be compared with the block being built. Gaps (12 to 13) start a new block.</figcaption>
+  </figure>
+  <div class="trace">
+    <p><b>Trace: merging the sorted bookings</b></p>
+    <ol>
+      <li>Sorted: <code>[9,11] [10,12] [13,15] [14,16] [16,17]</code>. <code>merged = []</code>.</li>
+      <li><code>[9,11]</code>: nothing merged yet, push it. <code>merged = [[9,11]]</code>.</li>
+      <li><code>[10,12]</code>: starts at 10, last block ends at 11. 10 ≤ 11, overlap. Stretch the end to max(11, 12) = 12. <code>merged = [[9,12]]</code>.</li>
+      <li><code>[13,15]</code>: 13 &gt; 12, a gap. Push. <code>merged = [[9,12],[13,15]]</code>.</li>
+      <li><code>[14,16]</code>: 14 ≤ 15, overlap. End becomes max(15, 16) = 16. <code>merged = [[9,12],[13,16]]</code>.</li>
+      <li><code>[16,17]</code>: 16 ≤ 16, touching counts here. End becomes 17. <b>Result: <code>[[9,12],[13,17]]</code></b>.</li>
+    </ol>
+  </div>
+  <pre><code class="lang-js">function mergeIntervals(intervals) {
+  const sorted = intervals.map((interval) =&gt; [interval[0], interval[1]]); // copy: don&#39;t reorder the caller&#39;s data
+  sorted.sort((a, b) =&gt; a[0] - b[0]);
+  const merged = [];
+  for (const current of sorted) {
+    const last = merged[merged.length - 1];
+    if (last &amp;&amp; current[0] &lt;= last[1]) {
+      last[1] = Math.max(last[1], current[1]); // max, because current may sit entirely inside last
+    } else {
+      merged.push(current);
+    }
+  }
+  return merged;
+}</code></pre>
+  <p><b>Big-O:</b> O(n log n) for the sort, O(n) for the pass, so <b>O(n log n)</b> time and O(n) space for the output. Sorting removed the repeated work: you never compare two bookings that aren&#39;t neighbours in time.</p>
+
+  <h2>6. Worked problem 2: how many rooms do we need?</h2>
+  <p>Same five bookings, but now each one is a tutoring session that needs its own room. What is the <b>minimum number of rooms</b>?</p>
+  <p>Reframe it: you need as many rooms as the <b>most sessions running at the same moment</b>. That is the whole problem.</p>
+  <p><b>Brute force:</b> for each session, count how many other sessions are running at its start time. That&#39;s n checks for each of n sessions: <b>O(n²)</b>. The repeated work: for every session you re-scan all the others.</p>
+  <p><b>Sort and sweep:</b> picture walking through the day from morning to night. Every time a session starts, you take a room. Every time one ends, you give a room back. The highest number of rooms in use at once is the answer. To walk the day in order, sort the start times and the end times separately.</p>
+  <div class="trace">
+    <p><b>Trace: sweeping the day</b> (starts <code>[9, 10, 13, 14, 16]</code>, ends <code>[11, 12, 15, 16, 17]</code>)</p>
+    <ol>
+      <li>Start at 9. Any ends at or before 9? No. Rooms in use 1. Peak 1.</li>
+      <li>Start at 10. Next end is 11, which is after 10. Rooms in use 2. <b>Peak 2</b>.</li>
+      <li>Start at 13. Ends 11 and 12 are both ≤ 13: give back 2 rooms (now 0). Take one: 1. Peak 2.</li>
+      <li>Start at 14. Next end is 15, after 14. Rooms in use 2. Peak 2.</li>
+      <li>Start at 16. Ends 15 and 16 are ≤ 16: give back 2 (now 0). Take one: 1. <b>Answer: 2 rooms.</b></li>
+    </ol>
+  </div>
+  <p>Notice the "≤": a session ending at 16 frees the room for one starting at 16. If the problem said touching sessions clash, you would use "&lt;". Each pointer only moves forward, so the sweep is O(n), and the total is <b>O(n log n)</b> from the sorts. (A min-heap of end times solves it too; see the heaps lesson.)</p>
+
+  <h2>7. Greedy: pick the one that ends first</h2>
+  <p>A <b>greedy</b> algorithm makes the choice that looks best right now and never takes it back. It is fast and simple, but it is only correct when you can argue the local choice never hurts the final result. Interval scheduling is the classic case where greedy works, <i>if</i> you pick the right rule.</p>
+  <p>The problem: the library has <b>one reading room</b>. Requests: <code>[[9, 17], [9, 10], [10, 12], [11, 13], [12, 14]]</code>. Accept as many as possible with no overlaps (touching is fine).</p>
+  <p><b>Brute force:</b> try every subset of requests and keep the largest one with no overlaps. With n requests there are 2ⁿ subsets: 20 requests is a million subsets, 40 is a trillion. <b>O(2ⁿ)</b>.</p>
+  <p>Which greedy rule? Three tempting ones:</p>
+  <table class="tbl">
+    <thead><tr><th>Rule</th><th>Counterexample</th><th>Works?</th></tr></thead>
+    <tbody>
+      <tr><td>Earliest <b>start</b> first</td><td><code>[9,17]</code> starts first and blocks the whole day: you get 1, best is 3.</td><td class="no">No</td></tr>
+      <tr><td><b>Shortest</b> first</td><td><code>[[1,5],[4,7],[6,10]]</code>: the shortest, <code>[4,7]</code>, clashes with both others: you get 1, best is 2.</td><td class="no">No</td></tr>
+      <tr><td>Earliest <b>end</b> first</td><td>No counterexample exists.</td><td class="yes">Yes</td></tr>
+    </tbody>
+  </table>
+  <p>Why does earliest end work? Whatever the best schedule is, swap its first session for the one that ends earliest overall. That session finishes no later, so everything after it still fits. Repeat for the rest. The session that ends first <b>uses up the least of the future</b>, so picking it can never make the result worse. That "it can never make things worse" argument is what you say out loud to justify a greedy choice.</p>
+  <div class="trace">
+    <p><b>Trace: greedy by end time</b></p>
+    <ol>
+      <li>Sort by end: <code>[9,10] [10,12] [11,13] [12,14] [9,17]</code>. <code>lastEnd = -Infinity</code>, kept 0.</li>
+      <li><code>[9,10]</code>: 9 ≥ -Infinity. Keep. lastEnd = 10. Kept 1.</li>
+      <li><code>[10,12]</code>: 10 ≥ 10 (touching is fine). Keep. lastEnd = 12. Kept 2.</li>
+      <li><code>[11,13]</code>: 11 &lt; 12, clashes. Skip.</li>
+      <li><code>[12,14]</code>: 12 ≥ 12. Keep. lastEnd = 14. Kept 3.</li>
+      <li><code>[9,17]</code>: 9 &lt; 14. Skip. <b>Kept 3; removed 2.</b></li>
+    </ol>
+  </div>
+  <p><b>Big-O:</b> O(n log n) for the sort plus O(n) for the pass, versus O(2ⁿ) for trying subsets. The same greedy answers "minimum number of intervals to remove", "fewest arrows to burst balloons" and "most meetings in one room".</p>
+
+  <h2>8. The templates</h2>
+  <pre><code class="lang-js">// (In TypeScript, add types like intervals: Array&lt;[number, number]&gt;.)
+
+// A. Merge / combine overlapping: sort by START, compare with the last block.
+function mergeTemplate(intervals) {
+  const sorted = intervals.slice().sort((a, b) =&gt; a[0] - b[0]);
+  const result = [];
+  for (const current of sorted) {
+    const last = result[result.length - 1];
+    if (last &amp;&amp; current[0] &lt;= last[1]) {
+      last[1] = Math.max(last[1], current[1]);
+    } else {
+      result.push([current[0], current[1]]);
+    }
+  }
+  return result;
+}
+
+// B. Max overlap at any moment (rooms, servers): sort starts and ends, sweep.
+function maxOverlap(intervals) {
+  const starts = intervals.map((x) =&gt; x[0]).sort((a, b) =&gt; a - b);
+  const ends = intervals.map((x) =&gt; x[1]).sort((a, b) =&gt; a - b);
+  let inUse = 0;
+  let peak = 0;
+  let endIndex = 0;
+  for (const start of starts) {
+    while (endIndex &lt; ends.length &amp;&amp; ends[endIndex] &lt;= start) {
+      inUse--;
+      endIndex++;
+    }
+    inUse++;
+    peak = Math.max(peak, inUse);
+  }
+  return peak;
+}
+
+// C. Pick the most non-overlapping: sort by END, greedily keep.
+function maxNonOverlapping(intervals) {
+  const sorted = intervals.slice().sort((a, b) =&gt; a[1] - b[1]);
+  let kept = 0;
+  let lastEnd = -Infinity;
+  for (const [start, end] of sorted) {
+    if (start &gt;= lastEnd) {
+      kept++;
+      lastEnd = end;
+    }
+  }
+  return kept;
+}</code></pre>
+  <p>A quick way to remember which key to sort by: <b>combining</b> intervals → sort by <b>start</b>. <b>Choosing</b> intervals → sort by <b>end</b>.</p>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Four bugs show up again and again. (1) Calling <code>sort()</code> with no comparator on numbers: <code>[10, 9]</code> stays in string order. (2) Setting the merged end to <code>current[1]</code> instead of <code>Math.max(last[1], current[1])</code>: <code>[1,10]</code> followed by <code>[2,3]</code> would shrink the block to <code>[1,3]</code>. (3) Getting the touching rule backwards (<code>&lt;</code> vs <code>&lt;=</code>): decide it from the problem statement and test it with <code>[1,2],[2,3]</code>. (4) Sorting the caller&#39;s array in place when they still need it: copy with <code>slice()</code> first.</p></div>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;These are intervals, so my first move is to sort. If I&#39;m merging, I sort by start time and compare each interval only with the last merged one. If I&#39;m choosing as many as possible, I sort by end time and greedily keep each one that starts after the last kept one ends; the earliest-ending choice never hurts. Either way it&#39;s O(n log n) for the sort and O(n) for the pass. Quick check: do intervals that only touch count as overlapping?&quot;</p></div>
+
+  <div data-quiz='[
+    {"q":"A calendar app gets a list of busy blocks from 3 people and must return the times when at least one person is busy, as a clean non-overlapping list. Which approach fits?","o":["Hash map from start time to end time","Sort by start time, then merge with the last block in one pass","Sort by end time and greedily keep blocks","Binary search for each block"],"a":1,"why":"Combining overlapping ranges into one list is Merge Intervals: sort by start, then extend or start a new block. O(n log n)."},
+    {"q":"A conference has 500 talks with start and end times. What is the minimum number of stages needed so no two talks share a stage at the same time?","o":["Count how many talks there are","Sort by end time and keep non-overlapping talks","Find the maximum number of talks running at the same moment by sorting starts and ends and sweeping","Merge all intervals and count the merged blocks"],"a":2,"why":"Minimum rooms equals peak overlap. Sweep sorted starts and ends: each start takes a stage, each end at or before it gives one back."},
+    {"q":"You can attend only one webinar at a time. Given 200 webinars, pick the maximum number you can attend fully. Which greedy rule is correct?","o":["Earliest start first","Shortest webinar first","Earliest end first","Latest start first"],"a":2,"why":"The webinar that ends first uses up the least of the future, so choosing it never makes the result worse. Earliest start and shortest first both have counterexamples."},
+    {"q":"What does [10, 9, 1, 100].sort() return in JavaScript?","o":["[1, 9, 10, 100]","[1, 10, 100, 9]","[100, 10, 9, 1]","It throws an error"],"a":1,"why":"With no comparator, sort compares values as strings, so \"10\" and \"100\" come before \"9\". Always pass (a, b) =&gt; a - b for numbers."},
+    {"q":"Sorted bookings [1,10] then [2,3]. Your merge code sets last[1] = current[1] when they overlap. What goes wrong?","o":["Nothing, the result is [1,10]","The block shrinks to [1,3], losing hours 3 to 10","It creates a duplicate block","It throws because [2,3] is inside [1,10]"],"a":1,"why":"An interval can sit entirely inside the previous one. The new end must be Math.max(last[1], current[1])."},
+    {"q":"An algorithm sorts n items and then does one pass over them. For n = 100,000, roughly how many steps is that, and what is its Big-O?","o":["About 100,000; O(n)","About 1.7 million; O(n log n)","About 10 billion; O(n²)","About 17; O(log n)"],"a":1,"why":"Sorting is about n × log₂ n = 100,000 × 17. The extra O(n) pass is smaller, so the total is O(n log n)."}
+  ]'></div>
+
+  <h2>Labs</h2>
+  <p>Three classics, one per template: merge (sort by start), rooms (sweep), and the greedy (sort by end).</p>
+  <div data-lab="dsa-merge-intervals"></div>
+  <div data-lab="dsa-meeting-rooms"></div>
+  <div data-lab="dsa-non-overlapping-intervals"></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li><b>Sorting is a tool:</b> it puts related items next to each other, turning O(n²) "compare every pair" into O(n log n) "sort, then compare neighbours".</li>
+    <li>Sorting costs <b>O(n log n)</b> (about log₂ n rounds of n work). Keep the work after the sort at O(n) so the sort is your final cost.</li>
+    <li>In JS, always pass a comparator: <code>(a, b) =&gt; a - b</code>; <code>localeCompare</code> for strings; <code>sort</code> mutates, so <code>slice()</code> first if needed.</li>
+    <li>Intervals: <b>combining</b> → sort by start and compare with the last block. <b>Rooms needed</b> → peak overlap via a sweep. <b>Choosing the most</b> → greedy, sort by end.</li>
+    <li>A greedy choice is safe only when you can say why it never makes things worse. Always ask whether touching intervals overlap.</li>
+    <li>Practice next: LeetCode 56 (Merge Intervals), 57 (Insert Interval), 435 (Non-overlapping Intervals), 452 (Minimum Arrows), 253 (Meeting Rooms II).</li>
+  </ul>
+</template>

@@ -1,0 +1,44 @@
+{
+  "id": "retry-backoff",
+  "title": "Retries with exponential backoff and jitter",
+  "minutes": 20,
+  "prompt": "<p>The reading app&#39;s background worker calls a flaky text-to-speech API. Write the retry helper it uses.</p>\n<ul>\n<li><code>backoffDelay(attempt, { baseMs, maxMs, random })</code>: the wait before retry number <code>attempt</code> (0 for the first retry). Use <b>full jitter</b>: <code>random() * min(maxMs, baseMs * 2 ** attempt)</code>, where <code>random</code> returns a number in [0, 1).</li>\n<li><code>async retryWithBackoff(fn, { retries, baseMs, maxMs, random, sleep })</code>: calls <code>await fn(attempt)</code> with attempt = 0, 1, 2... Returns the first successful result. On an error, if retries remain and the error is retryable, it <code>await sleep(backoffDelay(...))</code> and tries again. After <code>retries</code> failed retries (so <code>retries + 1</code> calls total), it throws the <b>last</b> error.</li>\n<li>An error with <code>err.retryable === false</code> (think HTTP 400: retrying won&#39;t help) is thrown immediately with no sleep.</li>\n</ul>\n<p><code>random</code> and <code>sleep</code> are injected so the tests are deterministic and instant. Example with <code>baseMs: 100, maxMs: 1000, random: () =&gt; 1</code>: waits are 100, 200, 400, 800, 1000, 1000...</p>",
+  "starter": "function backoffDelay(attempt, { baseMs, maxMs, random }) {\n  // TODO: exponential growth, cap, full jitter\n  return baseMs;\n}\n\nasync function retryWithBackoff(fn, { retries, baseMs, maxMs, random, sleep }) {\n  let lastErr;\n  for (let attempt = 0; attempt <= retries; attempt++) {\n    try {\n      return await fn(attempt);\n    } catch (err) {\n      lastErr = err;\n      // TODO: don't retry non-retryable errors; don't sleep after the final attempt\n      await sleep(backoffDelay(attempt, { baseMs, maxMs, random }));\n    }\n  }\n  throw lastErr;\n}",
+  "solution": "function backoffDelay(attempt, { baseMs, maxMs, random }) {\n  const ceiling = Math.min(maxMs, baseMs * 2 ** attempt);\n  return random() * ceiling; // full jitter: anywhere in [0, ceiling)\n}\n\nasync function retryWithBackoff(fn, { retries, baseMs, maxMs, random, sleep }) {\n  for (let attempt = 0; ; attempt++) {\n    try {\n      return await fn(attempt);\n    } catch (err) {\n      const outOfRetries = attempt >= retries;\n      const permanent = err && err.retryable === false;\n      if (outOfRetries || permanent) throw err;\n      await sleep(backoffDelay(attempt, { baseMs, maxMs, random }));\n    }\n  }\n}",
+  "tests": [
+    {
+      "name": "delay doubles each attempt and is capped at maxMs",
+      "code": "const o = { baseMs: 100, maxMs: 1000, random: () => 1 };\nassertEqual([0,1,2,3,4,5].map(a => backoffDelay(a, o)), [100, 200, 400, 800, 1000, 1000]);"
+    },
+    {
+      "name": "full jitter scales the delay by random()",
+      "code": "const o = { baseMs: 100, maxMs: 1000, random: () => 0.5 };\nassertEqual(backoffDelay(0, o), 50);\nassertEqual(backoffDelay(3, o), 400);\nassertEqual(backoffDelay(0, { ...o, random: () => 0 }), 0);"
+    },
+    {
+      "name": "returns immediately on success without sleeping",
+      "code": "const waits = [];\nconst r = await retryWithBackoff(async () => 'ok', { retries: 3, baseMs: 100, maxMs: 1000, random: () => 1, sleep: async ms => { waits.push(ms); } });\nassertEqual(r, 'ok');\nassertEqual(waits, []);"
+    },
+    {
+      "name": "retries transient failures, then succeeds",
+      "code": "const waits = []; const seen = [];\nconst fn = async (attempt) => { seen.push(attempt); if (attempt < 2) throw new Error('503'); return 'audio.mp3'; };\nconst r = await retryWithBackoff(fn, { retries: 5, baseMs: 100, maxMs: 1000, random: () => 1, sleep: async ms => { waits.push(ms); } });\nassertEqual(r, 'audio.mp3');\nassertEqual(seen, [0, 1, 2]);\nassertEqual(waits, [100, 200]);"
+    },
+    {
+      "name": "gives up after retries and throws the last error",
+      "code": "let calls = 0; const waits = [];\nconst fn = async () => { calls++; throw new Error('fail #' + calls); };\nlet caught = null;\ntry { await retryWithBackoff(fn, { retries: 3, baseMs: 10, maxMs: 1000, random: () => 1, sleep: async ms => { waits.push(ms); } }); }\ncatch (e) { caught = e; }\nassert(caught, 'should throw');\nassertEqual(caught.message, 'fail #4');\nassertEqual(calls, 4, 'retries: 3 means 4 calls total');\nassertEqual(waits, [10, 20, 40]);"
+    },
+    {
+      "name": "does not retry errors marked retryable: false",
+      "code": "let calls = 0; const waits = [];\nconst fn = async () => { calls++; const e = new Error('400 bad voice id'); e.retryable = false; throw e; };\nlet caught = null;\ntry { await retryWithBackoff(fn, { retries: 5, baseMs: 100, maxMs: 1000, random: () => 1, sleep: async ms => { waits.push(ms); } }); }\ncatch (e) { caught = e; }\nassertEqual(caught && caught.message, '400 bad voice id');\nassertEqual(calls, 1);\nassertEqual(waits, []);"
+    },
+    {
+      "name": "retries: 0 means exactly one call",
+      "code": "let calls = 0;\nlet threw = false;\ntry { await retryWithBackoff(async () => { calls++; throw new Error('x'); }, { retries: 0, baseMs: 100, maxMs: 1000, random: () => 1, sleep: async () => {} }); }\ncatch (e) { threw = true; }\nassert(threw, 'should throw');\nassertEqual(calls, 1);"
+    }
+  ],
+  "hints": [
+    "<p>Write <code>backoffDelay</code> first: the &quot;ceiling&quot; is <code>Math.min(maxMs, baseMs * 2 ** attempt)</code>, and full jitter picks a random point below it.</p>",
+    "<p>In the catch block, decide whether to give up <i>before</i> sleeping. Give up if <code>attempt &gt;= retries</code> or <code>err.retryable === false</code>.</p>",
+    "<p>Shape: <code>for (let attempt = 0; ; attempt++) { try { return await fn(attempt); } catch (err) { if (attempt &gt;= retries || err.retryable === false) throw err; await sleep(backoffDelay(attempt, opts)); } }</code></p>"
+  ],
+  "explain": "<p>This is the exact policy AWS recommends (&quot;exponential backoff and full jitter&quot;) and that most SDKs, including the AWS and Anthropic clients, use in some form. Exponential growth gives a struggling service room to recover; the cap keeps a single job from waiting forever; jitter spreads 10,000 clients that failed at the same instant across the whole window instead of having them hammer the server again in lockstep (a <i>retry storm</i> or <i>thundering herd</i>).</p>\n<p><b>In an interview:</b> &quot;Retries only for transient errors (timeouts, 429, 503), exponential backoff with full jitter and a cap, a small retry budget, and only on idempotent operations or with an idempotency key. After the last retry, the message goes to a dead-letter queue.&quot;</p>"
+}

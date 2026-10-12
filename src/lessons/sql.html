@@ -1,0 +1,256 @@
+<template id="tpl-sql" data-title="Data modeling and SQL" data-part="Part 1 · Foundations" data-order="30">
+  <h1>Data modeling and SQL</h1>
+  <p class="lede">Most backend problems are data problems wearing a disguise. This lesson builds PageTurn's schema from scratch: tables and keys, one-to-many and many-to-many, when to copy data on purpose, joins, why an index turns 50 million rows into 4 page reads, how two devices can silently lose an update, the N+1 query that makes dashboards slow, and how to change a schema without downtime.</p>
+
+  <h2>1. The running example: what PageTurn stores</h2>
+  <p>Start from the product, not the database. A <b>district</b> has <b>schools</b>. A school has <b>classes</b>. <b>Students</b> are enrolled in classes (a 4th grader might be in a homeroom and a reading group). Teachers create <b>assignments</b> for a class, each pointing at a <b>book</b>. Every time a student reads, the app saves a <b>reading session</b>: who, which book, how many minutes, when.</p>
+  <p>Rough sizes, because they drive every decision: 300 districts, 6,000 schools, 2 million students, 80,000 books, and about <b>6 million reading sessions a school day</b>, so roughly a billion a year.</p>
+
+  <h2>2. Tables, rows and keys</h2>
+  <p>A relational database stores data in <b>tables</b>: rows with the same named, typed columns. Each table has a <b>primary key</b>, a column (or set of columns) that uniquely identifies a row and never changes. A <b>foreign key</b> is a column that holds another table's primary key, and the database enforces that it points at something real.</p>
+  <pre><code class="lang-sql">CREATE TABLE classes (
+  id          TEXT PRIMARY KEY,                       -- 'c1'
+  school_id   TEXT NOT NULL REFERENCES schools(id),
+  district_id TEXT NOT NULL REFERENCES districts(id), -- copied on purpose, see section 4
+  name        TEXT NOT NULL,                          -- '4B Reading'
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE reading_sessions (
+  id          TEXT PRIMARY KEY,
+  student_id  TEXT NOT NULL REFERENCES students(id),
+  book_id     TEXT NOT NULL REFERENCES books(id),
+  class_id    TEXT NOT NULL REFERENCES classes(id),
+  minutes     INT  NOT NULL CHECK (minutes BETWEEN 1 AND 240),
+  finished    BOOLEAN NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);</code></pre>
+  <p>Notice how much the schema enforces for you: <code>NOT NULL</code>, <code>REFERENCES</code> (no session for a student who doesn't exist), <code>CHECK</code> (no 9,000-minute sessions from a buggy client). Constraints are free bug-catchers. Application code has many entry points and gets rewritten; the database sees every write.</p>
+
+  <h2>3. Relationships: one-to-many and many-to-many</h2>
+  <p><b>One-to-many</b> (1–N): one class has many assignments; each assignment belongs to exactly one class. The "many" side holds the foreign key: <code>assignments.class_id</code>.</p>
+  <p><b>Many-to-many</b> (N–N): a student is in several classes, and a class has many students. Neither table can hold "the" foreign key, so you add a <b>join table</b> whose rows are the pairs:</p>
+  <pre><code class="lang-sql">CREATE TABLE enrollments (
+  class_id   TEXT NOT NULL REFERENCES classes(id),
+  student_id TEXT NOT NULL REFERENCES students(id),
+  role       TEXT NOT NULL DEFAULT 'student',
+  joined_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (class_id, student_id)          -- the pair is unique
+);</code></pre>
+  <p>Join tables often grow their own data (here <code>joined_at</code>), which is a hint that the relationship is a real thing in the product. "Ana joined 4B on Sept 3" is a fact about the enrollment, not about Ana or 4B.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 720 300" role="img" aria-label="Entity diagram: districts have many schools, schools have many classes, classes and students are linked through enrollments, classes have assignments pointing to books, reading sessions point to student, book and class.">
+      <g font-size="13">
+        <g>
+          <rect x="16" y="14" width="140" height="54" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="86" y="36" text-anchor="middle" font-weight="600" fill="currentColor">districts</text>
+          <text x="86" y="56" text-anchor="middle" font-size="12" fill="var(--muted)">id · name</text>
+          <rect x="16" y="120" width="140" height="54" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="86" y="142" text-anchor="middle" font-weight="600" fill="currentColor">schools</text>
+          <text x="86" y="162" text-anchor="middle" font-size="12" fill="var(--muted)">id · district_id</text>
+          <rect x="16" y="226" width="140" height="54" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="86" y="248" text-anchor="middle" font-weight="600" fill="currentColor">classes</text>
+          <text x="86" y="268" text-anchor="middle" font-size="12" fill="var(--muted)">id · school_id</text>
+          <rect x="270" y="226" width="160" height="54" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="350" y="248" text-anchor="middle" font-weight="600" fill="var(--accent)">enrollments</text>
+          <text x="350" y="268" text-anchor="middle" font-size="12" fill="currentColor">class_id · student_id</text>
+          <rect x="560" y="226" width="140" height="54" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="630" y="248" text-anchor="middle" font-weight="600" fill="currentColor">students</text>
+          <text x="630" y="268" text-anchor="middle" font-size="12" fill="var(--muted)">id · name · grade</text>
+          <rect x="270" y="120" width="160" height="54" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="350" y="142" text-anchor="middle" font-weight="600" fill="currentColor">assignments</text>
+          <text x="350" y="162" text-anchor="middle" font-size="12" fill="var(--muted)">class_id · book_id · due_at</text>
+          <rect x="560" y="14" width="140" height="54" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="630" y="36" text-anchor="middle" font-weight="600" fill="currentColor">books</text>
+          <text x="630" y="56" text-anchor="middle" font-size="12" fill="var(--muted)">id · title · level</text>
+          <rect x="530" y="120" width="186" height="54" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="623" y="142" text-anchor="middle" font-weight="600" fill="currentColor">reading_sessions</text>
+          <text x="623" y="162" text-anchor="middle" font-size="12" fill="var(--muted)">student · book · class · minutes</text>
+        </g>
+        <g stroke="var(--muted)" stroke-width="1.5" fill="none">
+          <!-- 1-N: district->schools -->
+          <path d="M86 68 V 120"/><path d="M78 110 L86 120 L94 110"/>
+          <path d="M86 68 V 120"/>
+          <path d="M86 174 V 226"/><path d="M78 216 L86 226 L94 216"/>
+          <!-- classes -> enrollments -->
+          <path d="M156 253 H 270"/><path d="M260 245 L270 253 L260 261"/>
+          <!-- students -> enrollments -->
+          <path d="M560 253 H 430"/><path d="M440 245 L430 253 L440 261"/>
+          <!-- classes -> assignments -->
+          <path d="M156 240 C 210 240 220 147 270 147"/><path d="M260 141 L270 147 L261 155"/>
+          <!-- books -> assignments -->
+          <path d="M560 41 C 480 41 400 70 380 120"/><path d="M374 110 L380 120 L389 113"/>
+          <!-- sessions links -->
+          <path d="M630 68 V 120"/><path d="M622 110 L630 120 L638 110"/>
+          <path d="M630 226 V 174"/><path d="M622 184 L630 174 L638 184"/>
+        </g>
+        <text x="96" y="100" font-size="12" fill="var(--muted)">1 → N</text>
+        <text x="180" y="244" font-size="12" fill="var(--muted)">1 → N</text>
+        <text x="458" y="244" font-size="12" fill="var(--muted)">N ← 1</text>
+        <text x="350" y="210" text-anchor="middle" font-size="12" fill="var(--accent)">students ↔ classes is N–N</text>
+      </g>
+    </svg>
+    <figcaption>Arrows point from the "one" side to the "many" side, which holds the foreign key. Enrollments turns the many-to-many into two one-to-manys.</figcaption>
+  </figure>
+
+  <h2>4. Normalization, and copying data on purpose</h2>
+  <p><b>Normalization</b> means each fact lives in exactly one place. A book's title lives in <code>books</code>, not repeated in every reading session. If a publisher fixes a typo in a title, you change one row, and everything that joins to it is correct.</p>
+  <p>The opposite, <b>denormalization</b>, means deliberately copying a fact somewhere else to make reads cheaper. Two copies PageTurn makes on purpose:</p>
+  <ul>
+    <li><b><code>classes.district_id</code></b>. You could get it by joining through <code>schools</code>, but nearly every query and every permission check filters by district (that's the tenant). One copied column saves a join everywhere, and a school never changes district, so the copy can't go stale.</li>
+    <li><b><code>student_stats.minutes_this_week</code></b>. The teacher dashboard shows weekly minutes for 28 students, thousands of times each morning. Summing millions of session rows each time is wasteful, so a counter is updated whenever a session is saved.</li>
+  </ul>
+  <p>The price of a copy is keeping it in sync. If saving a session and bumping the counter aren't in the same transaction, a crash between them leaves the counter wrong forever. Normalization gives you one source of truth at the cost of joins at read time; denormalization gives you fast reads at the cost of extra writes and a sync bug waiting to happen. Normalize by default; copy when a read is hot, measured, and the copy has a clear owner that updates it.</p>
+
+  <h2>5. Joins, with actual rows</h2>
+  <p>A <b>join</b> combines rows from two tables where a condition matches. Take tiny versions of two tables:</p>
+  <table class="tbl">
+    <thead><tr><th>enrollments (class_id, student_id)</th><th>reading_sessions this week (student_id, minutes)</th></tr></thead>
+    <tbody>
+      <tr><td>(c1, ana), (c1, ben), (c1, cai)</td><td>(ana, 20), (ana, 15), (cai, 30), (dev, 25)</td></tr>
+    </tbody>
+  </table>
+  <div class="trace">
+    <b>Trace · INNER JOIN versus LEFT JOIN</b>
+    <ol>
+      <li><p><code>FROM enrollments e JOIN reading_sessions r ON r.student_id = e.student_id WHERE e.class_id = 'c1'</code> keeps only pairs that match: <b>(ana, 20), (ana, 15), (cai, 30)</b>. Ben read nothing this week, so <span class="no">Ben disappears</span>. Dev isn't in c1, so he's not there either.</p></li>
+      <li><p>Add <code>GROUP BY e.student_id</code> with <code>SUM(r.minutes)</code>: ana 35, cai 30. The dashboard would show 2 students in a class of 3.</p></li>
+      <li><p>Switch to <code>LEFT JOIN</code>: keep every row from the left table even with no match, filling the right side with <code>NULL</code>: (ana, 20), (ana, 15), <b>(ben, NULL)</b>, (cai, 30).</p></li>
+      <li><p><code>COALESCE(SUM(r.minutes), 0)</code> turns Ben's NULL into 0. Result: <span class="yes">ana 35, ben 0, cai 30</span>. That's the teacher's question: "who hasn't read?" Ben is the most important row.</p></li>
+    </ol>
+  </div>
+  <p>Rule of thumb: <b>INNER JOIN</b> when you only want rows that have a partner; <b>LEFT JOIN</b> when the left side is the list you must show in full.</p>
+
+  <h2>6. Indexes: why lookups are fast</h2>
+  <p>Ms. Lee clicks Ana's name. The app runs:</p>
+  <pre><code class="lang-sql">SELECT * FROM reading_sessions
+ WHERE student_id = 'ana'
+ ORDER BY created_at DESC
+ LIMIT 50;</code></pre>
+  <p>Without help, the database has one way to answer: read every row in the table and keep the ones where <code>student_id = 'ana'</code>. That's a <b>sequential scan</b> (or full table scan). With 500 million rows (one school year), that's tens of gigabytes read to find about 250 rows. Seconds to minutes, per click.</p>
+  <p>An <b>index</b> is a separate, sorted structure: the values of one or more columns, each with a pointer to its row. Sorted means you can find a value by repeatedly halving the search space, like finding a name in a phone book. Real databases use a <b>B-tree</b>: a short, wide tree where each node is one disk page holding a few hundred sorted keys.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 720 260" role="img" aria-label="A three-level B-tree. The root splits keys into ranges, branch pages narrow down, leaf pages hold sorted keys with pointers to table rows. Finding 'ana' reads one page per level.">
+      <defs><marker id="sql-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>
+      <g font-size="12" font-family="var(--font-mono)" text-anchor="middle">
+        <rect x="250" y="10" width="220" height="34" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="360" y="32" fill="currentColor">root: … | g… | p… | …</text>
+        <rect x="40" y="90" width="190" height="34" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="135" y="112" fill="currentColor">a… | am… | b… | d…</text>
+        <rect x="265" y="90" width="190" height="34" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+        <text x="360" y="112" fill="var(--muted)">g… | j… | m… | o…</text>
+        <rect x="490" y="90" width="190" height="34" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+        <text x="585" y="112" fill="var(--muted)">p… | s… | u… | x…</text>
+        <rect x="10" y="170" width="160" height="34" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+        <text x="90" y="192" fill="var(--muted)">aaron … amy</text>
+        <rect x="185" y="170" width="160" height="34" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="265" y="192" fill="currentColor">ana ×250 → rows</text>
+        <rect x="360" y="170" width="160" height="34" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+        <text x="440" y="192" fill="var(--muted)">… more leaves</text>
+        <g stroke="var(--line)" stroke-width="1.5" fill="none"><path d="M360 44 V 90"/><path d="M430 44 L 585 90"/><path d="M135 124 L 90 170"/><path d="M200 124 L 440 170"/></g>
+        <g stroke="var(--accent)" stroke-width="2" fill="none"><path d="M290 44 L 140 88" marker-end="url(#sql-ah)"/><path d="M150 124 L 255 168" marker-end="url(#sql-ah)"/></g>
+      </g>
+      <g font-size="13">
+        <text x="490" y="30" fill="var(--muted)">page 1 of the search</text>
+        <text x="20" y="150" fill="var(--muted)">page 2</text>
+        <text x="20" y="232" fill="var(--muted)">page 3: leaf with sorted keys + row pointers</text>
+        <text x="540" y="192" fill="currentColor">~3–4 page reads for</text>
+        <text x="540" y="210" fill="currentColor">hundreds of millions</text>
+        <text x="540" y="228" fill="currentColor">of rows</text>
+      </g>
+    </svg>
+    <figcaption>Each page holds hundreds of keys, so each level multiplies reach by hundreds: 300 → 90,000 → 27 million → 8 billion.</figcaption>
+  </figure>
+  <p>Because each page fans out to hundreds of children, a B-tree over hundreds of millions of rows is only 3–4 levels deep, and the top levels are almost always in memory. So the lookup costs a handful of page reads plus reading Ana's ~250 rows. Milliseconds.</p>
+  <pre><code class="lang-sql">CREATE INDEX reading_sessions_student_created
+    ON reading_sessions (student_id, created_at DESC);</code></pre>
+  <p>Three things to know about indexes:</p>
+  <ul>
+    <li><b>Column order matters.</b> An index on <code>(student_id, created_at)</code> is sorted by student, then by time within each student, like a phone book sorted by last name then first name. It serves "Ana's sessions, newest first" perfectly. It does <i>not</i> help "all sessions since Monday" across students, just as a phone book doesn't help you find everyone named Ana.</li>
+    <li><b>Indexes cost writes.</b> Every insert must also update every index on the table. Six indexes on <code>reading_sessions</code> means seven structures touched per save, at 6 million saves a day.</li>
+    <li><b>Check with <code>EXPLAIN</code>.</b> It shows the plan the database chose: <code>Seq Scan</code> or <code>Index Scan</code>, and estimated rows. Read it before and after adding an index.</li>
+  </ul>
+
+  <div data-lab="query-planner-lite"></div>
+
+  <h2>7. Transactions, and the lost update</h2>
+  <p>A <b>transaction</b> groups statements so they succeed or fail together. That's the "A" in <b>ACID</b>: <b>Atomic</b> (all or nothing), <b>Consistent</b> (constraints hold afterwards), <b>Isolated</b> (concurrent transactions don't see each other's half-done work, to a degree you choose), <b>Durable</b> (once committed, it survives a crash).</p>
+  <p>"To a degree you choose" is where real bugs live. Ana reads on the school iPad and on her phone at home, and both finish a book at nearly the same moment. Each device's request does a read-modify-write on her counter:</p>
+  <div class="trace">
+    <b>Trace · two requests, one counter (Postgres default isolation, Read Committed)</b>
+    <ol>
+      <li><p>Request A: <code>SELECT books_finished FROM student_stats WHERE student_id='ana'</code> → <b>4</b>.</p></li>
+      <li><p>Request B (2ms later): same SELECT → <b>4</b>. A hasn't written yet.</p></li>
+      <li><p>A computes 4 + 1 and runs <code>UPDATE … SET books_finished = 5</code>. Commits.</p></li>
+      <li><p>B computes 4 + 1 and runs <code>UPDATE … SET books_finished = 5</code>. Commits.</p></li>
+      <li><p>Ana finished two books; the counter says 5, not 6. <span class="no">Lost update.</span> No error, no log line. A teacher's report is just quietly wrong.</p></li>
+    </ol>
+  </div>
+  <p>Three standard fixes, from simplest to most general:</p>
+  <ul>
+    <li><b>Let the database do the math</b>: <code>UPDATE student_stats SET books_finished = books_finished + 1 WHERE student_id = 'ana'</code>. The database locks the row for the update, so B's increment applies on top of A's. Result 6. Use this whenever you can.</li>
+    <li><b>Lock the row when you read it</b>: <code>SELECT … FOR UPDATE</code> inside a transaction. B waits at step 2 until A commits, then reads 5. Use it when the new value needs app logic (e.g. "award a badge if this is the 10th book").</li>
+    <li><b>Optimistic concurrency</b>: add a <code>version</code> column. <code>UPDATE … SET books_finished = 5, version = 8 WHERE student_id = 'ana' AND version = 7</code>. If zero rows changed, someone else won; re-read and retry. Use it when conflicts are rare and you don't want to hold locks, such as a teacher editing an assignment in two tabs (that's how you return a <code>409 Conflict</code>).</li>
+  </ul>
+  <table class="tbl">
+    <thead><tr><th>Isolation level</th><th>Plain words</th><th>Lost update above?</th></tr></thead>
+    <tbody>
+      <tr><td>Read Committed (Postgres default)</td><td>Each statement sees data committed before it started</td><td>Happens</td></tr>
+      <tr><td>Repeatable Read</td><td>The whole transaction sees one snapshot</td><td>Postgres aborts B with a serialization error; you retry</td></tr>
+      <tr><td>Serializable</td><td>Result is as if transactions ran one at a time</td><td>Prevented (with retries); more aborts under load</td></tr>
+    </tbody>
+  </table>
+  <p>Stronger isolation gives you fewer anomalies at the cost of more aborted transactions you must retry. Most teams stay on Read Committed and use atomic updates or row locks at the few places that need them.</p>
+
+  <h2>8. The N+1 query</h2>
+  <p>The teacher dashboard lists 28 students with their minutes this week. A natural first version, especially with an ORM:</p>
+  <pre><code class="lang-js">const students = await db.query('SELECT id, name FROM students s JOIN enrollments e ON e.student_id = s.id WHERE e.class_id = $1', [classId]); // 1 query
+for (const s of students) {
+  s.minutes = await db.one('SELECT COALESCE(SUM(minutes),0) FROM reading_sessions WHERE student_id = $1 AND created_at &gt;= $2', [s.id, weekStart]); // +28 queries
+}</code></pre>
+  <p>That's <b>1 + N</b> queries: 29 round trips to the database. At about 1–2ms each, that's 30–60ms of mostly waiting, for one page. At 8:05am with 3,000 teachers loading dashboards, it's 87,000 queries instead of 3,000. Fix it by asking once:</p>
+  <pre><code class="lang-sql">SELECT s.id, s.name, COALESCE(SUM(r.minutes), 0) AS minutes
+  FROM enrollments e
+  JOIN students s ON s.id = e.student_id
+  LEFT JOIN reading_sessions r ON r.student_id = s.id AND r.created_at &gt;= $2
+ WHERE e.class_id = $1
+ GROUP BY s.id, s.name;</code></pre>
+  <p>Or, when you must load things separately, batch them: one query with <code>WHERE student_id = ANY($1)</code> for all 28 IDs. GraphQL servers do this with a "DataLoader" that collects IDs requested in the same tick. N+1 is the most common cause of slow endpoints in apps built on ORMs; look for queries inside loops.</p>
+
+  <h2>9. Migrations: changing the schema without downtime</h2>
+  <p>A <b>migration</b> is a versioned script that changes the schema (<code>001_create_classes.sql</code>, <code>002_add_lexile.sql</code>), run in order by a tool and checked into git. The hard part isn't writing them; it's that during a deploy, <b>old and new app code run at the same time</b> against the same database.</p>
+  <p>Say you want to rename <code>students.grade</code> to <code>grade_level</code>. Rename it in one step and every old server still running crashes on its next query. The safe pattern is <b>expand, migrate, contract</b>:</p>
+  <div class="trace">
+    <b>Trace · renaming a column with zero downtime</b>
+    <ol>
+      <li><p><b>Expand.</b> Migration adds <code>grade_level</code> (nullable). Deploy code that writes <b>both</b> columns and still reads <code>grade</code>. Old and new code both work.</p></li>
+      <li><p><b>Backfill.</b> A background job copies <code>grade</code> into <code>grade_level</code> in batches of 5,000 rows, so it never locks the table for long.</p></li>
+      <li><p><b>Switch reads.</b> Deploy code that reads <code>grade_level</code>. Still writes both, so you can roll back.</p></li>
+      <li><p><b>Contract.</b> A week later, stop writing <code>grade</code>, then drop it in a final migration.</p></li>
+    </ol>
+  </div>
+  <p>Two Postgres specifics worth knowing: adding a column with a constant default is fast on modern versions, and <code>CREATE INDEX CONCURRENTLY</code> builds an index without blocking writes (a plain <code>CREATE INDEX</code> on a big, busy table blocks inserts until it finishes, which at 8am means an outage).</p>
+
+  <div class="callout key"><span class="callout-label">Say it in the interview</span><p>"The core tables are classes, students, an enrollments join table for the many-to-many, and reading_sessions, which is the big one: about 6 million rows a day. Every table carries district_id because it's the tenant key. The teacher dashboard query is served by an index on (class_id, created_at), and I'd keep a per-student weekly counter updated in the same transaction as the insert, using an atomic increment so concurrent devices can't lose updates. Schema changes go out as expand-and-contract migrations, and indexes are built concurrently."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><b>Read-modify-write in application code.</b> <code>const s = await get(); s.count += 1; await save(s);</code> looks fine in testing because tests run one request at a time. In production, two requests interleave and one update vanishes, with no error. Whenever you update a value based on its current value, use an atomic <code>SET x = x + 1</code>, a row lock, or a version check.</p></div>
+
+  <div data-quiz='[
+    {"q":"Students can be in many classes and classes have many students. How do you model it?","o":["Add a class_ids array column to students","Add a student_id column to classes","A join table enrollments(class_id, student_id) with the pair as primary key","Duplicate the student row for each class"],"a":2,"why":"A many-to-many needs a join table whose rows are the pairs. It also gives the relationship a place for its own data, like joined_at, and lets the database enforce both foreign keys."},
+    {"q":"The dashboard should list all 28 students with their minutes, including students who read nothing. Which join?","o":["INNER JOIN enrollments to reading_sessions","LEFT JOIN from enrollments to reading_sessions, with COALESCE(SUM(minutes), 0)","CROSS JOIN","RIGHT JOIN from enrollments to reading_sessions"],"a":1,"why":"An inner join drops students with no sessions, which are exactly the ones a teacher needs to see. LEFT JOIN keeps every enrolled student and COALESCE turns their NULL sum into 0."},
+    {"q":"You have an index on (student_id, created_at). Which query can it NOT serve efficiently?","o":["Sessions for student ana","Sessions for ana since Monday, newest first","All sessions created since Monday, for every student","The 50 latest sessions for ana"],"a":2,"why":"The index is sorted by student first. Without a student_id, the rows from Monday are scattered across every student&#39;s section. Like a phone book sorted by last name: great for Smiths, useless for everyone named Ana."},
+    {"q":"Two devices run SELECT count, then UPDATE count = old + 1, at the same time, on Read Committed. What happens?","o":["The database raises an error","Both increments apply","One increment is lost silently","The second request waits automatically"],"a":2,"why":"Both read the same old value and both write old + 1. Read Committed does not stop this. Use UPDATE ... SET count = count + 1, SELECT ... FOR UPDATE, or a version check."},
+    {"q":"An endpoint loads 50 assignments, then runs one query per assignment to get its book title. What is this and the fix?","o":["A deadlock; add a lock timeout","An N+1 query; join books in the first query or batch with WHERE id = ANY($1)","A missing index; index books.title","Normal; nothing to fix"],"a":1,"why":"1 query + 50 queries = N+1. Each is a database round trip. One join, or one batched query for all 50 book IDs, does the same work in 1–2 round trips."},
+    {"q":"Why rename a column in several deploys (expand, backfill, switch, contract) instead of one ALTER TABLE RENAME?","o":["Postgres cannot rename columns","Old app servers keep running during the deploy and would break on the missing column","Renames are slow on big tables","To keep migration files small"],"a":1,"why":"During a rolling deploy, old and new code run side by side. Every step of expand-and-contract keeps both versions working, and leaves a way to roll back."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Tables have <b>primary keys</b>; relationships are <b>foreign keys</b> on the "many" side; many-to-many needs a <b>join table</b>. Let constraints catch bugs.</li>
+    <li><b>Normalize</b> by default (one fact, one place). <b>Denormalize</b> on purpose for hot reads, and update the copy in the same transaction.</li>
+    <li><b>INNER JOIN</b> keeps matched rows only; <b>LEFT JOIN</b> keeps the whole left list. "Who didn't read?" needs LEFT JOIN.</li>
+    <li>A <b>B-tree index</b> finds rows in 3–4 page reads instead of a full scan; column order decides which queries it serves, and every index slows writes.</li>
+    <li><b>Lost updates</b> happen silently on read-modify-write; fix with atomic updates, <code>FOR UPDATE</code>, or version checks.</li>
+    <li>Kill <b>N+1</b> queries with joins or batching; change schemas with <b>expand → migrate → contract</b>.</li>
+  </ul>
+</template>

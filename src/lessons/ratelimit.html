@@ -1,0 +1,204 @@
+<template id="tpl-ratelimit" data-title="Rate limiting and backpressure" data-part="Part 2 · Scaling building blocks" data-order="80">
+  <h1>Rate limiting and backpressure</h1>
+  <p class="lede">After this lesson you will be able to design the rate limits for an LLM API: pick an algorithm (fixed window, sliding window, token bucket) and explain its trade-offs, decide what to limit on (requests, tokens, concurrency) and per whom (user, tenant, global), enforce it correctly across many servers, and respond the right way with 429 and Retry-After. You will build a per-tenant token bucket.</p>
+
+  <h2>1. The problem: one tenant eats everyone&#39;s capacity</h2>
+  <p>You run <b>Lexi</b>, an LLM API. Customers (we&#39;ll call each customer org a <b>tenant</b>) send prompts and get completions. Your GPU fleet can process about <b>3 million tokens per minute</b> in total. On a normal evening, 400 tenants together use about 1.5 million.</p>
+  <p>At 9:00pm, one tenant, a homework-help startup, kicks off a batch job: 6,000 requests per minute, each about 1,500 tokens. That&#39;s <b>9 million tokens per minute</b> from one customer. Requests pile up on the GPUs, latency for everyone goes from 2 seconds to 40, and the other 399 tenants open support tickets.</p>
+  <p>Nobody did anything malicious. One tenant just had a bigger job than the system can absorb. This is the <b>noisy neighbor</b> problem, and it&#39;s why every shared API has <b>rate limits</b>: rules that cap how much a given caller can use in a period of time, so one caller can&#39;t degrade service for the rest.</p>
+  <p>Rate limits also protect you from runaway client bugs (a retry loop sending 500 requests per second), credential-stuffing attacks on login, and surprise bills (yours, for compute, and theirs, for usage).</p>
+
+  <h2>2. Anatomy of a limit</h2>
+  <p>Every rate limit has three parts:</p>
+  <ul>
+    <li><b>Key</b>: who is being counted. An API key, a tenant ID, a user ID, or an IP address for unauthenticated endpoints like login.</li>
+    <li><b>Amount</b>: what is being counted. Requests, tokens, bytes, or concurrent in-flight requests.</li>
+    <li><b>Window</b>: over what time. Per second, per minute, per day.</li>
+  </ul>
+  <p>Example: &quot;tenant <code>acme</code> may use 1,000 requests per minute and 400,000 tokens per minute&quot;.</p>
+  <p>When a caller is over the limit, reject the request cheaply and tell them when to come back. The standard response is status <b>429 Too Many Requests</b> with a <b>Retry-After</b> header (seconds to wait). Many APIs also send headers describing the limit so good clients can slow down before hitting it:</p>
+  <pre><code class="lang-http">HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+Retry-After: 7
+RateLimit-Limit: 400000
+RateLimit-Remaining: 0
+RateLimit-Reset: 7
+
+{"error":{"type":"rate_limit_error","message":"Tenant acme exceeded 400,000 tokens per minute. Retry after 7s."}}</code></pre>
+  <p>The <code>RateLimit-*</code> header names vary between APIs (<code>X-RateLimit-Remaining</code> is common, and there&#39;s an IETF draft for standard names); <code>Retry-After</code> is the long-established standard one.</p>
+
+  <h2>3. Fixed window</h2>
+  <p>The simplest algorithm. Keep a counter per key per window, like <code>rl:acme:2026-10-10T21:00</code>. Each request increments it. If the counter is over the limit, reject. When the minute rolls over, a new key starts at zero.</p>
+  <pre><code class="lang-js">async function allowFixedWindow(tenant, limit, nowMs) {
+  const minute = Math.floor(nowMs / 60000);
+  const key = `rl:${tenant}:${minute}`;
+  const count = await redis.incr(key);       // atomic increment
+  if (count === 1) await redis.expire(key, 120); // clean up old windows
+  return count &lt;= limit;
+}</code></pre>
+  <p>Cheap (one counter per key) and easy to explain. But it has a famous flaw at the window edges:</p>
+  <div class="trace">
+    <p><b>Trace: the boundary burst, limit 100 requests per minute</b></p>
+    <ol>
+      <li><b>21:00:00 – 21:00:58.</b> Tenant sends nothing. Counter for minute 21:00 is 0.</li>
+      <li><b>21:00:59.</b> Tenant sends 100 requests. Counter 21:00 = 100. All allowed.</li>
+      <li><b>21:01:00.</b> New window. Counter 21:01 = 0. Tenant sends 100 more. All allowed.</li>
+      <li><b>Result:</b> 200 requests in about 1 second, twice the intended rate, all within the rules. With 400 tenants doing this, your fleet sees bursts far above what the limits suggest.</li>
+    </ol>
+  </div>
+
+  <h2>4. Sliding windows</h2>
+  <p>A <b>sliding window log</b> stores the timestamp of every request and counts those in the last 60 seconds. Exact, but stores one entry per request: 1,000 timestamps per tenant at 1,000 RPM.</p>
+  <p>The <b>sliding window counter</b> is the popular approximation. Keep the fixed-window counters, but estimate the last 60 seconds as a weighted mix of the previous and current windows:</p>
+  <div class="trace">
+    <p><b>Trace: sliding window counter, limit 100/min</b></p>
+    <ol>
+      <li>It&#39;s 21:01:15, so we&#39;re 25% into the current minute.</li>
+      <li>Previous minute (21:00) had <b>80</b> requests. Current minute (21:01) has <b>30</b> so far.</li>
+      <li>Assume the previous minute&#39;s requests were spread evenly. The last 60 seconds include the final 75% of it: 80 × 0.75 = 60.</li>
+      <li>Estimate: 60 + 30 = <b>90</b>. Under 100, so allow. At 101, reject.</li>
+      <li>Back in the boundary-burst trace, at 21:01:00 the estimate is 100 × 1.0 + 0 = 100, so the second burst is rejected.</li>
+    </ol>
+  </div>
+  <p>Two counters per key, smooth behavior, small error. Cloudflare has written about using this approach at large scale.</p>
+
+  <h2>5. Token bucket</h2>
+  <p>The token bucket is the algorithm you&#39;ll see most for APIs. Picture a bucket that holds up to <b>capacity</b> tokens and is refilled at a steady <b>rate</b>. Each request takes tokens out. If there aren&#39;t enough, the request is rejected (or waits).</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 250" width="100%" role="img" aria-label="Token bucket: tokens drip in at a fixed rate up to capacity; requests remove tokens; empty bucket means 429" style="font-family:inherit">
+      <defs><marker id="rl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <text x="230" y="22" text-anchor="middle" style="fill:currentColor;font-size:13px">refill: 10 tokens/s (600/min)</text>
+      <line x1="230" y1="30" x2="230" y2="62" style="stroke:var(--accent);stroke-width:2;stroke-dasharray:3 4" marker-end="url(#rl-arr)"/>
+      <path d="M150,70 L160,210 L300,210 L310,70" style="fill:none;stroke:currentColor;stroke-width:2"/>
+      <rect x="161" y="140" width="138" height="69" style="fill:var(--accent);opacity:0.25"/>
+      <line x1="154" y1="140" x2="306" y2="140" style="stroke:var(--accent);stroke-width:1.5"/>
+      <text x="230" y="180" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">tokens: 60</text>
+      <text x="324" y="76" style="fill:var(--muted);font-size:12px">capacity: 120 (max burst)</text>
+      <line x1="300" y1="190" x2="400" y2="190" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rl-arr)"/>
+      <rect x="404" y="160" width="130" height="56" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="469" y="184" text-anchor="middle" style="fill:currentColor;font-size:13px">request (cost 1)</text>
+      <text x="469" y="202" text-anchor="middle" style="fill:var(--muted);font-size:12px">takes a token</text>
+      <rect x="404" y="40" width="250" height="90" rx="8" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:5 4"/>
+      <text x="420" y="64" style="fill:currentColor;font-size:12px">enough tokens → allow, subtract cost</text>
+      <text x="420" y="84" style="fill:currentColor;font-size:12px">not enough → 429, take nothing</text>
+      <text x="420" y="104" style="fill:var(--muted);font-size:12px">Retry-After = shortfall ÷ refill rate</text>
+      <text x="420" y="120" style="fill:var(--muted);font-size:12px">state per key: tokens + last refill time</text>
+    </svg>
+    <figcaption>A token bucket allows bursts up to its capacity while holding the long-run average to the refill rate.</figcaption>
+  </figure>
+  <p>The neat part is that you don&#39;t need a timer dripping tokens in. Store just two numbers per key, <code>tokens</code> and <code>lastRefill</code>, and on each request add <code>elapsed × rate</code> tokens (capped at capacity) before checking. That&#39;s called <b>lazy refill</b>.</p>
+  <div class="trace">
+    <p><b>Trace: capacity 120, refill 10/s, each request costs 1</b></p>
+    <ol>
+      <li><b>t=0.0 s.</b> Bucket starts full: 120. The tenant fires a burst of 120 requests. All allowed. Tokens: 0.</li>
+      <li><b>t=0.1 s.</b> Request arrives. Refill: 0.1 s × 10 = 1 token. Allowed. Tokens: 0.</li>
+      <li><b>t=0.15 s.</b> Request arrives. Refill: 0.05 × 10 = 0.5. Need 1, have 0.5. <b>Rejected</b>, Retry-After = (1 − 0.5) ÷ 10 = 0.05 s.</li>
+      <li><b>t=6.15 s.</b> Quiet for 6 s. Refill: 6 × 10 = 60 (plus the 0.5). Tokens: 60.5. The tenant can burst 60 again.</li>
+      <li><b>Long run:</b> no matter the pattern, the tenant gets at most 120 + 10 per second elapsed. Bursts are allowed; sustained overuse is not.</li>
+    </ol>
+  </div>
+  <p>A cousin, the <b>leaky bucket</b>, puts requests in a queue that drains at a fixed rate. It smooths output perfectly (good in front of a fragile downstream) at the cost of added waiting time instead of fast rejection.</p>
+  <table class="tbl">
+    <thead><tr><th>Algorithm</th><th>Gives you</th><th>Costs you</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Fixed window</td><td>One counter, trivial</td><td>2x bursts at window edges</td><td>Coarse limits (per day quotas), internal tools</td></tr>
+      <tr><td>Sliding window log</td><td>Exact</td><td>One entry per request</td><td>Low limits where exactness matters (5 login attempts per 15 min)</td></tr>
+      <tr><td>Sliding window counter</td><td>Smooth, two counters</td><td>Small approximation error</td><td>General per-minute API limits</td></tr>
+      <tr><td>Token bucket</td><td>Controlled bursts, weighted costs, two numbers per key</td><td>Two parameters to tune</td><td>Public APIs, LLM token limits</td></tr>
+      <tr><td>Leaky bucket (queue)</td><td>Perfectly even output</td><td>Adds latency; queue to manage</td><td>Feeding a fragile downstream at a fixed rate</td></tr>
+    </tbody>
+  </table>
+
+  <h2>6. Limits for LLM APIs: requests, tokens, concurrency</h2>
+  <p>For a normal API, &quot;requests per minute&quot; is a fine measure of cost. For an LLM API it isn&#39;t: a 50-token request and a 50,000-token request both count as one request, but the second costs about 1,000 times more GPU time. So LLM APIs typically limit on several dimensions at once, each its own bucket:</p>
+  <ul>
+    <li><b>Requests per minute (RPM)</b>: protects per-request overhead and catches runaway loops.</li>
+    <li><b>Tokens per minute (TPM)</b>, sometimes split into input and output tokens: tracks actual compute. A request&#39;s <b>cost</b> is its token count, so the bucket is <b>weighted</b>.</li>
+    <li><b>Concurrent requests</b>: caps how many streams a tenant has open at once, because long generations hold GPU memory for their whole duration.</li>
+  </ul>
+  <p>A request must pass <b>every</b> bucket. There&#39;s a wrinkle: you know the input tokens up front, but not the output tokens. A common approach is to <b>reserve</b> an estimate at the start (input tokens + the request&#39;s <code>max_tokens</code>), then <b>settle</b> when the response finishes: refund the unused part, or charge the overage to the next window.</p>
+  <div class="trace">
+    <p><b>Trace: tenant acme, TPM bucket capacity 400,000, refill 400,000/min (6,667/s)</b></p>
+    <ol>
+      <li>Request A: 3,000 input tokens, <code>max_tokens</code> 1,000. Reserve 4,000. Bucket: 400,000 → 396,000.</li>
+      <li>A finishes after generating 400 output tokens. Actual cost 3,400. Refund 600. Bucket: 396,600 (plus refill).</li>
+      <li>acme&#39;s batch job sends 120 requests of 3,000 + 1,000 in 2 seconds: 480,000 tokens of reservations. About 102 fit (396,600 plus ~13,300 refilled over the 2 seconds, divided by 4,000); the rest get <b>429</b> with Retry-After computed from the shortfall.</li>
+      <li>Other tenants have their own buckets, so their latency doesn&#39;t move.</li>
+    </ol>
+  </div>
+  <div data-lab="token-bucket"></div>
+
+  <h2>7. Per user, per tenant, global</h2>
+  <p>Picking the <b>key</b> is a product decision as much as a technical one.</p>
+  <ul>
+    <li><b>Per tenant</b> (per org or API key): matches the contract (&quot;your plan includes 400K TPM&quot;) and isolates customers from each other.</li>
+    <li><b>Per user within a tenant</b>: protects a tenant from itself. If a school district has a 400K TPM budget, one student hammering the AI tutor shouldn&#39;t lock out the other 50,000. Give each user a smaller bucket nested inside the tenant&#39;s; a request must pass both.</li>
+    <li><b>Per IP</b>: for unauthenticated endpoints like login and sign-up, where there&#39;s no user yet. Beware: a whole school can share one IP address behind its network, so IP limits for logged-in traffic hurt real users.</li>
+    <li><b>Global</b>: a ceiling on total load to protect the GPU fleet or an upstream provider&#39;s limit, regardless of who sends it. When it trips, shed the lowest-priority traffic first (free tier before paid, batch before interactive).</li>
+  </ul>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;Each tenant gets token buckets for requests per minute and tokens per minute, plus a concurrency cap, sized by plan. Inside a tenant, per-user buckets keep one user from starving the rest. Tokens are reserved at input plus max_tokens and settled when the stream ends. Limits are enforced at the gateway against Redis with an atomic script, and rejections are 429 with Retry-After so well-behaved clients back off.&quot;</p></div>
+
+  <h2>8. Where to enforce, and doing it across many servers</h2>
+  <p>Limits can live at several layers, each catching different problems:</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 200" width="100%" role="img" aria-label="Enforcement layers: client, edge or gateway with Redis buckets, service, and outbound limits to the GPU fleet" style="font-family:inherit">
+      <defs><marker id="rl-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="8" y="40" width="120" height="66" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="68" y="66" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Client SDK</text>
+      <text x="68" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">honors Retry-After</text>
+      <rect x="166" y="40" width="150" height="66" rx="8" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="241" y="66" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">API gateway</text>
+      <text x="241" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">per-tenant RPM/TPM</text>
+      <rect x="354" y="40" width="150" height="66" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="429" y="66" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Inference service</text>
+      <text x="429" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">concurrency, priority</text>
+      <rect x="542" y="40" width="150" height="66" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="617" y="66" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">GPU fleet</text>
+      <text x="617" y="84" text-anchor="middle" style="fill:var(--muted);font-size:12px">global capacity</text>
+      <line x1="128" y1="73" x2="162" y2="73" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rl-arr2)"/>
+      <line x1="316" y1="73" x2="350" y2="73" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rl-arr2)"/>
+      <line x1="504" y1="73" x2="538" y2="73" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rl-arr2)"/>
+      <rect x="181" y="140" width="120" height="44" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="241" y="160" text-anchor="middle" style="fill:currentColor;font-size:13px">Redis</text>
+      <text x="241" y="176" text-anchor="middle" style="fill:var(--muted);font-size:12px">buckets per key</text>
+      <line x1="241" y1="106" x2="241" y2="136" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#rl-arr2)"/>
+      <text x="330" y="166" style="fill:var(--muted);font-size:12px">atomic check-and-take (Lua script)</text>
+      <text x="350" y="24" text-anchor="middle" style="fill:var(--muted);font-size:12px">reject as early and cheaply as possible</text>
+    </svg>
+    <figcaption>Most limits are enforced at the gateway against a shared store; the service and fleet keep their own safety limits.</figcaption>
+  </figure>
+  <p><b>Enforce early</b>: a rejected request should cost almost nothing. Checking the limit after you&#39;ve loaded the conversation and called the model defeats the purpose.</p>
+  <p><b>Shared state</b>: with 20 gateway servers, each server keeping its own in-memory buckets lets a tenant get 20x its limit (one full bucket per server). Keep buckets in a shared store like Redis. The read-refill-subtract-write step must be <b>atomic</b>, or two servers both read &quot;1 token left&quot; and both allow. In Redis that means running it as one Lua script (Redis runs each script without interleaving other commands).</p>
+  <p><b>When Redis is down</b>, choose: <b>fail open</b> (allow traffic, risk overload) or <b>fail closed</b> (reject everything, guaranteed outage). Most APIs fail open with a fallback local limit per server (the tenant&#39;s limit divided by the number of servers), which is approximate but safe.</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Clients that retry 429s immediately. A client that gets a 429 and retries in a tight loop turns one rejected request into hundreds per second, which can overload the rate limiter itself. Clients must wait at least <code>Retry-After</code>, then use exponential backoff with jitter. If you ship an SDK, build this in, because most users won&#39;t write it themselves.</p></div>
+
+  <h2>9. Backpressure: beyond saying no</h2>
+  <p>Rate limits are rules about <i>fairness</i>. <b>Backpressure</b> is the broader idea that when a system is near capacity, it should push back on whoever is sending work instead of accepting everything and collapsing. Rejecting with 429 is one form. Others:</p>
+  <ul>
+    <li><b>Bounded queues.</b> Every queue in your system needs a maximum size. An unbounded queue in front of an overloaded GPU just turns overload into 10-minute latency and then out-of-memory crashes. When full, reject new work.</li>
+    <li><b>Concurrency limits.</b> Cap in-flight requests per server; beyond that, return 503 quickly instead of accepting work you can&#39;t finish.</li>
+    <li><b>Load shedding by priority.</b> Under pressure, drop batch and free-tier traffic before interactive paid traffic.</li>
+    <li><b>Async alternatives.</b> Offer a batch API: tenants submit big jobs to a queue that runs them when capacity is free, typically at a lower price. The 9pm batch job from section 1 belongs there.</li>
+  </ul>
+  <p>Status codes matter: <b>429</b> means &quot;<i>you</i> are over <i>your</i> limit&quot;; <b>503</b> means &quot;<i>we</i> are overloaded&quot;. Clients and dashboards treat them differently, so don&#39;t mix them up.</p>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q": "With a fixed window of 100 requests per minute, what is the most a client can send in about one second?", "o": ["100", "About 200, by bursting at the end of one window and the start of the next", "101", "Unlimited"], "a": 1, "why": "100 at 21:00:59 and 100 more at 21:01:00 are in different windows. Sliding windows or token buckets close this gap."},
+    {"q": "A token bucket has capacity 50 and refills 5 tokens/s. It is empty. A request costing 20 arrives 2 seconds later. What happens?", "o": ["Allowed, 0 left", "Rejected, Retry-After 4 s", "Rejected, Retry-After 2 s", "Allowed, because the bucket is refilled to capacity every second"], "a": 2, "why": "2 s × 5 = 10 tokens. The shortfall is 10, which takes 10 ÷ 5 = 2 more seconds. A denied request takes nothing."},
+    {"q": "Why do LLM APIs limit tokens per minute and not only requests per minute?", "o": ["Tokens are easier to count", "HTTP cannot count requests", "To make 429s rarer", "Request cost varies by orders of magnitude with prompt and output length, and tokens track the actual compute"], "a": 3, "why": "One request might be 50 tokens and another 50,000. A weighted token bucket charges each request by what it actually costs."},
+    {"q": "You run 20 gateway servers, each with its own in-memory token bucket set to the tenant&#39;s full limit. What happens?", "o": ["A tenant can get up to about 20x its limit", "Limits are enforced exactly", "Every request is rejected", "Only the first server enforces limits"], "a": 0, "why": "Each server has a full bucket. Use a shared store like Redis with an atomic check-and-take, or divide the limit across servers as a fallback."},
+    {"q": "A school district shares one 400K TPM tenant limit. One student&#39;s script uses all of it. What is the best fix?", "o": ["Lower the district&#39;s limit", "Add per-user buckets nested inside the tenant bucket", "Rate limit by IP address", "Return 503 instead of 429"], "a": 1, "why": "Nested per-user limits keep one user from starving the rest of the tenant. IP limits would hurt the whole school, which often shares an IP."},
+    {"q": "Which response best signals that a client exceeded its own quota?", "o": ["503 Service Unavailable", "500 Internal Server Error", "429 Too Many Requests with Retry-After", "400 Bad Request"], "a": 2, "why": "429 means this caller is over its limit, and Retry-After tells it when to come back. 503 means the service as a whole is overloaded."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Rate limits protect shared capacity from noisy neighbors, buggy clients and abuse. Each limit is a <b>key</b>, an <b>amount</b> and a <b>window</b>.</li>
+    <li><b>Fixed window</b> is simple but allows 2x bursts at edges; <b>sliding window counter</b> smooths it with two counters; <b>token bucket</b> allows controlled bursts and weighted costs.</li>
+    <li>LLM APIs limit <b>RPM, TPM and concurrency</b>; reserve input + max_tokens, then settle on completion.</li>
+    <li>Choose keys deliberately: per tenant for contracts, nested per user for fairness inside a tenant, per IP only for unauthenticated endpoints, global for capacity.</li>
+    <li>Enforce early, in a shared store with an <b>atomic</b> check-and-take; decide fail-open vs fail-closed.</li>
+    <li>Respond <b>429 + Retry-After</b>; clients back off with jitter. Bounded queues, concurrency caps and load shedding provide <b>backpressure</b>.</li>
+  </ul>
+</template>

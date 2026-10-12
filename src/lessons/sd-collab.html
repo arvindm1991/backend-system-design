@@ -1,0 +1,208 @@
+<template id="tpl-sd-collab" data-title="Case: Collaborative editing" data-part="Part 4 · System design" data-order="210">
+  <h1>Case study: Collaborative document editing</h1>
+  <p class="lede">Two people type in the same paragraph at the same moment, and both end up with the same text, with nobody's keystrokes lost. That's the magic of Google Docs, and it rests on one idea: edits are operations that can be adjusted to account for each other. After this lesson you can explain, with a three-letter example, why "last write wins" fails, how operational transformation (OT) and CRDTs each fix it, and how to build the server side: one owner per document, an append-only op log, snapshots, presence, and recovery.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: two teachers, Alice and Bob, co-writing a unit plan. Alice is on a train with patchy signal.</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>Several people edit the same rich-text document in real time and see each other's changes within a fraction of a second.</li>
+    <li>Everyone converges to the same document; no keystrokes lost.</li>
+    <li>See collaborators' cursors and selections (presence).</li>
+    <li>Short offline periods: keep typing, merge on reconnect.</li>
+    <li>Version history; comments anchored to text; sharing permissions.</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li>Local typing feels instant (0 ms: apply locally first, never wait for the server).</li>
+    <li>Remote edits appear within ~100–300 ms.</li>
+    <li>Durable: an acknowledged edit survives a server crash.</li>
+    <li>Up to ~100 simultaneous editors per document; most documents have 1–3.</li>
+  </ul>
+  <p><b>Out of scope:</b> spreadsheets and drawings (see "Your turn"), full-text search, export formats.</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Users.</b> 10 M daily actives; at peak <b>1 M people</b> with a document open for editing, across ~<b>400,000 active documents</b> (most solo, some with many editors).</li>
+      <li><b>Operations.</b> Typing is ~3–5 characters/second while typing, but people pause and read. Clients batch keystrokes every ~100–200 ms. Average ~0.5 op messages/second per open editor → <b>500,000 op messages/second</b> in.</li>
+      <li><b>Fan-out.</b> Each op goes to the other editors of that doc; average ~1.5 others → ~750,000 messages/second out, plus cursor updates (throttled).</li>
+      <li><b>Op log growth.</b> ~100 bytes per op: 500 k/s × 100 B = 50 MB/s at peak, on the order of a terabyte or more per day. Logs must be compacted into snapshots; you can't replay a year of keystrokes to open a document.</li>
+      <li><b>Memory for live sessions.</b> 400,000 docs × (document ~100 KB + recent ops) ≈ 40–80 GB spread across the collaboration fleet. Easy.</li>
+    </ol>
+  </div>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-js">// open: GET /v1/docs/d_7 -&gt; { snapshot, version: 1200 }, then a WebSocket to the doc's session
+// client -&gt; server
+{ "type": "ops", "doc": "d_7", "base_version": 1200, "op_id": "alice:57",
+  "ops": [ { "insert": "s", "at": 3 } ] }
+// server -&gt; sender: accepted as version 1202 (after transforming past 1201)
+{ "type": "ack", "op_id": "alice:57", "version": 1202 }
+// server -&gt; other clients
+{ "type": "remote_ops", "version": 1202, "author": "alice", "ops": [ { "insert": "s", "at": 2 } ] }
+// presence, ephemeral
+{ "type": "cursor", "user": "bob", "anchor": 118, "head": 131 }</code></pre>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">documents  (doc_id PK, owner_id, title, current_version, latest_snapshot_version, created_at)
+doc_acl    (doc_id, principal_id, role, PRIMARY KEY (doc_id, principal_id))   -- viewer | commenter | editor
+ops        (doc_id, version, op_id, author_id, ops JSONB, created_at,
+            PRIMARY KEY (doc_id, version))            -- append-only; compacted after snapshot
+snapshots  (doc_id, version, storage_key, created_at) -- full doc state in object storage
+comments   (comment_id PK, doc_id, anchor, author_id, body, resolved)</code></pre>
+
+  <h2>5. Why naive approaches fail</h2>
+  <p>Before the design, the core problem, traced with a three-letter document.</p>
+  <div class="trace">
+    <ol>
+      <li>The document is <code>cat</code> (positions 0, 1, 2), version 10. Alice and Bob both have it.</li>
+      <li>Alice types "s" at the end: <b>insert("s", at 3)</b>. Her screen: <code>cats</code>.</li>
+      <li>At the same moment Bob deletes the "c": <b>delete(at 0)</b>. His screen: <code>at</code>.</li>
+      <li><b>Last write wins on the whole document:</b> the server keeps whichever full document arrived last: either <code>cats</code> or <code>at</code>. One person's edit is silently gone.</li>
+      <li><b>Apply the raw operations in arrival order:</b> Bob's delete arrives first, server has <code>at</code>. Then Alice's insert at 3: but <code>at</code> has only 2 characters. Position 3 now means something different (out of range here, or the wrong spot in a longer document). Alice's and Bob's screens disagree forever.</li>
+      <li><b>The fix:</b> Alice's "at 3" was relative to version 10. Bob's delete at position 0 is <i>before</i> position 3, so after it, the spot Alice meant is position 2. Transform: insert("s", at 3) → <b>insert("s", at 2)</b>. Server: <code>at</code> → <code>ats</code>.</li>
+      <li>On Alice's screen (<code>cats</code>), Bob's delete(at 0) arrives; it's before her insert, so it's unchanged: <code>cats</code> → <code>ats</code>. <b>Both converge on <code>ats</code></b>, and both edits survived.</li>
+    </ol>
+  </div>
+  <p>That adjustment is <b>operational transformation</b>: when two operations were made concurrently (neither saw the other), transform one against the other so that applying them in either order gives the same result. Ties (both insert at the same position) are broken by a fixed rule, such as comparing user IDs, so everyone breaks the tie the same way.</p>
+
+  <h2>6. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 800 380" width="100%" role="img" aria-label="Collaborative editing architecture" xmlns="http://www.w3.org/2000/svg" style="max-width:800px;font-family:inherit">
+
+<rect x="20" y="60" width="120" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="80.0" y="85.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Alice</text>
+<text x="80.0" y="100.0" text-anchor="middle" font-size="12" fill="var(--muted)">local doc + pending</text>
+<rect x="20" y="260" width="120" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="80.0" y="285.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Bob</text>
+<text x="80.0" y="300.0" text-anchor="middle" font-size="12" fill="var(--muted)">local doc + pending</text>
+<rect x="215" y="160" width="130" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="280.0" y="185.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Router</text>
+<text x="280.0" y="200.0" text-anchor="middle" font-size="12" fill="var(--muted)">doc_id -&gt; owner</text>
+<rect x="375" y="150" width="170" height="76" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="460.0" y="185.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Doc session</text>
+<text x="460.0" y="200.0" text-anchor="middle" font-size="12" fill="var(--muted)">one owner node per doc</text>
+<path d="M600,38 a90.0,8 0 0,0 180,0 a90.0,8 0 0,0 -180,0 v54 a90.0,8 0 0,0 180,0 v-54" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="690.0" y="67.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Op log</text>
+<text x="690.0" y="82.0" text-anchor="middle" font-size="12" fill="var(--muted)">append-only, per doc</text>
+<path d="M600,158 a90.0,8 0 0,0 180,0 a90.0,8 0 0,0 -180,0 v54 a90.0,8 0 0,0 180,0 v-54" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="690.0" y="187.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Snapshots</text>
+<text x="690.0" y="202.0" text-anchor="middle" font-size="12" fill="var(--muted)">every ~1,000 ops</text>
+<rect x="600" y="275" width="180" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="690.0" y="297.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Presence</text>
+<text x="690.0" y="312.0" text-anchor="middle" font-size="12" fill="var(--muted)">cursors, memory only</text>
+<path d="M138.7,117.3 L221.3,158.7" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M221.3,158.7 L211.3,158.7 L215.3,150.6 Z" fill="currentColor"/>
+<path d="M138.7,117.3 L148.7,117.3 L144.7,125.4 Z" fill="currentColor"/>
+<path d="M138.7,258.7 L221.3,217.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M221.3,217.3 L215.3,225.4 L211.3,217.3 Z" fill="currentColor"/>
+<path d="M138.7,258.7 L144.7,250.6 L148.7,258.7 Z" fill="currentColor"/>
+<path d="M348.0,188.0 L372.0,188.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M372.0,188.0 L363.0,192.5 L363.0,183.5 Z" fill="currentColor"/>
+<path d="M348.0,188.0 L357.0,183.5 L357.0,192.5 Z" fill="currentColor"/>
+<path d="M531.1,150.0 L621.9,101.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M621.9,101.4 L616.1,109.6 L611.8,101.7 Z" fill="currentColor"/>
+<path d="M545.0,186.9 L597.0,186.2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M597.0,186.2 L588.1,190.8 L587.9,181.8 Z" fill="currentColor"/>
+<path d="M538.0,226.0 L636.0,273.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M636.0,273.7 L625.9,273.8 L629.8,265.7 Z" fill="currentColor"/>
+<text x="460" y="219" text-anchor="middle" font-size="12" fill="var(--muted)">orders + transforms ops</text>
+<text x="194.0" y="134.0" text-anchor="start" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">WebSocket</text>
+<text x="194.0" y="252.0" text-anchor="start" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">WebSocket</text>
+<text x="556.5" y="123.7" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">1 append</text>
+<text x="571.0" y="178.6" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">periodic</text>
+<text x="460" y="300" text-anchor="middle" font-size="12" fill="var(--muted)">2 ack sender, broadcast to others</text>
+</svg>
+    <figcaption>Every editor of a document connects (via a router that hashes doc_id) to the single node that owns that document's session. The session orders and transforms ops, appends them to a durable log before acking, broadcasts them, and takes periodic snapshots. Presence stays in memory.</figcaption>
+  </figure>
+  <ol>
+    <li>Alice opens d_7: she loads the latest snapshot plus any later ops (version 1200), then opens a WebSocket. The router sends her to the node that owns d_7.</li>
+    <li>She types. The client applies the change locally immediately, then sends it with <code>base_version: 1200</code>. It keeps <b>one batch in flight</b> and buffers further keystrokes until that batch is acked (this keeps transformation simple).</li>
+    <li>The session sees that version 1201 (Bob's op) was committed after 1200, so it transforms Alice's op against 1201, assigns version 1202, appends it to the op log (durable), acks Alice, and broadcasts the transformed op to Bob and others.</li>
+    <li>Clients receiving remote ops transform them against their own unacked local ops before applying, so their screens converge too.</li>
+    <li>Every ~1,000 ops (or after a quiet period) the session writes a snapshot to object storage; older ops can be compacted, keeping periodic snapshots as version history.</li>
+  </ol>
+
+  <h2>7. Deep dive: OT vs CRDT</h2>
+  <p>A <b>CRDT</b> (conflict-free replicated data type) solves the same problem differently: instead of transforming positions, it makes positions not matter.</p>
+  <ul>
+    <li>Every character gets a unique, permanent ID (e.g. <code>(alice, 57)</code>). An insert says "put 's' <i>after character (bob, 12)</i>", not "at position 3". A delete marks a character as deleted (a tombstone) rather than shifting anything.</li>
+    <li>Because operations refer to IDs, applying them in any order gives the same result. Concurrent inserts after the same character are ordered by comparing IDs. No central server is needed to transform anything.</li>
+  </ul>
+  <table class="tbl">
+    <thead><tr><th></th><th>OT (e.g. Google Docs' approach)</th><th>CRDT (e.g. Yjs, Automerge)</th></tr></thead>
+    <tbody>
+      <tr><td>Core idea</td><td>Transform concurrent ops against each other</td><td>Unique IDs per element; ops commute by design</td></tr>
+      <tr><td>Needs a central server?</td><td>In practice yes: the server defines one order</td><td>No; peers can merge directly (a server is still handy for storage and auth)</td></tr>
+      <tr><td>Offline editing</td><td>Fine for short gaps; long divergence gets hard</td><td>Strong: merge whenever you reconnect</td></tr>
+      <tr><td>Overhead</td><td>Small document representation; transform logic is subtle</td><td>Per-element metadata and tombstones (modern libraries compress this well)</td></tr>
+      <tr><td>Choose when</td><td>You run a central service and want compact docs</td><td>Offline-first, peer-to-peer, or you want a proven library instead of writing transforms</td></tr>
+    </tbody>
+  </table>
+  <p>For a new product today I'd likely use a mature CRDT library (and still route through a server for auth, persistence and fan-out), because writing correct OT transforms for rich text is notoriously hard. Either way, the server architecture below is almost the same.</p>
+
+  <h2>8. Deep dive: one owner per document, and what happens when it dies</h2>
+  <ul>
+    <li><b>Why a single owner.</b> With OT the server must define one total order of ops per document; easiest if exactly one process holds the document in memory. Even with CRDTs, one session per document makes fan-out a local operation instead of a cross-server broadcast.</li>
+    <li><b>Routing.</b> Consistent hashing on <code>doc_id</code> picks the owner; a lease in a coordination service (etcd/ZooKeeper-style, or a DB row with expiry) makes ownership explicit so two nodes never both think they own a doc.</li>
+    <li><b>Durability before ack.</b> The op is appended to the log (replicated) before the sender gets an ack. If the node crashes after appending but before acking, the client resends with the same <code>op_id</code>; the new owner sees it's already in the log and just acks.</li>
+    <li><b>Failover.</b> The lease expires (seconds), another node takes ownership, loads the latest snapshot plus the log tail, and clients reconnect and resend unacked ops. Users see a brief "reconnecting" and lose nothing.</li>
+    <li><b>Hot documents.</b> A doc with 100 editors and a 2,000-person audience: cap live editors, and serve viewers through a read-only fan-out tier that subscribes to the session rather than connecting to it directly.</li>
+  </ul>
+
+  <h2>9. Deep dive: presence, comments, permissions</h2>
+  <ul>
+    <li><b>Presence</b> (cursors, selections, who's here) is ephemeral: throttle updates to ~10–20 per second per user, never persist them, and drop them freely under load. Cursor positions are transformed like any other position so they stay in the right place.</li>
+    <li><b>Comments</b> are ordinary records, but their anchor must move with the text. Store the anchor as character IDs (CRDT) or as a position that the server transforms with every op.</li>
+    <li><b>Permissions</b> are checked when the socket opens and again when sharing changes: revoking Bob's access closes his session immediately, not at his next page load.</li>
+  </ul>
+
+  <h2>10. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Single owner node per doc</td><td>Simple total order, local fan-out</td><td>Failover pause of seconds; routing and leases</td><td>Central-server collaboration (the common case)</td></tr>
+      <tr><td>Append op log + snapshots</td><td>Durability, version history, fast load</td><td>Compaction jobs, storage growth</td><td>Always</td></tr>
+      <tr><td>One batch in flight per client</td><td>Much simpler client and server transforms</td><td>Slightly burstier sending</td><td>OT-based clients</td></tr>
+      <tr><td>CRDT library</td><td>Offline merges, no custom transforms</td><td>Metadata overhead, library lock-in</td><td>Offline-first or limited team time for OT</td></tr>
+      <tr><td>Ephemeral presence</td><td>Cheap, can be dropped under load</td><td>Cursors briefly wrong after reconnect</td><td>Always</td></tr>
+    </tbody>
+  </table>
+
+  <h2>11. Follow-up questions and strong answers</h2>
+  <h3>"Alice edits offline for 20 minutes. What happens on reconnect?"</h3>
+  <p>Her client has a queue of ops based on version 1200; the server is now at 1450. With OT, the server transforms her batch against 250 ops (fine for a few hundred; it's just arithmetic per op). With a CRDT, her changes merge directly. Either way the result can be semantically odd (both rewrote the same sentence), so show a "you were offline, changes merged" notice and make version history easy.</p>
+  <h3>"Why not just lock paragraphs?"</h3>
+  <p>Locking is simpler and fine for some tools (one editor per cell or per slide), but it feels bad in prose: you're blocked by someone who left their cursor in a paragraph. Real-time merging is what makes co-writing feel natural.</p>
+  <h3>"How do you build version history?"</h3>
+  <p>Keep periodic snapshots (e.g. after each editing session or hourly) and named versions; diff two snapshots to show changes; attribute changes by author using the op log before it's compacted.</p>
+  <h3>"How do you test that it converges?"</h3>
+  <p>Randomized (fuzz) tests: simulate several clients making random concurrent edits with random network delays and reorderings, then assert every replica ends identical. This finds transform bugs that unit tests miss.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Edits are operations, not document saves. Each client applies its edit locally right away and sends it with the version it was based on. One owner node per document orders operations; if an op was made concurrently with ones already committed, it's transformed against them, so with 'cat', an insert at 3 after someone deleted position 0 becomes an insert at 2, and everyone converges on 'ats'. Ops are appended to a durable log before the ack, snapshots keep loads fast, and failover is a lease handoff plus clients resending unacked ops by ID. If offline editing mattered a lot, I'd use a CRDT library instead of hand-written transforms."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Proposing "send the whole document on every change and keep the latest" or "use timestamps to decide who wins". Both lose edits: whole-document last-write-wins throws away the other person's typing, and timestamps can't merge two concurrent changes, they can only pick one. Show the three-letter example and the transform; that's the moment the interviewer knows you get it.</p></div>
+
+  <h2>12. Your turn</h2>
+  <p>Design a <b>collaborative whiteboard</b> (sticky notes, shapes, arrows) for a class of 30 students and a teacher.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Simpler than text.</b> The board is a set of objects, each with an ID and properties (x, y, width, color, text, z-order). Most conflicts are two people changing the same property of the same object, and "last writer wins per property" is acceptable: if Ana and Ben both drag the same note, it ends where the last drag (in server order) put it. This is the server-authoritative, property-level approach some well-known design tools have described publicly.</p>
+    <p><b>Ops:</b> <code>create(obj)</code>, <code>set(obj_id, prop, value)</code>, <code>delete(obj_id)</code>. The server assigns order and broadcasts; clients apply optimistically and accept the server's value if it differs. Deleted objects keep a tombstone so a late <code>set</code> doesn't resurrect them.</p>
+    <p><b>Z-order:</b> fractional indexes (a string key between two neighbors) so "bring to front" is one property change, not a reorder of everything.</p>
+    <p><b>Text inside a sticky note</b> is the only place you need real text merging; use a small text CRDT per note.</p>
+    <p><b>Classroom specifics:</b> teacher controls (lock board, hide names, clear), throttle drags to ~20 updates/s, and if 31 people are on school Wi-Fi, keep messages tiny.</p>
+  </details>
+
+  <div data-quiz='[{"q":"The document is cat. Alice inserts s at position 3 while Bob concurrently deletes position 0. After transformation, what does everyone see?","o":["cats","at","ats","tas"],"a":2,"why":"Bob delete shifts Alice intended position from 3 to 2, so both edits survive: ats."},{"q":"Why does whole-document last-write-wins fail for collaborative editing?","o":["It is too slow","One user concurrent changes are silently discarded","Browsers cannot send whole documents","It needs a CRDT"],"a":1,"why":"It picks a winner instead of merging both edits."},{"q":"What is the key idea of a text CRDT?","o":["Lock each paragraph","Give every character a unique ID and express edits relative to IDs so operations commute","Send diffs by email","Use server timestamps to pick a winner"],"a":1,"why":"Position-independent references make merge order irrelevant."},{"q":"Why route all editors of a document to one owner node?","o":["To save bandwidth on images","So there is one place that defines the order of operations and fan-out is local","Because WebSockets only support one server","To avoid storing snapshots"],"a":1,"why":"A single owner makes ordering and broadcast simple; leases make ownership safe."},{"q":"The owner node crashes after appending an op but before acking. What prevents a duplicate?","o":["Nothing; duplicates are expected","The client resends with the same op ID, and the new owner sees it is already in the log and simply acks","The router deletes the op","Snapshots overwrite duplicates"],"a":1,"why":"Idempotent op IDs make resend after failover safe."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Edits are operations relative to a version; apply locally first, send, and converge.</li>
+    <li>OT transforms concurrent ops (insert at 3 becomes insert at 2 after a delete before it); CRDTs use per-element IDs so ops commute.</li>
+    <li>Server: one owner session per document (consistent hashing plus leases), durable op log before ack, snapshots for fast load and history.</li>
+    <li>Failover: lease handoff, reload snapshot plus log tail, clients resend unacked ops by ID.</li>
+    <li>Presence is ephemeral and throttled; comments anchor to moving text; permissions are enforced on live sessions.</li>
+  </ul>
+</template>

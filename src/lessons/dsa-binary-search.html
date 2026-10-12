@@ -1,0 +1,280 @@
+<template id="tpl-dsa-binary-search" data-title="Binary search" data-part="Part 5 · Coding patterns (DSA)" data-order="360">
+  <h1>Binary search</h1>
+  <p class="lede">After this lesson you will be able to find anything in a sorted list of a million items in about 20 steps, with one template that doesn't have off-by-one bugs. You will use it to find the first and last position of a value, and then for the move that surprises most people: binary searching over possible <i>answers</i>, as in "what is the smallest daily capacity that finishes the job in D days?"</p>
+
+  <h2>1. The problem: scanning a sorted list</h2>
+  <p>PageTurn's catalog has 100,000 books sorted by reading level. When a student's level is assessed at 600, the app shows books starting from <b>the first book at level 600 or above</b>. Here is a 10-book slice:</p>
+  <pre><code class="lang-js">const levels = [120, 250, 310, 420, 480, 560, 640, 640, 710, 880];
+//    index:      0    1    2    3    4    5    6    7    8    9</code></pre>
+  <p>The obvious approach walks from the start until it finds a level ≥ 600. That is <b>O(n)</b>: the number of steps grows in step with the number of books (Big-O is built up in the <code>dsa-approach</code> lesson). For 100,000 books, up to 100,000 checks, every time a student logs in.</p>
+  <p>But we're throwing away the fact that the list is sorted. You don't read a dictionary from page 1 to find "photosynthesis". You open it near the middle, see "M", and know your word is in the second half. One look rules out half the book.</p>
+
+  <h2>2. The intuition: halve the space each step</h2>
+  <p>Play "guess my number between 1 and 100", where I answer "higher" or "lower". The best strategy is always to guess the middle: 50, then 75 or 25, and so on. Each guess cuts the remaining possibilities in half: 100 → 50 → 25 → 13 → 7 → 4 → 2 → 1. Seven guesses, guaranteed.</p>
+  <p>The number of times you can halve n until one item is left is called <b>log₂ n</b>, and an algorithm with that many steps is <b>O(log n)</b>. It grows absurdly slowly:</p>
+  <table class="tbl">
+    <thead><tr><th>n (items)</th><th>Linear scan: up to</th><th>Binary search: about</th></tr></thead>
+    <tbody>
+      <tr><td>1,000</td><td>1,000 steps</td><td>10 steps</td></tr>
+      <tr><td>1,000,000</td><td>1,000,000 steps</td><td>20 steps</td></tr>
+      <tr><td>1,000,000,000</td><td>1,000,000,000 steps</td><td>30 steps</td></tr>
+    </tbody>
+  </table>
+  <p>Engineers already use this idea outside code: <b><code>git bisect</code></b> finds the first commit that broke a test by checking the middle commit, then the middle of the half that must contain the break, and so on. 1,000 commits take about 10 checks.</p>
+  <p>What makes it work is not really "sorted numbers". It's a <b>yes/no question whose answers flip exactly once</b>: no, no, no, ..., no, yes, yes, yes. For the catalog the question is "is <code>levels[i] &gt;= 600</code>?":</p>
+  <pre><code class="lang-js">// index:     0    1    2    3    4    5    6    7    8    9
+// level:   120  250  310  420  480  560  640  640  710  880
+// &gt;= 600?   no   no   no   no   no   no  YES  YES  YES  YES
+//                                         ^ we want the first YES</code></pre>
+  <p>Binary search finds <b>the boundary</b>: the first index where the answer becomes yes.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 250" width="100%" role="img" aria-label="Two rows of the levels array: in the first, lo=0, mid=5, hi=10; mid is too small so indexes 0 to 5 are discarded and lo becomes 6" style="font-family:inherit">
+      <defs><marker id="bs-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+      <text x="16" y="62" style="fill:var(--muted);font-size:12px">step 1</text>
+      <g class="mono" style="font-size:13px">
+        <rect x="70" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="96" y="64" text-anchor="middle" style="fill:currentColor">120</text>
+        <rect x="126" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="152" y="64" text-anchor="middle" style="fill:currentColor">250</text>
+        <rect x="182" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="208" y="64" text-anchor="middle" style="fill:currentColor">310</text>
+        <rect x="238" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="264" y="64" text-anchor="middle" style="fill:currentColor">420</text>
+        <rect x="294" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="320" y="64" text-anchor="middle" style="fill:currentColor">480</text>
+        <rect x="350" y="40" width="52" height="38" rx="5" style="fill:var(--accent-soft);stroke:var(--accent);stroke-width:2"/><text x="376" y="64" text-anchor="middle" style="fill:currentColor;font-weight:700">560</text>
+        <rect x="406" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="432" y="64" text-anchor="middle" style="fill:currentColor">640</text>
+        <rect x="462" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="488" y="64" text-anchor="middle" style="fill:currentColor">640</text>
+        <rect x="518" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="544" y="64" text-anchor="middle" style="fill:currentColor">710</text>
+        <rect x="574" y="40" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="600" y="64" text-anchor="middle" style="fill:currentColor">880</text>
+      </g>
+      <g style="font-size:12px;font-weight:600">
+        <text x="96" y="30" text-anchor="middle" style="fill:var(--accent)">lo=0</text>
+        <text x="376" y="30" text-anchor="middle" style="fill:var(--accent)">mid=5</text>
+        <text x="654" y="64" text-anchor="middle" style="fill:var(--accent)">hi=10</text>
+      </g>
+      <text x="376" y="98" text-anchor="middle" style="fill:currentColor;font-size:12px">560 ≥ 600? no → the answer is right of mid</text>
+      <line x1="376" y1="106" x2="376" y2="128" style="stroke:var(--accent);stroke-width:2" marker-end="url(#bs-arr)"/>
+      <text x="16" y="162" style="fill:var(--muted);font-size:12px">step 2</text>
+      <rect x="66" y="134" width="340" height="46" rx="7" style="fill:var(--surface-2);stroke:none"/>
+      <g class="mono" style="font-size:13px">
+        <text x="96" y="162" text-anchor="middle" style="fill:var(--muted)">120</text>
+        <text x="152" y="162" text-anchor="middle" style="fill:var(--muted)">250</text>
+        <text x="208" y="162" text-anchor="middle" style="fill:var(--muted)">310</text>
+        <text x="264" y="162" text-anchor="middle" style="fill:var(--muted)">420</text>
+        <text x="320" y="162" text-anchor="middle" style="fill:var(--muted)">480</text>
+        <text x="376" y="162" text-anchor="middle" style="fill:var(--muted)">560</text>
+        <rect x="406" y="138" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="432" y="162" text-anchor="middle" style="fill:currentColor">640</text>
+        <rect x="462" y="138" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="488" y="162" text-anchor="middle" style="fill:currentColor">640</text>
+        <rect x="518" y="138" width="52" height="38" rx="5" style="fill:var(--accent-soft);stroke:var(--accent);stroke-width:2"/><text x="544" y="162" text-anchor="middle" style="fill:currentColor;font-weight:700">710</text>
+        <rect x="574" y="138" width="52" height="38" rx="5" style="fill:var(--surface);stroke:var(--line)"/><text x="600" y="162" text-anchor="middle" style="fill:currentColor">880</text>
+      </g>
+      <text x="236" y="202" text-anchor="middle" style="fill:var(--muted);font-size:12px">known "no": never looked at again</text>
+      <g style="font-size:12px;font-weight:600">
+        <text x="432" y="202" text-anchor="middle" style="fill:var(--accent)">lo=6</text>
+        <text x="544" y="202" text-anchor="middle" style="fill:var(--accent)">mid=8</text>
+        <text x="654" y="162" text-anchor="middle" style="fill:var(--accent)">hi=10</text>
+      </g>
+      <text x="350" y="236" text-anchor="middle" style="fill:currentColor;font-size:13px">one comparison removed 6 of 10 candidates; the window [lo, hi) always contains the boundary</text>
+    </svg>
+    <figcaption>Each step looks only at the middle of the remaining range and throws away the half that can't contain the first "yes".</figcaption>
+  </figure>
+
+  <h2>3. The trigger: when to think "binary search"</h2>
+  <ul>
+    <li><b>"sorted array"</b> + "find", "search", "position", "insert position", "first / last occurrence", "how many are less than x".</li>
+    <li>The problem says <b>"O(log n)"</b> or n is huge (10⁹) and you obviously can't touch every element.</li>
+    <li><b>"minimum X such that..."</b> or <b>"maximum X such that..."</b>: smallest capacity, slowest speed, fewest days, largest size. This is <b>search on the answer</b> (section 7).</li>
+    <li>Any yes/no question that flips once: "first bad version", "first day the stock passed 100", "first commit where the test fails".</li>
+  </ul>
+  <p>The check to run in your head: <b>"If the answer is yes for x, is it also yes for every bigger x?"</b> If so, the answers look like no...no yes...yes, and binary search finds the flip.</p>
+
+  <h2>4. The template: find the first "yes"</h2>
+  <p>Binary search is famous for off-by-one bugs: <code>&lt;</code> or <code>&lt;=</code>? <code>mid</code> or <code>mid + 1</code>? <code>n</code> or <code>n - 1</code>? The fix is to learn <b>one</b> template and the one sentence that makes it correct. (In TypeScript you'd just add types: <code>isYes: (i: number) =&gt; boolean</code>.)</p>
+  <pre><code class="lang-js">// Returns the first index i in [lo, hi) where isYes(i) is true,
+// or hi if there is none. isYes must be no...no, yes...yes.
+function firstYes(lo, hi, isYes) {
+  while (lo &lt; hi) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    if (isYes(mid)) {
+      hi = mid;          // mid might BE the first yes: keep it in range
+    } else {
+      lo = mid + 1;      // mid is a no: the first yes is strictly after it
+    }
+  }
+  return lo;             // lo === hi: the boundary
+}
+
+// "First book at level &gt;= 600"
+const first = firstYes(0, levels.length, (i) =&gt; levels[i] &gt;= 600); // 6</code></pre>
+  <p><b>The sentence that makes it correct:</b> "Everything before <code>lo</code> is a known no, and everything from <code>hi</code> onward is a known yes (or past the end)." Check each line against it:</p>
+  <ul>
+    <li><code>isYes(mid)</code> → set <code>hi = mid</code>. Mid is a yes, so "from hi onward is yes" stays true. We keep mid itself in play by not going to <code>mid - 1</code>.</li>
+    <li>Otherwise → <code>lo = mid + 1</code>. Mid is a no, so "before lo is no" stays true.</li>
+    <li><code>while (lo &lt; hi)</code>: stop when the range is empty. Then <code>lo === hi</code> sits exactly on the boundary.</li>
+    <li>It always terminates: <code>mid</code> is always ≥ <code>lo</code> and &lt; <code>hi</code>, so each step shrinks the range by at least 1.</li>
+    <li>Start <code>hi</code> at <code>levels.length</code> (one past the end), so "no yes at all" returns <code>length</code> naturally.</li>
+  </ul>
+  <div class="trace">
+    <p><b>Trace: first index with levels[i] ≥ 600</b></p>
+    <ol>
+      <li><code>lo=0, hi=10</code> → <code>mid=5</code>, level 560. No → <code>lo=6</code>.</li>
+      <li><code>lo=6, hi=10</code> → <code>mid=8</code>, level 710. Yes → <code>hi=8</code>.</li>
+      <li><code>lo=6, hi=8</code> → <code>mid=7</code>, level 640. Yes → <code>hi=7</code>.</li>
+      <li><code>lo=6, hi=7</code> → <code>mid=6</code>, level 640. Yes → <code>hi=6</code>.</li>
+      <li><code>lo=6, hi=6</code>: range empty. <span class="yes">Return 6</span>. 4 checks instead of 7; for 100,000 books, about 17 instead of up to 100,000.</li>
+    </ol>
+  </div>
+  <p>Why <code>lo + Math.floor((hi - lo) / 2)</code> instead of <code>Math.floor((lo + hi) / 2)</code>? In JavaScript both are fine for any realistic array (numbers are exact up to 2⁵³). In Java or C++, <code>lo + hi</code> can overflow a 32-bit integer, so interviewers like seeing the safe form. Either way, say why.</p>
+
+  <h2>5. Worked problem: search a sorted array</h2>
+  <p><b>Problem.</b> Given a sorted array and a target, return the target's index, or the index where it would be inserted to keep the array sorted. (This is "search insert position"; "return −1 if missing" is a one-line change.)</p>
+  <p><b>Brute force:</b> walk from the start until <code>nums[i] &gt;= target</code>. <b>O(n)</b>. The repeated work: comparing against elements the sorted order already proves are too small.</p>
+  <p><b>Binary search:</b> the insert position <i>is</i> the first index with <code>nums[i] &gt;= target</code>.</p>
+  <pre><code class="lang-js">function searchInsert(nums, target) {
+  let lo = 0;
+  let hi = nums.length;
+  while (lo &lt; hi) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    if (nums[mid] &gt;= target) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return lo;
+}
+// found or not?  const i = searchInsert(nums, t); const found = i &lt; nums.length &amp;&amp; nums[i] === t;</code></pre>
+  <p><b>O(log n) time, O(1) space.</b> What removed the repeated work: one comparison at the middle rules out half the remaining elements.</p>
+  <p>You will also see the "classic" version with <code>while (lo &lt;= hi)</code>, <code>hi = n - 1</code>, <code>return mid</code> on equality and <code>hi = mid - 1</code>. It's correct for "is the exact value here?", but it can't find the <i>first</i> of several equal values, and mixing its rules with the template above is where most off-by-one bugs come from. Pick one; the first-yes template handles every case in this lesson.</p>
+
+  <h2>6. Worked problem: first and last position</h2>
+  <p>A sorted list of the reading levels of a class's assigned books: <code>[2, 3, 3, 3, 5, 7]</code>. The teacher filters by level 3. <b>Problem:</b> return <code>[first, last]</code> indexes of the target, or <code>[-1, -1]</code>.</p>
+  <p><b>Brute force:</b> scan for the first 3, keep going until it stops being 3. <b>O(n)</b>. Even "binary search to any 3, then walk outward" is O(n) when the whole array is 3s: the walk is the repeated work.</p>
+  <p><b>Two binary searches</b> with the same template, two different questions:</p>
+  <ul>
+    <li><b>first</b> = first index with <code>nums[i] &gt;= 3</code> → 1.</li>
+    <li><b>last</b> = (first index with <code>nums[i] &gt; 3</code>) − 1 → 4 − 1 = 3.</li>
+  </ul>
+  <pre><code class="lang-js">function firstAtLeast(nums, value) {
+  let lo = 0;
+  let hi = nums.length;
+  while (lo &lt; hi) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    if (nums[mid] &gt;= value) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+function firstAndLast(nums, target) {
+  const first = firstAtLeast(nums, target);
+  if (first === nums.length || nums[first] !== target) return [-1, -1];
+  const afterLast = firstAtLeast(nums, target + 1);   // first index with value &gt; target (integers)
+  return [first, afterLast - 1];
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: nums = [2, 3, 3, 3, 5, 7], target = 3</b></p>
+    <ol>
+      <li>First ≥ 3: <code>lo=0, hi=6</code> → mid 3 (value 3) yes → <code>hi=3</code>; mid 1 (3) yes → <code>hi=1</code>; mid 0 (2) no → <code>lo=1</code>. Return <b>1</b>.</li>
+      <li><code>nums[1] === 3</code>, so the target exists.</li>
+      <li>First ≥ 4: <code>lo=0, hi=6</code> → mid 3 (3) no → <code>lo=4</code>; mid 5 (7) yes → <code>hi=5</code>; mid 4 (5) yes → <code>hi=4</code>. Return 4.</li>
+      <li><span class="yes">Answer [1, 3]</span>: 6 checks in total. For a million equal values, still about 40.</li>
+    </ol>
+  </div>
+  <p>The <code>target + 1</code> trick works for integers. For decimals, write the second search with the condition <code>nums[mid] &gt; target</code> instead; it's the same template with a different question. (The second lab asks you to do exactly that.)</p>
+
+  <h2>7. Worked problem: search on the answer</h2>
+  <p>This is the move that turns binary search from "a sorted-array trick" into a general tool.</p>
+  <p>A student must read a novel's chapters <b>in order</b>: <code>[30, 50, 20, 40, 60]</code> pages. She can't stop mid-chapter. She wants to finish in <b>D = 3 days</b> and read the same maximum each day. <b>What is the smallest daily page limit that works?</b> (This is the classic "capacity to ship packages within D days": chapters are packages, days are days, the page limit is the ship's capacity.)</p>
+  <p>There's no sorted array here. But ask the trigger question: <b>"If a limit of x pages works, does every bigger limit also work?"</b> Yes: a bigger limit never needs more days. So over the possible limits, "finishes in ≤ 3 days?" goes no, no, ..., no, yes, yes. Binary search the limit itself.</p>
+  <p><b>Step 1: a checker.</b> Given a limit, count the days needed by greedily filling each day:</p>
+  <pre><code class="lang-js">function daysNeeded(chapters, limit) {
+  let days = 1;
+  let pagesToday = 0;
+  for (const pages of chapters) {
+    if (pagesToday + pages &gt; limit) {   // doesn't fit: start a new day
+      days++;
+      pagesToday = 0;
+    }
+    pagesToday += pages;
+  }
+  return days;
+}</code></pre>
+  <p><b>Step 2: the range of possible answers.</b> The limit can't be below the biggest chapter (60), or that chapter never fits. And a limit equal to the total (200) finishes in one day, so it's a guaranteed yes. Search <code>[60, 200]</code>.</p>
+  <p><b>Step 3: the same template</b>, with <code>hi</code> as a value known to be a yes:</p>
+  <pre><code class="lang-js">function smallestDailyLimit(chapters, maxDays) {
+  let lo = Math.max(...chapters);                      // smallest limit that could work
+  let hi = chapters.reduce((sum, p) =&gt; sum + p, 0);    // certainly works (1 day)
+  while (lo &lt; hi) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    if (daysNeeded(chapters, mid) &lt;= maxDays) {
+      hi = mid;        // mid works; maybe something smaller does too
+    } else {
+      lo = mid + 1;    // mid is too small
+    }
+  }
+  return lo;
+}</code></pre>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 170" width="100%" role="img" aria-label="Number line of daily page limits from 60 to 200; limits below 80 need more than 3 days, limits from 80 work" style="font-family:inherit">
+      <rect x="60" y="44" width="83" height="34" rx="4" style="fill:var(--surface-2);stroke:var(--line)"/>
+      <rect x="143" y="44" width="497" height="34" rx="4" style="fill:var(--accent-soft);stroke:var(--accent)"/>
+      <text x="101" y="66" text-anchor="middle" style="fill:var(--muted);font-size:12px">no: 4+ days</text>
+      <text x="392" y="66" text-anchor="middle" style="fill:currentColor;font-size:12px">yes: finishes in ≤ 3 days</text>
+      <line x1="143" y1="34" x2="143" y2="88" style="stroke:var(--accent);stroke-width:2.5"/>
+      <text x="143" y="26" text-anchor="middle" style="fill:var(--accent);font-size:13px;font-weight:600">answer: first yes</text>
+      <g class="mono" style="font-size:12px">
+        <text x="60" y="100" text-anchor="middle" style="fill:var(--muted)">60</text>
+        <text x="143" y="100" text-anchor="middle" style="fill:var(--accent);font-weight:700">80</text>
+        <text x="350" y="100" text-anchor="middle" style="fill:var(--muted)">130</text>
+        <text x="640" y="100" text-anchor="middle" style="fill:var(--muted)">200</text>
+      </g>
+      <text x="60" y="120" style="fill:var(--muted);font-size:12px">↑ lo = biggest chapter</text>
+      <text x="640" y="120" text-anchor="end" style="fill:var(--muted);font-size:12px">hi = total pages ↑</text>
+      <text x="350" y="154" text-anchor="middle" style="fill:currentColor;font-size:13px">mids tried: 130 yes · 95 yes · 77 no · 86 yes · 82 yes · 80 yes · 79 no → 80</text>
+    </svg>
+    <figcaption>Search on the answer: the "array" is the range of possible limits, and the yes/no question is "does this limit finish in time?"</figcaption>
+  </figure>
+  <div class="trace">
+    <p><b>Trace: chapters = [30, 50, 20, 40, 60], maxDays = 3</b></p>
+    <ol>
+      <li><code>lo=60, hi=200</code> → try 130: days [30+50+20], [40+60] = 2 ≤ 3. <span class="yes">Yes</span> → <code>hi=130</code>.</li>
+      <li><code>lo=60, hi=130</code> → try 95: [30+50], [20+40], [60] = 3. Yes → <code>hi=95</code>.</li>
+      <li><code>lo=60, hi=95</code> → try 77: [30], [50+20], [40], [60] = 4. <span class="no">No</span> → <code>lo=78</code>.</li>
+      <li><code>lo=78, hi=95</code> → try 86: [30+50], [20+40], [60] = 3. Yes → <code>hi=86</code>. Then 82: yes → <code>hi=82</code>. Then 80: [30+50], [20+40], [60] = 3, yes → <code>hi=80</code>.</li>
+      <li><code>lo=78, hi=80</code> → try 79: [30], [50+20], [40], [60] = 4. No → <code>lo=80</code>. Range empty: <span class="yes">answer 80 pages a day</span>, after 7 checks.</li>
+    </ol>
+  </div>
+  <p><b>Complexity.</b> Each check walks the chapters once: O(n). The number of checks is log₂ of the range size (here log₂ 140 ≈ 7). Total <b>O(n · log S)</b>, where S is the sum of pages. <b>Brute force</b> tries every limit from 60 upward: up to S checks of O(n) each, <b>O(n · S)</b>. With 50,000 chapters and S up to 25 million, that is the difference between ~25 checks and up to 25 million checks.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"I notice that if a capacity works, every bigger capacity also works, so feasibility is monotonic. I'll binary search the answer between the largest single item and the total, and for each candidate run a greedy O(n) check of how many days it needs. That's O(n log S) instead of trying every capacity."</p></div>
+
+  <h2>8. Common mistakes</h2>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Mixing two templates: <code>while (lo &lt; hi)</code> with <code>hi = mid - 1</code>, or <code>while (lo &lt;= hi)</code> with <code>hi = mid</code>. The first can skip the answer; the second loops forever when <code>lo === hi === mid</code> and the condition is yes. Use one template and check each line against its sentence: "before <code>lo</code> is no, from <code>hi</code> on is yes".</p></div>
+  <ul>
+    <li><b><code>lo = mid</code></b> instead of <code>lo = mid + 1</code>. When <code>hi = lo + 1</code>, mid equals lo, so nothing changes: infinite loop.</li>
+    <li><b>Wrong starting <code>hi</code>.</b> In the first-yes template, <code>hi</code> is one past the last candidate (<code>nums.length</code>), or a value you <i>know</i> is a yes when searching on the answer.</li>
+    <li><b>Returning early on <code>nums[mid] === target</code></b> when the problem asks for the first or last occurrence. Equal isn't the end; keep narrowing.</li>
+    <li><b>Binary searching something that isn't monotonic</b>, like an unsorted array or "is this day's value above 50?" on data that goes up and down. Sort first (O(n log n)) or use another pattern.</li>
+    <li><b>Wrong bounds on search-on-answer.</b> Starting <code>lo</code> at 0 or 1 in the shipping problem lets limits below the biggest item through, and a naive day-counter then says "fits" when it doesn't.</li>
+  </ul>
+
+  <h2>9. Labs</h2>
+  <p>The template on an array, twice on an array, and on the answer. Starters are empty functions.</p>
+  <div data-lab="dsa-search-insert"></div>
+  <div data-lab="dsa-first-last-position"></div>
+  <div data-lab="dsa-ship-capacity"></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"You have 10,000 versions of an app; one version introduced a bug and every version after it is also bad. You have isBad(version). Which approach fits best?","o":["Check every version from the start","Binary search for the first bad version","Two pointers from both ends","Stack"],"a":1,"why":"The answers flip once (good...good, bad...bad), so binary search finds the boundary in about 14 checks instead of up to 10,000. This is exactly git bisect."},
+    {"q":"Koko eats bananas at speed k per hour from piles; find the smallest k that finishes all piles in h hours. Which approach fits best?","o":["Sort the piles and take the median","Binary search on k, checking hours needed for each candidate","Sliding window over the piles","Greedy: eat the biggest pile first"],"a":1,"why":"Minimum X such that a check passes, and a bigger speed never takes longer: search on the answer between 1 and the biggest pile, with an O(n) check per candidate."},
+    {"q":"In the first-yes template, isYes(mid) is true. What do you set?","o":["hi = mid - 1","hi = mid","lo = mid","lo = mid + 1"],"a":1,"why":"Mid might be the first yes, so keep it in range: hi = mid. The invariant is that everything from hi onward is a known yes."},
+    {"q":"In a sorted array with duplicates, how do you find the last index of the target with the template?","o":["Find the first index with value greater than target, then subtract 1","Find any index equal to the target and walk right","Reverse the array and search again","Use the classic loop and return mid as soon as the value equals the target"],"a":0,"why":"The last target sits just before the first value greater than it. Walking right is O(n) when many values are equal."},
+    {"q":"Find the length of the longest substring without repeating characters. Is binary search a good first approach?","o":["Yes, binary search on the length","No: the input is not sorted and a sliding window solves it directly in O(n)","Yes, on the sorted characters","Yes, because the answer is at most 26"],"a":1,"why":"Contiguous + longest + a rule is the sliding-window trigger. Binary search needs a monotonic yes/no question and would add a log factor for no benefit."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Binary search needs a <b>yes/no question that flips once</b> (no...no yes...yes). Sorted arrays are the common case, not the only one.</li>
+    <li>It halves the candidates each step: <b>O(log n)</b>. A million items take about 20 checks.</li>
+    <li>One template: <code>while (lo &lt; hi)</code>, yes → <code>hi = mid</code>, no → <code>lo = mid + 1</code>, return <code>lo</code>. Invariant: before lo is no, from hi on is yes.</li>
+    <li>First/last position = two searches: first ≥ target, and first &gt; target minus 1.</li>
+    <li><b>Search on the answer</b>: when "minimum X such that..." and bigger X always works, binary search X between its smallest and largest possible values with an O(n) check: O(n log range).</li>
+  </ul>
+</template>

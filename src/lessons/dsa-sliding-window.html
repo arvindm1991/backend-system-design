@@ -1,0 +1,269 @@
+<template id="tpl-dsa-sliding-window" data-title="Sliding window" data-part="Part 5 · Coding patterns (DSA)" data-order="340">
+  <h1>Sliding window</h1>
+  <p class="lede">After this lesson you will spot "contiguous stretch" problems on sight and solve them in one pass: the best k-day total, the longest substring without repeats, the shortest run that reaches a target. You will learn the one expand/shrink loop that solves almost all of them, why it is O(n) even with a loop inside a loop, and the one situation (negative numbers) where it quietly gives wrong answers.</p>
+
+  <h2>1. The problem: re-adding the same days</h2>
+  <p>PageTurn, the reading app for schools, logs how many minutes each student reads per day. Maya's last week:</p>
+  <pre><code class="lang-js">const minutes = [20, 5, 35, 40, 10, 0, 30]; // Mon..Sun
+const k = 3;                                 // "best 3-day streak"</code></pre>
+  <p>Her teacher wants a badge for the <b>best 3 consecutive days</b>. The direct approach: for every starting day, add up the next 3 days, and keep the biggest total.</p>
+  <pre><code class="lang-js">// Brute force. In TypeScript you'd just add types.
+function bestKDayTotalBrute(minutes, k) {
+  let best = -Infinity;
+  for (let start = 0; start + k &lt;= minutes.length; start++) {
+    let total = 0;
+    for (let day = start; day &lt; start + k; day++) {
+      total += minutes[day];
+    }
+    best = Math.max(best, total);
+  }
+  return best;
+}</code></pre>
+  <p>For one week this is trivial. But the work is <b>(number of windows) × k</b>. For a district report over 100,000 days of combined logs with k = 30, that is about 3 million additions; with k = 50,000 it is about 2.5 billion. In Big-O terms this is <b>O(n · k)</b>, which becomes <b>O(n²)</b> when k grows with n. (Big-O describes how the step count grows with the input size n; the <code>dsa-approach</code> lesson builds it from scratch.)</p>
+  <p>Find the repeated work. The window Mon–Wed is <code>20 + 5 + 35</code>. The next window, Tue–Thu, is <code>5 + 35 + 40</code>. We just re-added <code>5 + 35</code>. Neighbouring windows share all but one day on each side, and the brute force recomputes the shared part every time.</p>
+
+  <h2>2. The intuition: slide the frame, don't rebuild it</h2>
+  <p>Picture a cardboard frame laid over a strip of days, 3 days wide. To move it one day right, you don't recount the whole frame. One day <b>leaves</b> on the left and one day <b>enters</b> on the right:</p>
+  <p style="text-align:center"><code>newTotal = oldTotal + entering − leaving</code></p>
+  <p>That is one addition and one subtraction per move, no matter how big the frame is.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 230" width="100%" role="img" aria-label="A window of 3 days over the minutes array, with the leaving day on the left and the entering day on the right" style="font-family:inherit">
+      <defs>
+        <marker id="sw-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+        <marker id="sw-arr-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker>
+      </defs>
+      <g class="mono" style="font-size:12px">
+        <text x="96" y="40" text-anchor="middle" style="fill:var(--muted)">Mon</text>
+        <text x="176" y="40" text-anchor="middle" style="fill:var(--muted)">Tue</text>
+        <text x="256" y="40" text-anchor="middle" style="fill:var(--muted)">Wed</text>
+        <text x="336" y="40" text-anchor="middle" style="fill:var(--muted)">Thu</text>
+        <text x="416" y="40" text-anchor="middle" style="fill:var(--muted)">Fri</text>
+        <text x="496" y="40" text-anchor="middle" style="fill:var(--muted)">Sat</text>
+        <text x="576" y="40" text-anchor="middle" style="fill:var(--muted)">Sun</text>
+      </g>
+      <rect x="140" y="50" width="230" height="64" rx="10" style="fill:var(--accent-soft);stroke:var(--accent);stroke-width:2"/>
+      <g class="mono" style="font-size:15px">
+        <rect x="62" y="58" width="68" height="48" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:4 4"/><text x="96" y="87" text-anchor="middle" style="fill:var(--muted)">20</text>
+        <rect x="142" y="58" width="68" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="176" y="87" text-anchor="middle" style="fill:currentColor">5</text>
+        <rect x="222" y="58" width="68" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="256" y="87" text-anchor="middle" style="fill:currentColor">35</text>
+        <rect x="302" y="58" width="68" height="48" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/><text x="336" y="87" text-anchor="middle" style="fill:currentColor;font-weight:600">40</text>
+        <rect x="382" y="58" width="68" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="416" y="87" text-anchor="middle" style="fill:currentColor">10</text>
+        <rect x="462" y="58" width="68" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="496" y="87" text-anchor="middle" style="fill:currentColor">0</text>
+        <rect x="542" y="58" width="68" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="576" y="87" text-anchor="middle" style="fill:currentColor">30</text>
+      </g>
+      <line x1="96" y1="150" x2="96" y2="112" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#sw-arr-m)"/>
+      <text x="96" y="168" text-anchor="middle" style="fill:var(--muted);font-size:13px">left: leaving</text>
+      <text x="96" y="185" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">− 20</text>
+      <line x1="336" y1="150" x2="336" y2="112" style="stroke:var(--accent);stroke-width:2" marker-end="url(#sw-arr)"/>
+      <text x="336" y="168" text-anchor="middle" style="fill:var(--accent);font-size:13px;font-weight:600">right: entering</text>
+      <text x="336" y="185" text-anchor="middle" class="mono" style="fill:var(--accent);font-size:12px">+ 40</text>
+      <text x="350" y="218" text-anchor="middle" class="mono" style="fill:currentColor;font-size:13px">window Tue–Thu: 60 + 40 − 20 = 80</text>
+    </svg>
+    <figcaption>A fixed window of 3 days slides one step: add the day that enters, subtract the day that leaves. Days 5 and 35 are never re-added.</figcaption>
+  </figure>
+  <div class="trace">
+    <p><b>Trace: minutes = [20, 5, 35, 40, 10, 0, 30], k = 3</b></p>
+    <ol>
+      <li>Build the first window Mon–Wed: 20 + 5 + 35 = <b>60</b>. best = 60.</li>
+      <li>Slide to Tue–Thu: 60 + 40 (Thu enters) − 20 (Mon leaves) = <b>80</b>. best = 80.</li>
+      <li>Slide to Wed–Fri: 80 + 10 − 5 = <b>85</b>. <span class="yes">best = 85</span>.</li>
+      <li>Slide to Thu–Sat: 85 + 0 − 35 = <b>50</b>. best stays 85.</li>
+      <li>Slide to Fri–Sun: 50 + 30 − 40 = <b>40</b>. best stays 85. Answer: <b>85 minutes, Wed–Fri</b>. 3 additions to build + 2 operations per slide × 4 slides, instead of 5 windows × 3 additions each. For n = 100,000 and k = 50,000 that is ~100,000 operations instead of ~2.5 billion.</li>
+    </ol>
+  </div>
+
+  <h2>3. The trigger: when to think "sliding window"</h2>
+  <p>The single most important word is <b>contiguous</b>: the answer is one unbroken stretch of an array or string. Look for:</p>
+  <ul>
+    <li><b>"subarray"</b> or <b>"substring"</b> (these always mean contiguous), "consecutive days", "in a row", "a stretch of".</li>
+    <li><b>"of size k"</b>, "every window of k", "k consecutive" → a <b>fixed</b> window.</li>
+    <li><b>"longest"</b> or <b>"shortest"</b> subarray/substring <b>such that</b> some rule holds: "without repeating characters", "with at most k distinct", "whose sum is at least target", "containing all of these letters" → a <b>variable</b> window.</li>
+  </ul>
+  <p>Two anti-triggers. <b>"Subsequence"</b> means you may skip elements, so it is not a window (that is usually dynamic programming). And <b>sums with negative numbers</b> break the variable window: more on that in section 7.</p>
+  <table class="tbl">
+    <thead><tr><th>Kind</th><th>Window size</th><th>How it moves</th><th>Classic problems</th></tr></thead>
+    <tbody>
+      <tr><td>Fixed</td><td>always k</td><td>Each step: one enters on the right, one leaves on the left</td><td>Max sum of k consecutive, average of each k-window, anagram of a pattern in a string</td></tr>
+      <tr><td>Variable, "longest"</td><td>grows and shrinks</td><td>Expand right every step; shrink left <b>while the window breaks the rule</b>; then record</td><td>Longest substring without repeats, longest with at most k distinct</td></tr>
+      <tr><td>Variable, "shortest"</td><td>grows and shrinks</td><td>Expand right every step; <b>while the window satisfies the rule</b>, record it and shrink left</td><td>Shortest subarray with sum ≥ target, minimum window substring</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. The template: expand, shrink, record</h2>
+  <p>A variable window is described by two indexes, <code>left</code> and <code>right</code>, and some <b>window state</b>: a running sum, a <code>Set</code> of characters inside, or a <code>Map</code> of counts. The window is <code>items[left..right]</code>, and its length is <code>right - left + 1</code>.</p>
+  <pre><code class="lang-js">// "Longest window that follows the rule". In TypeScript you'd just add types.
+function longestWindowTemplate(items) {
+  let left = 0;
+  let best = 0;
+  // window state: a sum, a Set, or a Map of counts describing items[left..right]
+
+  for (let right = 0; right &lt; items.length; right++) {
+    // 1. EXPAND: add items[right] to the window state
+
+    // 2. SHRINK: while the window breaks the rule, remove items[left] from the state
+    while (windowBreaksRule()) {
+      // remove items[left] from the state
+      left++;
+    }
+
+    // 3. RECORD: items[left..right] is valid here
+    best = Math.max(best, right - left + 1);
+  }
+  return best;
+}
+
+// "Shortest window that reaches a goal": record INSIDE the shrink loop.
+function shortestWindowTemplate(items) {
+  let left = 0;
+  let best = Infinity;
+  for (let right = 0; right &lt; items.length; right++) {
+    // 1. EXPAND: add items[right]
+    // 2. While the window meets the goal, it's a candidate: record, then try smaller
+    while (windowMeetsGoal()) {
+      best = Math.min(best, right - left + 1);
+      // remove items[left] from the state
+      left++;
+    }
+  }
+  return best === Infinity ? 0 : best;
+}</code></pre>
+  <p><b>Why is this O(n) when there is a <code>while</code> inside a <code>for</code>?</b> Count how many times each element is touched. <code>right</code> moves forward n times in total, so each element is <b>added</b> once. <code>left</code> also only moves forward and never passes <code>right</code>, so across the <i>whole run</i> it moves at most n times: each element is <b>removed</b> at most once. That is at most 2n state updates in total, which is O(n). The inner loop is not "n steps per outer step"; it shares one budget of n steps across all of them.</p>
+
+  <h2>5. Worked problem: max sum of k consecutive days (fixed window)</h2>
+  <p><b>Problem.</b> Given an array of numbers and <code>k</code>, return the largest sum of any <code>k</code> consecutive elements.</p>
+  <p><b>Brute force:</b> section 1. <b>O(n · k)</b> time. The repeated work: neighbouring windows share k − 1 elements, and each window re-adds them.</p>
+  <pre><code class="lang-js">function bestKDayTotal(minutes, k) {
+  if (k &lt;= 0 || k &gt; minutes.length) return null;
+  let windowSum = 0;
+  for (let day = 0; day &lt; k; day++) {
+    windowSum += minutes[day];             // the first window
+  }
+  let best = windowSum;
+  for (let right = k; right &lt; minutes.length; right++) {
+    windowSum += minutes[right];           // entering
+    windowSum -= minutes[right - k];       // leaving
+    best = Math.max(best, windowSum);
+  }
+  return best;
+}</code></pre>
+  <p><b>O(n) time, O(1) space.</b> What removed the repeated work: the window keeps a running total and updates it by the two days that change.</p>
+
+  <h2>6. Worked problem: longest stretch without repeating a book</h2>
+  <p>PageTurn records which book a student opened in each session, one letter per book: <code>"ABCBDAE"</code>. A "focus streak" is a run of consecutive sessions with <b>no book repeated</b>. Find the longest one. This is the classic <b>longest substring without repeating characters</b>.</p>
+  <p><b>Brute force.</b> Try every start; extend to the right with a fresh <code>Set</code> until you hit a repeat.</p>
+  <pre><code class="lang-js">function longestUniqueBrute(sessions) {
+  let best = 0;
+  for (let start = 0; start &lt; sessions.length; start++) {
+    const seen = new Set();
+    for (let end = start; end &lt; sessions.length; end++) {
+      if (seen.has(sessions[end])) break;
+      seen.add(sessions[end]);
+      best = Math.max(best, end - start + 1);
+    }
+  }
+  return best;
+}</code></pre>
+  <p><b>O(n²)</b> in general (O(n · alphabet size) when the alphabet is small). The repeated work: when the run starting at <code>A</code> hits a repeat, the next start throws away its <code>Set</code> and re-checks almost all the same characters it just checked.</p>
+  <p><b>With a variable window.</b> Keep a <code>Set</code> of the books inside the window. Expand right. If the new book is already inside, shrink from the left until it isn't. Every window you record is repeat-free, and you never restart.</p>
+  <pre><code class="lang-js">function longestUnique(sessions) {
+  const inWindow = new Set();
+  let left = 0;
+  let best = 0;
+  for (let right = 0; right &lt; sessions.length; right++) {
+    const book = sessions[right];
+    while (inWindow.has(book)) {          // SHRINK until the repeat is gone
+      inWindow.delete(sessions[left]);
+      left++;
+    }
+    inWindow.add(book);                   // EXPAND
+    best = Math.max(best, right - left + 1); // RECORD
+  }
+  return best;
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: sessions = "ABCBDAE"</b></p>
+    <table class="tbl">
+      <thead><tr><th>right</th><th>book</th><th>shrink?</th><th>left</th><th>window</th><th>best</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>A</td><td>no</td><td>0</td><td><code>A</code></td><td>1</td></tr>
+        <tr><td>1</td><td>B</td><td>no</td><td>0</td><td><code>AB</code></td><td>2</td></tr>
+        <tr><td>2</td><td>C</td><td>no</td><td>0</td><td><code>ABC</code></td><td>3</td></tr>
+        <tr><td>3</td><td>B</td><td>B is inside: remove A (left=1), remove B (left=2)</td><td>2</td><td><code>CB</code></td><td>3</td></tr>
+        <tr><td>4</td><td>D</td><td>no</td><td>2</td><td><code>CBD</code></td><td>3</td></tr>
+        <tr><td>5</td><td>A</td><td>no (A left at step 3)</td><td>2</td><td><code>CBDA</code></td><td>4</td></tr>
+        <tr><td>6</td><td>E</td><td>no</td><td>2</td><td><code>CBDAE</code></td><td>5</td></tr>
+      </tbody>
+    </table>
+    <p><span class="yes">Answer: 5</span> (<code>CBDAE</code>). Each letter was added once and removed at most once: O(n) time, O(k) space where k is the number of distinct books (at most the alphabet size).</p>
+  </div>
+  <p>A small upgrade: store each book's <b>last index</b> in a <code>Map</code> instead of a <code>Set</code>, and when you see a repeat, jump <code>left</code> straight to <code>lastIndex + 1</code> (but never backward: <code>left = Math.max(left, lastIndex + 1)</code>). Same O(n), fewer steps. The <code>Set</code> version is easier to get right under pressure.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"The answer is a contiguous substring and I want the longest one that follows a rule, so I'll use a sliding window. I expand the right edge one character at a time, keep a set of what's inside, and shrink from the left while the rule is broken. Each character enters and leaves the window at most once, so it's O(n) time, and the set is O(k) space for k distinct characters."</p></div>
+
+  <h2>7. Worked problem: shortest stretch that reaches a goal</h2>
+  <p>PageTurn gives a "sprint" badge for the <b>fewest consecutive days</b> whose minutes add up to at least a goal. Maya's log is <code>[10, 20, 5, 40, 15, 30]</code> and the goal is <b>55</b> minutes. This is the classic <b>minimum size subarray sum</b>.</p>
+  <p><b>Brute force:</b> for every start, add days until the total reaches 55, and keep the shortest. <b>O(n²)</b>. The repeated work: each start re-adds days the previous start already summed.</p>
+  <p><b>With a variable window</b> ("shortest" flavor): expand right; <i>while</i> the window's sum is at least the goal, record its length and drop the leftmost day to see if a shorter window still works.</p>
+  <pre><code class="lang-js">function shortestStretch(minutes, goal) {
+  let left = 0;
+  let windowSum = 0;
+  let best = Infinity;
+  for (let right = 0; right &lt; minutes.length; right++) {
+    windowSum += minutes[right];                 // EXPAND
+    while (windowSum &gt;= goal) {                  // window meets the goal
+      best = Math.min(best, right - left + 1);   // RECORD
+      windowSum -= minutes[left];                // SHRINK
+      left++;
+    }
+  }
+  return best === Infinity ? 0 : best;
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: minutes = [10, 20, 5, 40, 15, 30], goal = 55</b></p>
+    <ol>
+      <li><code>right=0..2</code>: sum grows 10 → 30 → 35. Below 55, nothing to record.</li>
+      <li><code>right=3</code> (+40): sum 75 ≥ 55 → record length 4 (days 0–3). Drop 10 → 65 ≥ 55 → record length 3 (days 1–3). Drop 20 → 45. Stop. <code>left=2</code>.</li>
+      <li><code>right=4</code> (+15): sum 60 ≥ 55 → record 3 (days 2–4). Drop 5 → 55 ≥ 55 → <span class="yes">record 2 (days 3–4: 40 + 15)</span>. Drop 40 → 15. Stop. <code>left=4</code>.</li>
+      <li><code>right=5</code> (+30): sum 45. Below 55.</li>
+      <li>Answer: <b>2 days</b>. 6 additions and 4 removals in total.</li>
+    </ol>
+  </div>
+  <p><b>O(n) time, O(1) space.</b> What removed the repeated work: the running sum carries over from window to window instead of being rebuilt from each start.</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Using a variable window on a sum problem <b>with negative numbers</b>. The shrink step assumes "dropping the left element makes the sum smaller" and "adding on the right makes it bigger". With negatives that is false: in <code>[5, -10, 6]</code> with goal 6, dropping 5 and −10 would make the sum <i>bigger</i>, so the window logic skips valid answers. For "subarray sum equals k" or any sum problem with negatives, use prefix sums with a hash map instead (the <code>dsa-prefix</code> lesson). Check the constraints: "positive integers" is what makes the window safe.</p></div>
+
+  <h2>8. The boss version: minimum window substring</h2>
+  <p>"Given a string and a set of required letters, find the shortest substring that contains all of them" is the hardest common window problem. It uses the exact same "shortest" loop. Only the state is richer: a <code>Map</code> of how many of each required letter you still need, plus a counter of how many required letters are fully covered. Expand right and update the counts; while every required letter is covered, record and shrink left. If you can write section 7 from memory, this is the same skeleton with a <code>Map</code> instead of a sum.</p>
+
+  <h2>9. Common mistakes</h2>
+  <ul>
+    <li><b><code>if</code> instead of <code>while</code> when shrinking.</b> Removing one element may not be enough (in the trace above, step 3 needed two removals). Use <code>while</code>.</li>
+    <li><b>Forgetting to update the state when shrinking.</b> Moving <code>left++</code> without removing <code>items[left]</code> from the set or sum leaves "ghost" elements in the window.</li>
+    <li><b>Map counts that hit zero.</b> If you track counts in a <code>Map</code>, delete the key when its count reaches 0, or <code>map.size</code> will still count it as "in the window".</li>
+    <li><b>Off-by-one length.</b> The window <code>left..right</code> (both inclusive) has <code>right - left + 1</code> elements, not <code>right - left</code>.</li>
+    <li><b>Recording at the wrong moment.</b> "Longest": record <i>after</i> shrinking (the window is valid). "Shortest": record <i>inside</i> the shrink loop (before you break the goal).</li>
+    <li><b>Not checking for contiguity.</b> If the problem says "subsequence" or lets you pick any elements, a window is the wrong tool.</li>
+  </ul>
+
+  <h2>10. Labs</h2>
+  <p>One fixed window and two variable windows. Starters are empty functions.</p>
+  <div data-lab="dsa-max-sum-subarray-k"></div>
+  <div data-lab="dsa-longest-unique-substring"></div>
+  <div data-lab="dsa-min-subarray-len"></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"Given daily step counts, return the highest average over any 7 consecutive days. Which approach fits best?","o":["Sort the array and take the top 7","Fixed-size sliding window with a running sum","Two pointers from both ends","A hash map of averages"],"a":1,"why":"Consecutive + fixed size k = fixed window. Keep a running sum, add the entering day, subtract the leaving day: O(n). Sorting breaks the consecutive requirement."},
+    {"q":"Find the length of the longest substring that contains at most 2 distinct characters. Which approach fits best?","o":["Variable sliding window with a Map of character counts","Binary search on the length","Check every substring with a Set","Stack"],"a":0,"why":"Longest contiguous substring such that a rule holds = variable window. Expand right, and while the Map has more than 2 keys, shrink left (deleting keys whose count hits 0)."},
+    {"q":"Count the subarrays whose sum equals k. The array can contain negative numbers. Which approach fits?","o":["Variable sliding window","Fixed sliding window of size k","Prefix sums with a hash map","Two pointers on the sorted array"],"a":2,"why":"With negatives, adding an element can shrink the sum, so the window has no safe rule for when to shrink. Prefix sums plus a hash map of seen prefix sums handle this in O(n)."},
+    {"q":"Why is the expand/shrink loop O(n) even though it has a while loop inside a for loop?","o":["Because the while loop runs at most once per step","Because left and right only move forward, so each element is added once and removed at most once across the whole run","Because JavaScript optimizes nested loops","It is not O(n); it is O(n²)"],"a":1,"why":"The inner loop shares one budget: left can move at most n times in total. So total work is at most 2n updates, which is O(n)."},
+    {"q":"Return the length of the longest subsequence (not necessarily contiguous) of increasing numbers. Is sliding window a good fit?","o":["Yes, a variable window","Yes, a fixed window","No: subsequence means elements can be skipped, so it is not a window","Yes, with two pointers from both ends"],"a":2,"why":"Windows only describe contiguous stretches. Subsequence problems usually need dynamic programming or binary search tricks."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Trigger: a <b>contiguous</b> subarray or substring ("consecutive", "in a row") that is <b>of size k</b>, or the <b>longest/shortest</b> one that follows a rule.</li>
+    <li>Fixed window: add the entering element, subtract the leaving one. O(n) instead of O(n · k).</li>
+    <li>Variable window: <b>expand right every step, shrink left while needed, record</b>. "Longest" records after shrinking; "shortest" records inside the shrink loop.</li>
+    <li>It is O(n) because each element enters once and leaves at most once. State is a sum, a <code>Set</code> or a <code>Map</code> of counts.</li>
+    <li>Sums with <b>negative numbers</b> break the shrink logic: use prefix sums + a hash map instead.</li>
+  </ul>
+</template>

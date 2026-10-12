@@ -1,0 +1,220 @@
+<template id="tpl-sd-booking" data-title="Case: Ticket booking" data-part="Part 4 · System design" data-order="200">
+  <h1>Case study: Ticket and seat booking</h1>
+  <p class="lede">Booking is where correctness beats everything: selling seat 14C twice is a real-world fight at the venue door. And the traffic is cruel: two million fans arrive at 10:00:00 for 50,000 seats. After this lesson you can prevent double booking with a single conditional update, design holds that expire, run payment as a safe multi-step flow with idempotency keys, and protect the system from on-sale stampedes with a waiting room.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: a ticketing site. A stadium tour goes on sale Friday at 10:00am: 50,000 seats, 2 million people waiting. Luis picks two seats, 14C and 14D, and has 10 minutes to pay.</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>Browse events and see a seat map with availability.</li>
+    <li>Select specific seats (or "best available") and hold them for a limited time.</li>
+    <li>Pay; on success, tickets are issued; on failure or timeout, seats are released.</li>
+    <li>Per-customer limits (e.g. max 6 tickets per event); cancellations and refunds.</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li><b>Never sell a seat twice.</b> Strong consistency for seat state; this is where we spend it.</li>
+    <li>Never charge someone without giving them seats (or automatically refund).</li>
+    <li>Survive on-sale spikes of 100× normal traffic; be fair, not first-come-by-milliseconds-to-bots.</li>
+    <li>The seat map can be a second or two stale; the hold decision cannot.</li>
+  </ul>
+  <p><b>Out of scope:</b> event creation tools, resale marketplace, venue scanning at the gate.</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Normal days.</b> 1 million tickets/day across thousands of events ≈ 12 tickets/second. A single well-run SQL database handles this easily.</li>
+      <li><b>On-sale reads.</b> 2 million fans refreshing the seat map every ~3 seconds = 2,000,000 / 3 ≈ <b>670,000 requests/second</b> for one event.</li>
+      <li><b>On-sale writes.</b> If everyone tries to hold seats ~3 times in the first 10 minutes: 6 M attempts / 600 s = <b>10,000 hold attempts/second</b>, all aimed at the same 50,000 rows, mostly at the same best seats. That's lock contention, not raw throughput, and most attempts fail.</li>
+      <li><b>Outcome math.</b> 50,000 seats at ~2 per order ≈ 25,000 successful buyers. 1,975,000 of the 2 million will not get tickets no matter what we build. The design goal is a fast, fair "no", not a crash.</li>
+      <li><b>Admission rate.</b> If checkout takes ~5 minutes and the system comfortably supports ~5,000 people checking out at once, admit ~1,000 people/minute from a waiting room. 25,000 buyers / 1,000 per minute ≈ 25–40 minutes to sell out, smoothly.</li>
+    </ol>
+  </div>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-http">GET  /v1/events/e_77/seatmap                   -- cached; may be ~1 s stale
+POST /v1/events/e_77/holds
+Idempotency-Key: 3c1a...
+{ "seats": ["14C", "14D"] }                     (or { "best_available": { "section": "112", "count": 2 } })
+201 { "hold_id": "h_501", "seats": ["14C","14D"], "expires_at": "10:12:03" }
+409 { "error": "seats_unavailable", "unavailable": ["14D"] }
+
+POST /v1/orders
+Idempotency-Key: 9d2f...                        (same key on a double click = same order)
+{ "hold_id": "h_501" }
+201 { "order_id": "o_88", "payment": { "client_secret": "..." }, "status": "pending_payment" }
+
+POST /v1/webhooks/payments                      -- from the payment provider
+GET  /v1/orders/o_88                            -- pending_payment | confirmed | failed | refunded</code></pre>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">seats  (event_id, seat_id, section, row_label, number, price_tier,
+        status,            -- available | held | booked
+        hold_id, hold_expires_at, order_id, version,
+        PRIMARY KEY (event_id, seat_id))
+holds  (hold_id PK, event_id, user_id, expires_at, status)        -- active | converted | expired
+orders (order_id PK, user_id, hold_id UNIQUE, amount_cents, currency,
+        status,            -- pending_payment | confirmed | failed | refunded
+        idempotency_key UNIQUE, payment_intent_id, created_at)
+payment_events (provider_event_id PK, order_id, type, received_at)   -- dedupe webhooks</code></pre>
+  <p>One row per seat per event. A 50,000-seat show is 50,000 rows; thousands of events are tens of millions of rows. Partition (or shard) by <code>event_id</code>, since every operation is scoped to one event.</p>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 820 400" width="100%" role="img" aria-label="Ticket booking architecture" xmlns="http://www.w3.org/2000/svg" style="max-width:820px;font-family:inherit">
+
+<rect x="20" y="170" width="100" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="70.0" y="203.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Buyer</text>
+<rect x="150" y="170" width="140" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="220.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Waiting room</text>
+<text x="220.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">admits N per minute</text>
+<rect x="330" y="170" width="150" height="56" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="405.0" y="195.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Booking API</text>
+<text x="405.0" y="210.0" text-anchor="middle" font-size="12" fill="var(--muted)">holds, orders</text>
+<rect x="330" y="30" width="150" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="405.0" y="55.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Seat map cache</text>
+<text x="405.0" y="70.0" text-anchor="middle" font-size="12" fill="var(--muted)">Redis, ~1 s stale</text>
+<path d="M540,168 a80.0,8 0 0,0 160,0 a80.0,8 0 0,0 -160,0 v60 a80.0,8 0 0,0 160,0 v-60" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="620.0" y="200.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Inventory DB</text>
+<text x="620.0" y="215.0" text-anchor="middle" font-size="12" fill="var(--muted)">seats, holds, orders</text>
+<rect x="540" y="30" width="160" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="620.0" y="52.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Expiry sweeper</text>
+<text x="620.0" y="67.0" text-anchor="middle" font-size="12" fill="var(--muted)">frees expired holds</text>
+<rect x="330" y="315" width="150" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="405.0" y="340.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Payment service</text>
+<text x="405.0" y="355.0" text-anchor="middle" font-size="12" fill="var(--muted)">idempotency keys</text>
+<rect x="600" y="315" width="160" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25" stroke-dasharray="5 4"/>
+<text x="680.0" y="340.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Payment provider</text>
+<text x="680.0" y="355.0" text-anchor="middle" font-size="12" fill="var(--muted)">card networks</text>
+<path d="M120.0,198.0 L147.0,198.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M147.0,198.0 L138.0,202.5 L138.0,193.5 Z" fill="currentColor"/>
+<path d="M290.0,198.0 L327.0,198.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M327.0,198.0 L318.0,202.5 L318.0,193.5 Z" fill="currentColor"/>
+<path d="M405.0,170.0 L405.0,89.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M405.0,89.0 L409.5,98.0 L400.5,98.0 Z" fill="currentColor"/>
+<path d="M448.0,86.0 L559.1,158.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M559.1,158.4 L549.1,157.2 L554.0,149.7 Z" fill="currentColor"/>
+<path d="M480.0,198.0 L537.0,198.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M537.0,198.0 L528.0,202.5 L528.0,193.5 Z" fill="currentColor"/>
+<path d="M620.0,80.0 L620.0,157.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M620.0,157.0 L615.5,148.0 L624.5,148.0 Z" fill="currentColor"/>
+<path d="M405.0,226.0 L405.0,312.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M405.0,312.0 L400.5,303.0 L409.5,303.0 Z" fill="currentColor"/>
+<path d="M483.0,343.0 L597.0,343.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M597.0,343.0 L588.0,347.5 L588.0,338.5 Z" fill="currentColor"/>
+<path d="M483.0,343.0 L492.0,338.5 L492.0,347.5 Z" fill="currentColor"/>
+<path d="M446.5,315.0 L561.2,237.7" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M561.2,237.7 L556.2,246.4 L551.2,239.0 Z" fill="currentColor"/>
+<text x="308.5" y="190.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">token</text>
+<text x="439.0" y="133.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">seat map</text>
+<text x="513.6" y="116.2" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">refresh</text>
+<text x="508.5" y="222.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">conditional</text>
+<text x="508.5" y="236.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">UPDATE</text>
+<text x="443.0" y="273.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">pay(order)</text>
+<text x="540.0" y="335.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">charge / webhook</text>
+<text x="531.8" y="288.3" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">confirm</text>
+</svg>
+    <figcaption>During an on-sale, buyers pass through a waiting room that admits a steady rate. Seat maps come from a cache. Holds and bookings are conditional updates on the inventory database, the single source of truth. Payment runs through a payment service with idempotency keys; the provider's webhook confirms the order. A sweeper frees expired holds.</figcaption>
+  </figure>
+
+  <h2>6. Deep dive: never selling a seat twice</h2>
+  <p>The tempting version: <code>SELECT status FROM seats WHERE seat_id = '14C'</code>, see "available", then <code>UPDATE ... SET status = 'held'</code>. Between those two statements, someone else does the same. Both think they won.</p>
+  <p>Put the check and the change in <b>one atomic statement</b>, a conditional update:</p>
+  <pre><code class="lang-sql">BEGIN;
+UPDATE seats
+   SET status = 'held', hold_id = 'h_501',
+       hold_expires_at = now() + interval '10 minutes', version = version + 1
+ WHERE event_id = 'e_77'
+   AND seat_id IN ('14C', '14D')
+   AND (status = 'available'
+        OR (status = 'held' AND hold_expires_at &lt; now()));   -- expired holds count as free
+-- application: if rows updated != 2 then ROLLBACK and return 409, else:
+INSERT INTO holds (hold_id, event_id, user_id, expires_at, status)
+VALUES ('h_501', 'e_77', 'u_luis', now() + interval '10 minutes', 'active');
+COMMIT;</code></pre>
+  <div class="trace">
+    <ol>
+      <li>10:00:04.100 Luis's transaction updates 14C and 14D. The database row-locks both.</li>
+      <li>10:00:04.102 Mia's transaction tries to update 14D. It waits on the row lock.</li>
+      <li>10:00:04.110 Luis commits. Mia's statement re-checks its <code>WHERE</code> against the new row: status is <code>held</code> and the hold hasn't expired, so it matches 0 rows for 14D.</li>
+      <li>Mia's app sees "1 row updated, wanted 2", rolls back (releasing her lock on 14E), and returns 409 with "14D was just taken". Her UI refreshes the map and suggests 14E–14F.</li>
+    </ol>
+  </div>
+  <p>All-or-nothing matters: Luis wanted two seats together, so the transaction either holds both or neither.</p>
+  <p><b>"Best available"</b> is worse for contention, because everyone wants the same front-row seats. Use <code>SELECT ... FOR UPDATE SKIP LOCKED</code>: each transaction locks the best seats that no one else is currently locking and skips the rest, so 1,000 concurrent requests spread across seats instead of queuing on the same row.</p>
+  <p><b>Expiry without a timer.</b> Notice the <code>OR (status = 'held' AND hold_expires_at &lt; now())</code>: an expired hold is treated as free the instant it expires, even if no job has cleaned it up. The sweeper just tidies up (sets status back to available, marks holds expired) so the seat map is accurate.</p>
+
+  <h2>7. Deep dive: payments without charging for nothing</h2>
+  <p>Booking spans two systems you can't put in one database transaction: your inventory DB and the payment provider. So it's a <b>saga</b>: a sequence of local steps, each with a compensating action if a later step fails.</p>
+  <table class="tbl">
+    <thead><tr><th>Step</th><th>Action</th><th>If it fails later, compensate by</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Hold seats (conditional update)</td><td>Release the hold (or let it expire)</td></tr>
+      <tr><td>2</td><td>Create order <code>pending_payment</code> (unique idempotency key)</td><td>Mark order failed</td></tr>
+      <tr><td>3</td><td>Create payment with the provider, idempotency key = <code>order_id</code></td><td>Refund</td></tr>
+      <tr><td>4</td><td>Webhook "payment succeeded" → in one DB transaction: check the hold is still Luis's, set seats <code>booked</code>, order <code>confirmed</code></td><td>(final step)</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>Double click on Pay.</b> Both requests carry the same idempotency key, so the second returns the first's order. The provider also dedupes on our key, so the card is charged once.</li>
+    <li><b>Duplicate webhooks.</b> Providers deliver webhooks at least once. Insert <code>provider_event_id</code> into <code>payment_events</code> first; if it's already there, return 200 and do nothing.</li>
+    <li><b>Payment succeeds after the hold expired.</b> The nasty race. Prevent it by extending the hold (say +5 minutes) when payment starts and having the sweeper skip holds with a payment in progress. If it still happens and the seats were resold, the confirm step fails its check, and we automatically refund and tell Luis immediately. Name this case before the interviewer does.</li>
+    <li><b>Webhook never arrives.</b> A reconciliation job polls the provider for orders stuck in <code>pending_payment</code> for more than a few minutes.</li>
+  </ul>
+
+  <h2>8. Deep dive: surviving the on-sale</h2>
+  <ul>
+    <li><b>Waiting room.</b> Before 10:00, everyone who arrives gets a random position (arriving at 9:45 vs 9:59 doesn't matter, which beats bots that refresh fastest). From 10:00, a queue service admits ~1,000 users/minute and gives each a signed, short-lived admission token that the booking API requires. The waiting page is static and CDN-served, with a light polling endpoint; it costs almost nothing per person.</li>
+    <li><b>Seat map from cache.</b> Rebuild the per-event availability (a compact bitmap or per-section counts) every ~1 s into Redis and serve it via CDN with a 1–2 s TTL. 670,000 requests/second become a handful of origin requests per second. The map may be a second stale; the conditional update is the truth.</li>
+    <li><b>Isolate the hot event.</b> Its seats live in their own partition (or even dedicated database) so a mega on-sale doesn't slow every other event's checkout.</li>
+    <li><b>Limits and bots.</b> Max tickets per account and per payment card, enforced in the order step; CAPTCHA or pre-registration ("verified fan") for the biggest sales.</li>
+  </ul>
+
+  <h2>9. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Holds in the SQL DB (conditional update)</td><td>One source of truth, transactional, simple to reason about</td><td>Row-lock contention on hot seats</td><td>Default; with a waiting room the write rate is manageable</td></tr>
+      <tr><td>Holds in Redis (<code>SET NX</code> with expiry)</td><td>Very fast, automatic expiry</td><td>Two sources of truth; a failover can lose holds, so final booking must still be checked in the DB</td><td>Extreme hold rates; keep the DB as the final arbiter</td></tr>
+      <tr><td>Optimistic (version check, retry)</td><td>No waiting on locks</td><td>Many retries under heavy contention</td><td>Low contention (normal days)</td></tr>
+      <tr><td>Pessimistic + SKIP LOCKED</td><td>Contended requests spread out instead of piling up</td><td>Slightly less "best" seat for some users</td><td>Best-available under heavy load</td></tr>
+      <tr><td>Waiting room</td><td>Predictable load, fairness, a calm "you're in line" UX</td><td>Users wait; another system to run</td><td>Any event where demand ≫ supply</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Follow-up questions and strong answers</h2>
+  <h3>"Why not just use a distributed lock per seat?"</h3>
+  <p>A separate lock service plus a database is two systems to keep in sync, and locks can expire while a slow process still thinks it holds them. A conditional update in the database that owns the data is atomic by construction. Use the database's guarantees before adding a lock service.</p>
+  <h3>"How long should a hold last?"</h3>
+  <p>Product trade-off: long enough to type card details and pass bank verification (5–10 minutes), short enough that abandoned holds don't make a sold-out show look sold out. Show a countdown; extend once when payment starts.</p>
+  <h3>"How do you show availability to 2 million people accurately?"</h3>
+  <p>You don't, and you say so. You show a map that's about a second old, served from cache, and you make the hold API the only place truth is decided, with a friendly 409 and instant alternatives.</p>
+  <h3>"What about general admission (no seat numbers)?"</h3>
+  <p>A counter instead of rows: <code>UPDATE inventory SET held = held + 2 WHERE event_id = 'e_77' AND sold + held + 2 &lt;= capacity</code>. One hot row is a contention point, so split it into several sub-counters (buckets of 1,000 tickets) and pick one at random.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"The one thing this system must never do is sell a seat twice, so seat state lives in one transactional database and a hold is a single conditional UPDATE that only succeeds if the seat is available or its hold has expired; if fewer rows change than requested, I roll back and return 409. Payment is a saga with idempotency keys at every step and webhook dedupe, with a refund path for the payment-after-expiry race. For on-sales, a waiting room admits about 1,000 people a minute and the seat map is a cached, second-stale view, because 1.97 million of the 2 million fans won't get tickets and they deserve a fast, fair answer."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>"Check if the seat is free, then book it" as two separate steps, or relying on the cached seat map to decide. Both let two buyers win the same seat. The check and the write must be one atomic operation on the source of truth; everything else (caches, maps, UI state) is just a hint.</p></div>
+
+  <h2>11. Your turn</h2>
+  <p>Design booking for <b>1:1 tutoring sessions</b>: 5,000 tutors publish 30-minute slots; students book them; neither a tutor nor a student can be double-booked; families in different time zones; paid sessions.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Two constraints, two unique indexes.</b> <code>bookings(tutor_id, starts_at)</code> UNIQUE prevents tutor double-booking; <code>bookings(student_id, starts_at)</code> UNIQUE prevents a student booking two sessions at once (if slots are always aligned to :00/:30; otherwise use a range-overlap constraint, e.g. a Postgres exclusion constraint on a time range). The insert either succeeds or fails atomically; no read-then-write.</p>
+    <p><b>Times:</b> store <code>starts_at</code> in UTC; tutors publish availability in their own time zone; the UI converts. Watch daylight-saving changes for recurring availability (generate concrete slots from rules, in the tutor's zone).</p>
+    <p><b>Payment:</b> short hold (5 min) as a <code>pending</code> booking row that counts toward the unique constraints, then confirm on payment webhook; expired pending rows are deleted by a sweeper and ignored by queries after expiry.</p>
+    <p><b>Scale:</b> tiny compared with concerts: maybe thousands of bookings/hour, no waiting room needed. Contention is per tutor and rare.</p>
+    <p><b>Extras:</b> cancellation policy (free until 24 h before), reminders via the notification system, calendar sync to Google/Outlook asynchronously, and an audit trail for disputes.</p>
+  </details>
+
+  <div data-quiz='[{"q":"Why is SELECT-then-UPDATE unsafe for holding a seat?","o":["SELECT is slow","Another buyer can change the seat between the read and the write, so both believe they won","UPDATE cannot change status columns","It uses too much memory"],"a":1,"why":"Check and change must be one atomic operation, such as a conditional UPDATE."},{"q":"Luis requests seats 14C and 14D; the conditional UPDATE changes only 1 row. What should happen?","o":["Keep the one seat and charge him","Roll back the transaction and return 409 with alternatives","Retry forever","Mark both seats booked anyway"],"a":1,"why":"All-or-nothing: he asked for two seats together."},{"q":"How does the design treat a hold that expired but has not been cleaned up yet?","o":["The seat stays unavailable until the sweeper runs","The conditional UPDATE treats it as free because hold_expires_at is in the past","It is deleted by the CDN","It becomes booked"],"a":1,"why":"Expiry is part of the WHERE clause, so correctness does not depend on the sweeper timing."},{"q":"A buyer double clicks Pay. What prevents a double charge?","o":["The CDN","The same idempotency key on both requests, used for the order and passed to the payment provider","A longer hold","The seat map cache"],"a":1,"why":"Idempotency keys turn a retry into a lookup of the original result."},{"q":"What is the main job of the waiting room during an on-sale?","o":["Sell more tickets than seats","Admit users at a steady rate the booking system can handle, and randomize early arrivals for fairness","Replace the database","Cache payment results"],"a":1,"why":"It converts a 10:00:00 stampede into a predictable flow."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Spend strong consistency where it matters: seat state lives in one transactional source of truth.</li>
+    <li>Holds are one conditional UPDATE (all seats or none); expired holds count as free in the WHERE clause.</li>
+    <li>Payment is a saga with idempotency keys, webhook dedupe, reconciliation, and an automatic refund path.</li>
+    <li>On-sales: waiting room with admission tokens, cached second-stale seat maps, isolated hot events, per-account limits.</li>
+    <li>Caches and maps are hints; the hold API is the only place a seat is decided.</li>
+  </ul>
+</template>

@@ -1,0 +1,175 @@
+<template id="tpl-scaling" data-title="How systems grow" data-part="Part 2 · Scaling building blocks" data-order="50">
+  <h1>How systems grow</h1>
+  <p class="lede">By the end of this lesson you will be able to take a product (a reading app for 200,000 students), estimate its traffic, storage and bandwidth on a whiteboard in five minutes, and explain how it grows from one server to a fleet: stateless app servers behind a load balancer, a database that becomes the next bottleneck, and the read and write paths that tell you where to spend effort.</p>
+
+  <h2>1. The running example: PageTurn at 8:05am</h2>
+  <p>PageTurn is a reading app for schools. Students read leveled books, the app saves their place, and teachers see progress. It has <b>200,000 students</b> across a few hundred schools in one time zone.</p>
+  <p>Version 1 is one machine. A Node.js server and a Postgres database run on the same virtual machine (VM). It works fine all summer.</p>
+  <p>Then school starts. The first class begins at 8:00. At <b>8:05am, 40,000 students open the app in the same minute</b>. Each one logs in, loads the home screen, fetches their assignments, and opens a book. The server&#39;s CPU hits 100%, requests queue up, pages take 20 seconds, and teachers start emailing support.</p>
+  <p>Nothing is &quot;broken&quot;. The code is correct. The system just has one of everything, and one of everything has a ceiling. This lesson is about raising the ceiling, in the order you would actually do it.</p>
+
+  <h2>2. Two ways to get bigger: up or out</h2>
+  <p><b>Vertical scaling</b> (scaling up) means a bigger machine: more CPU cores, more RAM, faster disks. You change one setting in your cloud console and reboot.</p>
+  <p><b>Horizontal scaling</b> (scaling out) means more machines doing the same job, with something in front spreading the work across them.</p>
+  <table class="tbl">
+    <thead><tr><th></th><th>Vertical (bigger box)</th><th>Horizontal (more boxes)</th></tr></thead>
+    <tbody>
+      <tr><td>Effort</td><td>Almost none. No code changes.</td><td>App must be stateless; needs a load balancer.</td></tr>
+      <tr><td>Ceiling</td><td>The largest machine you can rent (very large, but finite and pricey at the top end).</td><td>Effectively no ceiling for the app tier.</td></tr>
+      <tr><td>Failure</td><td>One box: if it dies, you&#39;re down.</td><td>Lose one of 10 boxes, lose 10% of capacity.</td></tr>
+      <tr><td>Cost curve</td><td>Price grows faster than capacity near the top.</td><td>Roughly linear: twice the boxes, twice the cost.</td></tr>
+      <tr><td>Deploys</td><td>Restart = downtime.</td><td>Rolling deploys, one box at a time.</td></tr>
+    </tbody>
+  </table>
+  <p>Vertical gives you speed of change at the cost of a hard ceiling and a single point of failure; choose it first, and for the database for as long as it lasts. Horizontal gives you headroom and redundancy at the cost of a design constraint (statelessness); choose it for the app tier as soon as you have real traffic or need to stay up during a deploy.</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Treating vertical scaling as embarrassing. A single modern Postgres server with plenty of RAM and fast SSDs can handle thousands of simple queries per second. Many successful products run their primary database vertically scaled for years. Scale the database out (replicas, shards) when numbers force you, not because it sounds impressive in a design review.</p></div>
+
+  <h2>3. Stateless app servers</h2>
+  <p>To run PageTurn on five app servers instead of one, any request must be able to go to any server. That only works if the servers are <b>stateless</b>: they keep nothing between requests that another server would need.</p>
+  <p>Here is what usually hides state on a single server:</p>
+  <ul>
+    <li><b>Sessions in memory.</b> Student logs in on server A, which stores the session in a JavaScript object. Their next request lands on server B, which has never heard of them. They get logged out at random.</li>
+    <li><b>Files on local disk.</b> A teacher uploads a class roster CSV to server A&#39;s disk. The import job runs on server C and can&#39;t find it.</li>
+    <li><b>In-process caches and counters.</b> Each server has its own copy, so they disagree. A &quot;5 login attempts&quot; limit becomes 25 with five servers.</li>
+    <li><b>Scheduled jobs.</b> A <code>setInterval</code> that emails weekly reports runs on every server, so teachers get five emails.</li>
+  </ul>
+  <p>The fix is the same each time: move the state to a shared service. Sessions go into a signed cookie or a shared store like Redis. Files go to object storage (S3 or similar). Shared counters go to Redis. Scheduled jobs go to one scheduler that puts work on a queue.</p>
+  <p>Once the app tier is stateless, servers become interchangeable &quot;cattle&quot;: you can add, remove or replace any of them, and an autoscaler can do it for you.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;I&#39;ll keep the API servers stateless: sessions in a signed cookie or Redis, uploads straight to object storage, and no in-memory state that matters. That way I can scale the app tier horizontally behind a load balancer and lose any one server without users noticing.&quot;</p></div>
+
+  <h2>4. The load balancer</h2>
+  <p>A <b>load balancer</b> (LB) is the single address clients talk to. It forwards each request to one of the healthy app servers behind it. Cloud examples: AWS Application Load Balancer, Google Cloud Load Balancing; self-run: NGINX, HAProxy, Envoy.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 300" width="100%" role="img" aria-label="Clients to load balancer to three stateless app servers, which share a database, Redis and object storage" style="font-family:inherit">
+      <defs><marker id="scal-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="10" y="120" width="110" height="56" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="65" y="144" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">40,000</text>
+      <text x="65" y="162" text-anchor="middle" style="fill:currentColor;font-size:12px">students</text>
+      <rect x="170" y="112" width="120" height="72" rx="8" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="230" y="140" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Load balancer</text>
+      <text x="230" y="158" text-anchor="middle" style="fill:var(--muted);font-size:12px">TLS, health checks</text>
+      <text x="230" y="174" text-anchor="middle" style="fill:var(--muted);font-size:12px">least connections</text>
+      <line x1="120" y1="148" x2="166" y2="148" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#scal-arr)"/>
+      <g>
+        <rect x="350" y="30" width="120" height="48" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="410" y="59" text-anchor="middle" style="fill:currentColor;font-size:13px">app-1 (stateless)</text>
+        <rect x="350" y="124" width="120" height="48" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="410" y="153" text-anchor="middle" style="fill:currentColor;font-size:13px">app-2 (stateless)</text>
+        <rect x="350" y="218" width="120" height="48" rx="8" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:5 4"/>
+        <text x="410" y="247" text-anchor="middle" style="fill:var(--muted);font-size:13px">app-3 (unhealthy)</text>
+      </g>
+      <line x1="290" y1="136" x2="346" y2="58" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#scal-arr)"/>
+      <line x1="290" y1="148" x2="346" y2="148" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#scal-arr)"/>
+      <line x1="290" y1="160" x2="346" y2="238" style="stroke:var(--line);stroke-width:1.5;stroke-dasharray:4 4"/>
+      <text x="312" y="222" style="fill:var(--muted);font-size:12px">skipped</text>
+      <rect x="540" y="30" width="130" height="48" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="605" y="52" text-anchor="middle" style="fill:currentColor;font-size:13px">Redis</text>
+      <text x="605" y="68" text-anchor="middle" style="fill:var(--muted);font-size:12px">sessions, counters</text>
+      <rect x="540" y="124" width="130" height="48" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="605" y="146" text-anchor="middle" style="fill:currentColor;font-size:13px">Postgres</text>
+      <text x="605" y="162" text-anchor="middle" style="fill:var(--muted);font-size:12px">the source of truth</text>
+      <rect x="540" y="218" width="130" height="48" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="605" y="240" text-anchor="middle" style="fill:currentColor;font-size:13px">Object storage</text>
+      <text x="605" y="256" text-anchor="middle" style="fill:var(--muted);font-size:12px">books, uploads</text>
+      <line x1="470" y1="54" x2="536" y2="54" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#scal-arr)"/>
+      <line x1="470" y1="148" x2="536" y2="148" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#scal-arr)"/>
+      <line x1="470" y1="66" x2="536" y2="136" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#scal-arr)"/>
+      <line x1="470" y1="160" x2="536" y2="236" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#scal-arr)"/>
+    </svg>
+    <figcaption>Scaled-out PageTurn: the load balancer spreads requests over interchangeable app servers and skips one that fails its health check. All state lives in shared services on the right.</figcaption>
+  </figure>
+  <p>What a load balancer does for you:</p>
+  <ul>
+    <li><b>Spreads load.</b> <i>Round robin</i> sends requests to servers in turn. <i>Least connections</i> sends each request to the server with the fewest in flight, which is better when some requests are slow (a big book download next to a tiny progress save).</li>
+    <li><b>Health checks.</b> Every few seconds it calls something like <code>GET /healthz</code> on each server. A server that fails a few checks in a row stops getting traffic until it recovers.</li>
+    <li><b>TLS termination.</b> It handles HTTPS encryption so app servers speak plain HTTP on the private network.</li>
+    <li><b>Zero-downtime deploys.</b> Take server 1 out of rotation, let in-flight requests finish (&quot;connection draining&quot;), deploy, put it back, repeat.</li>
+  </ul>
+  <p>Two flavors you&#39;ll hear about. A <b>Layer 4</b> LB forwards TCP connections without reading them: very fast, but blind to URLs. A <b>Layer 7</b> LB reads the HTTP request, so it can route <code>/api/*</code> to the API fleet and <code>/admin/*</code> elsewhere, add headers, and retry. Most web products use Layer 7 at the edge.</p>
+  <p>&quot;Isn&#39;t the load balancer a single point of failure?&quot; Managed cloud LBs are themselves run as redundant fleets across availability zones. When you run your own, you run two with a floating IP or DNS failover.</p>
+
+  <h2>5. The read path and the write path</h2>
+  <p>Every feature has a <b>read path</b> (what happens when someone looks at data) and a <b>write path</b> (what happens when someone changes it). They scale differently, so separate them early in any design.</p>
+  <p>For PageTurn, opening a book is a read; turning a page and saving your place is a write. A typical student session does far more reads than writes: the home screen, the assignment list, the book pages, the teacher&#39;s comments. A ratio of 10 reads per write is a reasonable starting guess for this kind of app (state it as an assumption in an interview).</p>
+  <div class="trace">
+    <p><b>Trace: Maya opens &quot;Holes&quot; at 8:05:12</b></p>
+    <ol>
+      <li>Maya&#39;s tablet sends <code>GET /api/books/holes/open</code> with her session cookie. DNS gives the load balancer&#39;s address.</li>
+      <li>The LB terminates TLS and picks app-2 (fewest open connections: 41 vs 57 on app-1).</li>
+      <li>app-2 validates the session cookie (signature check, no database call needed).</li>
+      <li>app-2 reads Maya&#39;s position: <code>SELECT page FROM progress WHERE student_id = 8812 AND book_id = 311</code>. Indexed lookup, about 1 ms. Answer: page 46.</li>
+      <li>app-2 returns JSON with page 46 and a URL for the book file. The 2 MB book file itself is downloaded from a CDN (a content delivery network, covered in the caching lesson), not from app-2.</li>
+      <li>Every 20 seconds while she reads, the tablet sends <code>PUT /api/progress</code> with <code>{"bookId":311,"page":47}</code>. This is the write path: LB, any app server, one <code>UPDATE</code> on the primary database.</li>
+    </ol>
+  </div>
+  <p>Notice what scales easily and what doesn&#39;t. Steps 2–3 are pure CPU on stateless servers: add servers. Step 5 is bandwidth: push it to a CDN. Steps 4 and 6 both hit <b>one</b> database. That&#39;s where the bottleneck goes next.</p>
+  <p>The usual moves, each a later lesson:</p>
+  <ul>
+    <li><b>Reads:</b> a cache in front of the database (Caching), then read replicas: copies of the database that serve reads (Storage).</li>
+    <li><b>Writes:</b> batch or defer them through a queue (Queues), and eventually split data across databases by key (sharding, in Storage).</li>
+  </ul>
+
+  <h2>6. Back-of-envelope estimation</h2>
+  <p>Back-of-envelope estimation means rough math, out loud, to decide what size of system you need. The goal is the right order of magnitude (is it 10, 1,000 or 100,000 requests per second?), not precision. Round aggressively.</p>
+  <p>Three facts carry most estimates:</p>
+  <ul>
+    <li>A day has 86,400 seconds. Round it to <b>100,000 (10<sup>5</sup>)</b>.</li>
+    <li>So <b>1 million requests per day is about 10 per second</b> on average (precisely 11.6).</li>
+    <li><b>Peak is several times average.</b> For consumer apps 2–5x is a common guess. For a school app where everyone starts at 8:00, it can be 20x or more. Always ask: when is the peak, and how sharp is it?</li>
+  </ul>
+  <div class="trace">
+    <p><b>Trace: sizing PageTurn</b></p>
+    <ol>
+      <li><b>Users.</b> 200,000 students. Assume 60% use it on a school day: 120,000 daily active users.</li>
+      <li><b>Average QPS</b> (queries per second). Assume 50 API requests per student per day (10 on open, plus progress saves and navigation). 120,000 × 50 = 6 million per day. Over the day: 6M ÷ 100,000 ≈ <b>60 QPS</b>. Concentrated into ~7 school hours (~25,000 s): about <b>240 QPS</b>.</li>
+      <li><b>Peak QPS.</b> 40,000 students open the app in one minute, 10 requests each: 400,000 requests ÷ 60 s ≈ <b>6,700 QPS</b>. Arrivals within that minute bunch up too, so plan for ~10,000 at the worst second. That&#39;s roughly <b>30–40x the school-hours average</b>. This number, not the average, sizes the system.</li>
+      <li><b>App servers.</b> Assume one instance handles ~500 simple JSON requests per second (a rough, conservative figure; real numbers vary widely with the work per request). 10,000 ÷ 500 = 20 instances at peak, plus ~30% headroom: <b>about 26</b>. Off-peak, 2–3 are plenty.</li>
+      <li><b>Database writes.</b> During reading, each of 40,000 active students saves progress every 20 s: 40,000 ÷ 20 = <b>2,000 writes per second</b>. Tiny rows, indexed by primary key: a well-provisioned single Postgres can usually take this, but it&#39;s the number to watch.</li>
+      <li><b>Storage.</b> Reading events: 120,000 students × 30 events × ~200 bytes ≈ 720 MB per day. Over ~180 school days: <b>~130 GB per year</b>. Fits comfortably in one database. Book files: 10,000 books × 2 MB = 20 GB; with audio narration at ~30 MB each, ~300 GB. That belongs in object storage.</li>
+      <li><b>Bandwidth.</b> If all 40,000 students download a 2 MB book in that minute: 80 GB per minute ≈ 1.3 GB/s ≈ <b>10 gigabits per second</b>. No small app fleet should serve that. This is the number that tells you to use a CDN.</li>
+    </ol>
+  </div>
+  <p>Five minutes of arithmetic just produced the design: an autoscaled stateless fleet sized for ~10,000 RPS, a single primary database that can take 2,000 small writes per second, object storage for books, and a CDN for the 10 Gbps of downloads.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;Let me size this. 120K daily users times ~50 requests is 6 million a day, so about 60 QPS on average. But school traffic is spiky: 40K students in the 8:05 minute is about 7,000 QPS, so I&#39;ll design for 10K at peak. That&#39;s ~20 app servers at peak, 2,000 small writes a second on the database, and ~10 Gbps of book downloads, which says CDN.&quot;</p></div>
+
+  <h2>7. Where the bottleneck moves next</h2>
+  <p>Scaling is moving the bottleneck to a place where it costs less. After you add app servers, three new limits show up. They surprise people because they don&#39;t exist with one server.</p>
+  <p><b>Database connections.</b> Each Postgres connection costs memory on the database server, and a typical setup allows a few hundred at most. 26 app servers × a pool of 20 connections each = 520 connections, which can exceed the limit right at 8:05. The fix is a connection pooler (such as PgBouncer) between the app and the database, and smaller per-server pools.</p>
+  <p><b>Autoscaling lag.</b> An autoscaler watches CPU and adds servers when it&#39;s high. But booting a server and passing health checks takes one to several minutes. PageTurn&#39;s spike lasts about a minute. By the time new servers arrive, the damage is done. Because the spike is <i>predictable</i>, use <b>scheduled scaling</b>: scale to 26 servers at 7:50 every school day, and let normal autoscaling handle surprises.</p>
+  <p><b>Shared dependencies.</b> Every app server calls the same database, the same Redis, the same third-party login service. Twenty servers can overwhelm a dependency that one server never could. Look for anything shared on your diagram and ask what its limit is.</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Designing for the average. &quot;6 million requests a day is only 70 QPS, one server is fine&quot; is true on average and wrong at 8:05. Always find the peak and its shape (a sharp minute vs a gentle hour), because the shape decides whether autoscaling can keep up or you must pre-scale, queue, or shed load.</p></div>
+
+  <h2>8. A growth path you can narrate</h2>
+  <table class="tbl">
+    <thead><tr><th>Stage</th><th>What you add</th><th>What it buys you</th><th>What breaks next</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>One server, app + DB</td><td>Ship fast</td><td>CPU at peak; any crash is an outage</td></tr>
+      <tr><td>2</td><td>DB on its own (bigger) machine</td><td>App and DB stop fighting over CPU and RAM</td><td>App CPU at peak</td></tr>
+      <tr><td>3</td><td>LB + N stateless app servers</td><td>Horizontal app tier, rolling deploys</td><td>DB reads and connections</td></tr>
+      <tr><td>4</td><td>CDN + object storage for files</td><td>Bandwidth off your servers</td><td>Repeated DB reads</td></tr>
+      <tr><td>5</td><td>Cache (Redis) + read replicas</td><td>Reads scale</td><td>Write spikes, slow work in requests</td></tr>
+      <tr><td>6</td><td>Queues + background workers</td><td>Smooth writes, async work</td><td>Single-primary write ceiling, data size</td></tr>
+      <tr><td>7</td><td>Sharding / specialized stores</td><td>Writes and data scale out</td><td>Operational complexity</td></tr>
+    </tbody>
+  </table>
+  <p>Each stage costs complexity. A strong answer moves only as far down this table as the numbers require, and says why it stopped.</p>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"PageTurn runs 5 app servers behind a load balancer. Students report being logged out at random. What is the most likely cause?","o":["The load balancer uses round robin instead of least connections","Sessions are stored in each server&#39;s memory, so other servers don&#39;t recognize them","The database is overloaded","TLS is terminated at the load balancer"],"a":1,"why":"Requests from one student land on different servers. If the session lives in one server&#39;s memory, the others treat the student as logged out. Move sessions to a signed cookie or a shared store like Redis."},
+    {"q":"An app gets 8.6 million requests per day, evenly spread. Roughly what is the average QPS?","o":["About 10","About 100","About 1,000","About 8,600"],"a":1,"why":"8.6 million divided by 86,400 seconds is 100. The shortcut: 1 million per day is roughly 10 per second."},
+    {"q":"PageTurn&#39;s traffic spike happens every school day at 8:05 and lasts about a minute. CPU-based autoscaling still leaves students waiting. What is the best fix?","o":["Raise the autoscaler&#39;s CPU threshold","Switch to a Layer 4 load balancer","Scheduled scaling: add servers at 7:50 on school days","Add a read replica"],"a":2,"why":"New servers take minutes to boot and pass health checks, longer than the spike. Since the spike is predictable, pre-scale on a schedule and keep reactive autoscaling for surprises."},
+    {"q":"40,000 students each download a 2 MB book within one minute. Which statement is right?","o":["It is about 10 Gbps, so serve books from a CDN backed by object storage","It is about 10 Mbps, so any server can handle it","Store books in Postgres as blobs to keep data in one place","Add more app servers to serve the files"],"a":0,"why":"80 GB per minute is about 1.3 GB/s, roughly 10 gigabits per second. That is a job for a CDN in front of object storage, not your app fleet or database."},
+    {"q":"You go from 3 to 26 app servers. What new problem is most likely to appear at the database?","o":["Slower indexes","Clock drift","Replication lag on the primary","Too many open connections"],"a":3,"why":"Each app server keeps a connection pool. 26 servers with 20 connections each is 520 connections, which can exceed what the database allows. Use a pooler like PgBouncer and smaller pools."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Scale <b>vertically</b> first for simplicity (especially the database); scale the app tier <b>horizontally</b> for headroom and redundancy.</li>
+    <li>Horizontal scaling needs <b>stateless</b> app servers: sessions, files, counters and schedules move to shared services.</li>
+    <li>A <b>load balancer</b> spreads requests, health-checks servers, terminates TLS and enables rolling deploys.</li>
+    <li>Split every feature into a <b>read path</b> and a <b>write path</b>; they scale with different tools.</li>
+    <li>Estimate out loud: <b>1M/day ≈ 10 QPS</b>, then find the <b>peak and its shape</b>; the peak sizes the system.</li>
+    <li>Scaling moves the bottleneck: watch DB connections, autoscaling lag and shared dependencies.</li>
+  </ul>
+</template>

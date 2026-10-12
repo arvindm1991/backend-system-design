@@ -1,0 +1,40 @@
+{
+  "id": "dsa-product-except-self",
+  "title": "Product of Array Except Self",
+  "minutes": 20,
+  "prompt": "<p>Given an array <code>nums</code>, return an array <code>answer</code> where <code>answer[i]</code> is the product of every element of <code>nums</code> <b>except</b> <code>nums[i]</code>. You must not use division, and it should run in <b>O(n)</b>.</p>\n<p>Write <code>productExceptSelf(nums)</code>.</p>\n<ul>\n<li><code>productExceptSelf([1, 2, 3, 4])</code> → <code>[24, 12, 8, 6]</code></li>\n<li><code>productExceptSelf([-1, 1, 0, -3, 3])</code> → <code>[0, 0, 9, 0, 0]</code></li>\n<li><code>productExceptSelf([5])</code> → <code>[1]</code> (the product of nothing is 1)</li>\n</ul>\n<p>Constraints: <code>1 &lt;= nums.length &lt;= 10^5</code>, values may be negative or zero. (Tests treat <code>-0</code> and <code>0</code> as equal.)</p>",
+  "starter": "function productExceptSelf(nums) {\n  // Brute force: for each i, multiply every other element. O(n^2).\n  // Dividing the total product by nums[i] breaks when there is a 0.\n  // Goal: (product of everything left of i) * (product of everything right of i).\n  // TODO\n  return nums.map(() => 1);\n}",
+  "solution": "function productExceptSelf(nums) {\n  const answer = new Array(nums.length);\n  let leftProduct = 1; // product of everything before i\n  for (let i = 0; i < nums.length; i++) {\n    answer[i] = leftProduct;\n    leftProduct *= nums[i];\n  }\n  let rightProduct = 1; // product of everything after i\n  for (let i = nums.length - 1; i >= 0; i--) {\n    answer[i] *= rightProduct;\n    rightProduct *= nums[i];\n  }\n  return answer;\n}",
+  "tests": [
+    {
+      "name": "the classic example",
+      "code": "assertEqual(productExceptSelf([1, 2, 3, 4]).map((x) => x === 0 ? 0 : x), [24, 12, 8, 6]);"
+    },
+    {
+      "name": "one zero: only its own position is non-zero",
+      "code": "assertEqual(productExceptSelf([-1, 1, 0, -3, 3]).map((x) => x === 0 ? 0 : x), [0, 0, 9, 0, 0]);"
+    },
+    {
+      "name": "two zeros: everything is zero",
+      "code": "assertEqual(productExceptSelf([0, 4, 0]).map((x) => x === 0 ? 0 : x), [0, 0, 0]);"
+    },
+    {
+      "name": "negative numbers",
+      "code": "assertEqual(productExceptSelf([-2, 3, -4]).map((x) => x === 0 ? 0 : x), [-12, 8, -6]);"
+    },
+    {
+      "name": "one or two elements",
+      "code": "assertEqual(productExceptSelf([5]), [1]);\nassertEqual(productExceptSelf([3, 7]), [7, 3]);"
+    },
+    {
+      "name": "duplicates and ones",
+      "code": "assertEqual(productExceptSelf([2, 2, 1, 2]).map((x) => x === 0 ? 0 : x), [4, 4, 8, 4]);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: &quot;everything except i&quot; plus &quot;no division&quot; plus O(n). Split it: everything to the <b>left</b> of i times everything to the <b>right</b> of i.</p>",
+    "<p>Idea: both halves are running products. Sweep left to right carrying the product of what you have passed; then sweep right to left doing the same for the right side.</p>",
+    "<p>Code shape: <code>let left = 1; for (i = 0 → n-1) { answer[i] = left; left *= nums[i]; }</code> then <code>let right = 1; for (i = n-1 → 0) { answer[i] *= right; right *= nums[i]; }</code>. Store <i>before</i> multiplying in, so position i never includes itself.</p>"
+  ],
+  "explain": "<p><b>Time O(n): two passes. Space O(1) extra</b> beyond the output array (just two running variables). The brute force was O(n²) because every position re-multiplied the same left and right stretches; the running products compute each stretch once.</p>\n<p>Division would be O(n) too, but it breaks on zeros (and interviewers always test a zero). The left/right sweep is the general pattern behind many &quot;for each position, something about everything before and after it&quot; problems, like Trapping Rain Water (max to the left and right).</p>\n<p><b>How to say it:</b> &quot;Product except self is left product times right product. I fill the answer with running products from the left, then multiply in running products from the right. Two passes, O(n) time, O(1) extra space, no division so zeros are fine.&quot;</p>"
+}

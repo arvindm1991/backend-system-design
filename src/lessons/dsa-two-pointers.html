@@ -1,0 +1,304 @@
+<template id="tpl-dsa-two-pointers" data-title="Two pointers" data-part="Part 5 · Coding patterns (DSA)" data-order="330">
+  <h1>Two pointers</h1>
+  <p class="lede">After this lesson you will recognize the problems where two indexes walking through an array replace a nested loop: pair sums in a sorted array, palindromes, removing duplicates in place, merging sorted lists, and the "container with most water" puzzle. You will know the three shapes of the pattern, why each step is safe, and how to say it out loud in an interview. Then you will solve three classic problems in the labs.</p>
+
+  <h2>1. The problem: checking every pair</h2>
+  <p>PageTurn, the reading app for schools, runs a reading challenge. A teacher wants to suggest <b>two books whose page counts add up to exactly 330 pages</b>. The shelf for her class is already sorted by page count:</p>
+  <pre><code class="lang-js">const pages = [80, 120, 150, 180, 220, 260];
+const target = 330;</code></pre>
+  <p>The obvious approach: try every pair. Take the first book and add it to each book after it, then the second book with each book after it, and so on.</p>
+  <pre><code class="lang-js">// Brute force: every pair. In TypeScript you'd just add types.
+function pairWithSumBrute(pages, target) {
+  for (let i = 0; i &lt; pages.length; i++) {
+    for (let j = i + 1; j &lt; pages.length; j++) {
+      if (pages[i] + pages[j] === target) return [i, j];
+    }
+  }
+  return [-1, -1];
+}</code></pre>
+  <p>With 6 books that is 15 pairs, which is nothing. But the number of pairs grows with the <i>square</i> of the number of books. With 1,000 books there are about 500,000 pairs. With 100,000 books there are about 5 billion. We write this as <b>O(n²)</b> ("order n squared"): <b>n</b> is the size of the input, and Big-O describes how the number of steps grows as n grows, ignoring constant factors. Double the books, four times the work. (The <i>How to attack any problem</i> lesson, <code>dsa-approach</code>, builds Big-O from scratch; here you only need "n² is slow for big n, n is fast".)</p>
+  <p>Where is the waste? The brute force ignores the one thing we were given for free: <b>the shelf is sorted</b>. When 80 + 260 = 340 is too big, the brute force still goes on to try 120 + 260, 150 + 260, and so on, even though every one of those is <i>bigger</i> than 340. The sorted order already told us the answer to all of them.</p>
+
+  <h2>2. The intuition: one finger at each end</h2>
+  <p>Put your left finger on the thinnest book (80) and your right finger on the thickest (260). Add them.</p>
+  <ul>
+    <li><b>Too big</b> (340 &gt; 330). The thickest book is already paired with the thinnest book on the shelf, its smallest possible partner, and it is <i>still</i> too big. So 260 cannot be in any answer. Throw it away: move the right finger one book left.</li>
+    <li><b>Too small</b>. By the mirror argument, the thinnest book is paired with the thickest remaining book, its largest possible partner, and it is still too small. Throw it away: move the left finger one book right.</li>
+    <li><b>Equal</b>. Done.</li>
+  </ul>
+  <p>Every comparison eliminates one book for good. With n books you make at most n − 1 comparisons. That is <b>O(n)</b> time, and you only stored two numbers, so <b>O(1)</b> extra space ("constant space": it doesn't grow with n).</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 230" width="100%" role="img" aria-label="Sorted array of page counts with a left pointer at 120 and a right pointer at 220; 80 and 260 are crossed out as eliminated" style="font-family:inherit">
+      <defs><marker id="tp-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+      <text x="350" y="22" text-anchor="middle" style="fill:var(--muted);font-size:13px">target = 330 · step 3 of the trace</text>
+      <g style="font-size:13px">
+        <text x="146" y="54" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">0</text>
+        <text x="226" y="54" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">1</text>
+        <text x="306" y="54" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">2</text>
+        <text x="386" y="54" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">3</text>
+        <text x="466" y="54" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">4</text>
+        <text x="546" y="54" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:12px">5</text>
+        <rect x="110" y="62" width="72" height="48" rx="6" style="fill:none;stroke:var(--line);stroke-dasharray:4 4"/>
+        <text x="146" y="91" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:15px;text-decoration:line-through">80</text>
+        <rect x="190" y="62" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="226" y="91" text-anchor="middle" class="mono" style="fill:currentColor;font-size:15px;font-weight:600">120</text>
+        <rect x="270" y="62" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="306" y="91" text-anchor="middle" class="mono" style="fill:currentColor;font-size:15px">150</text>
+        <rect x="350" y="62" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="386" y="91" text-anchor="middle" class="mono" style="fill:currentColor;font-size:15px">180</text>
+        <rect x="430" y="62" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="466" y="91" text-anchor="middle" class="mono" style="fill:currentColor;font-size:15px;font-weight:600">220</text>
+        <rect x="510" y="62" width="72" height="48" rx="6" style="fill:none;stroke:var(--line);stroke-dasharray:4 4"/>
+        <text x="546" y="91" text-anchor="middle" class="mono" style="fill:var(--muted);font-size:15px;text-decoration:line-through">260</text>
+      </g>
+      <line x1="226" y1="160" x2="226" y2="116" style="stroke:var(--accent);stroke-width:2" marker-end="url(#tp-arr)"/>
+      <text x="226" y="178" text-anchor="middle" style="fill:var(--accent);font-size:13px;font-weight:600">left</text>
+      <line x1="466" y1="160" x2="466" y2="116" style="stroke:var(--accent);stroke-width:2" marker-end="url(#tp-arr)"/>
+      <text x="466" y="178" text-anchor="middle" style="fill:var(--accent);font-size:13px;font-weight:600">right</text>
+      <text x="146" y="140" text-anchor="middle" style="fill:var(--muted);font-size:12px">too small</text>
+      <text x="146" y="155" text-anchor="middle" style="fill:var(--muted);font-size:12px">for anyone</text>
+      <text x="546" y="140" text-anchor="middle" style="fill:var(--muted);font-size:12px">too big</text>
+      <text x="546" y="155" text-anchor="middle" style="fill:var(--muted);font-size:12px">for anyone</text>
+      <text x="350" y="212" text-anchor="middle" style="fill:currentColor;font-size:13px">120 + 220 = 340 &gt; 330 → drop 220, move right one step left</text>
+    </svg>
+    <figcaption>The pointers walk toward each other. Everything outside them has been proven useless and never looked at again.</figcaption>
+  </figure>
+  <div class="trace">
+    <p><b>Trace: pages = [80, 120, 150, 180, 220, 260], target = 330</b></p>
+    <ol>
+      <li><code>left=0, right=5</code>: 80 + 260 = 340. <span class="no">Too big</span>: 260 can't pair with anything. <code>right--</code>.</li>
+      <li><code>left=0, right=4</code>: 80 + 220 = 300. <span class="no">Too small</span>: 80 can't pair with anything left. <code>left++</code>.</li>
+      <li><code>left=1, right=4</code>: 120 + 220 = 340. Too big. <code>right--</code>.</li>
+      <li><code>left=1, right=3</code>: 120 + 180 = 300. Too small. <code>left++</code>.</li>
+      <li><code>left=2, right=3</code>: 150 + 180 = 330. <span class="yes">Found it: indexes [2, 3]</span>. 5 checks instead of up to 15. For 100,000 books: at most 99,999 checks instead of ~5 billion.</li>
+    </ol>
+  </div>
+
+  <h2>3. The trigger: when to think "two pointers"</h2>
+  <p>Look for these words and shapes in the problem statement:</p>
+  <ul>
+    <li><b>"sorted array"</b> together with <b>"pair"</b>, <b>"two numbers"</b>, <b>"triplet"</b>, "sum to target", "closest sum".</li>
+    <li><b>"palindrome"</b>, <b>"reverse"</b>, "compare from both ends", "symmetric".</li>
+    <li><b>"in place"</b>, "without extra space", "O(1) extra memory", "remove duplicates", "move zeros to the end".</li>
+    <li><b>"merge two sorted arrays/lists"</b>, "intersection of two sorted arrays".</li>
+    <li>"maximize the area/width between two lines" (container with most water).</li>
+  </ul>
+  <p>The pattern comes in three shapes. They share one idea: <b>two indexes, each only ever moving forward (or only backward), so together they take O(n) steps</b>.</p>
+  <table class="tbl">
+    <thead><tr><th>Shape</th><th>Pointers start</th><th>Move rule</th><th>Classic problems</th></tr></thead>
+    <tbody>
+      <tr><td>Opposite ends (converging)</td><td>0 and n − 1</td><td>Move the side that can't be part of the answer</td><td>Pair sum in sorted array, palindrome, container with most water, reverse in place</td></tr>
+      <tr><td>Same direction (read / write)</td><td>both at the start</td><td><code>read</code> visits every item; <code>write</code> advances only when you keep one</td><td>Remove duplicates in place, move zeros, remove an element</td></tr>
+      <tr><td>Two inputs</td><td>start of each array</td><td>Advance the pointer whose value you just used</td><td>Merge two sorted arrays, intersection of sorted arrays</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. The template</h2>
+  <p>Three small code shapes. Learn them as shapes; the body of each <code>if</code> changes per problem. (In TypeScript you would just add types, e.g. <code>items: number[]</code>.)</p>
+  <pre><code class="lang-js">// Shape 1: opposite ends. Stop when the pointers meet.
+function convergingTemplate(items) {
+  let left = 0;
+  let right = items.length - 1;
+  while (left &lt; right) {
+    // 1. look at items[left] and items[right]
+    // 2. if this is the answer, return it
+    // 3. otherwise move the pointer that CAN'T be part of an answer
+    if (shouldMoveLeft(items[left], items[right])) {
+      left++;
+    } else {
+      right--;
+    }
+  }
+  return null; // pointers met: no answer
+}
+
+// Shape 2: same direction. read scans everything, write marks the end of the "kept" part.
+function readWriteTemplate(items) {
+  let write = 0;
+  for (let read = 0; read &lt; items.length; read++) {
+    if (shouldKeep(items[read], items, write)) {
+      items[write] = items[read];
+      write++;
+    }
+  }
+  return write; // items[0 .. write-1] is the result
+}
+
+// Shape 3: two sorted inputs, one pointer each.
+function twoInputsTemplate(a, b) {
+  const result = [];
+  let i = 0;
+  let j = 0;
+  while (i &lt; a.length &amp;&amp; j &lt; b.length) {
+    if (a[i] &lt;= b[j]) {
+      result.push(a[i]);
+      i++;
+    } else {
+      result.push(b[j]);
+      j++;
+    }
+  }
+  // one side is used up; copy what is left of the other
+  while (i &lt; a.length) { result.push(a[i]); i++; }
+  while (j &lt; b.length) { result.push(b[j]); j++; }
+  return result;
+}</code></pre>
+  <p>Why is each of these O(n) even though there is a loop with pointers inside? Because <b>no pointer ever moves backward</b>. In shape 1, left only goes up and right only goes down, and they stop when they meet: at most n moves in total. In shape 2, read goes from 0 to n once. In shape 3, every step pushes one item, so there are exactly <code>a.length + b.length</code> steps.</p>
+
+  <h2>5. Worked problem: pair sum in a sorted array</h2>
+  <p><b>Problem.</b> Given a sorted array of numbers and a target, return the indexes of two different elements that add up to the target, or <code>[-1, -1]</code>.</p>
+  <p><b>Brute force.</b> The nested loop from section 1: <b>O(n²) time, O(1) space</b>. The repeated work: for each left element, it scans all right elements, even though after one comparison the sorted order tells you whether every remaining right element is too big or too small.</p>
+  <p><b>With two pointers:</b></p>
+  <pre><code class="lang-js">function pairWithSum(sortedNums, target) {
+  let left = 0;
+  let right = sortedNums.length - 1;
+  while (left &lt; right) {                 // &lt; not &lt;=: a book can't pair with itself
+    const sum = sortedNums[left] + sortedNums[right];
+    if (sum === target) return [left, right];
+    if (sum &lt; target) {
+      left++;                            // left is too small for every remaining partner
+    } else {
+      right--;                           // right is too big for every remaining partner
+    }
+  }
+  return [-1, -1];
+}</code></pre>
+  <p><b>O(n) time, O(1) space.</b> What removed the repeated work: each comparison rules out a whole row (or column) of pairs at once instead of one pair.</p>
+  <p>What if the array is <b>not</b> sorted? You have two options. Sort it first (O(n log n), but you lose the original indexes unless you sort index/value pairs), or use a hash map of "values I've seen" for O(n) time and O(n) space (the <code>dsa-hashing</code> lesson's Two Sum). For an unsorted input that needs original indexes, the hash map is usually the better choice. When the input is <i>already</i> sorted, two pointers win: same speed, no extra memory.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"The array is sorted and I need a pair, so instead of checking all n² pairs I'll put one pointer at each end. If the sum is too big, the right element is too big for every remaining partner, so I drop it; if it's too small, I drop the left one. Each step eliminates an element, so it's O(n) time and O(1) extra space."</p></div>
+
+  <h2>6. Worked problem: remove duplicates in place</h2>
+  <p>PageTurn stores each student's quiz scores sorted, and an import bug wrote some scores twice: <code>[70, 70, 82, 90, 90, 95]</code>. <b>Problem:</b> remove the duplicates <i>in place</i> (inside the same array, no new array) so the first k slots hold the unique values in order, and return k. Whatever sits after slot k doesn't matter.</p>
+  <p><b>Brute force.</b> Walk the array; when a value equals the one before it, <code>splice</code> it out.</p>
+  <pre><code class="lang-js">function removeDuplicatesBrute(nums) {
+  let i = 1;
+  while (i &lt; nums.length) {
+    if (nums[i] === nums[i - 1]) {
+      nums.splice(i, 1);   // shifts EVERY later element one slot left
+    } else {
+      i++;
+    }
+  }
+  return nums.length;
+}</code></pre>
+  <p>It is correct, but <code>splice</code> is not free: removing one element from the middle of an array shifts every element after it. If most values are duplicates, each removal costs up to n moves, n times: <b>O(n²)</b>. The repeated work is <b>shifting the same tail of the array over and over</b>.</p>
+  <p><b>With read/write pointers.</b> Don't delete anything. Instead, copy each value you want to keep forward to the next free "keep" slot. <code>write</code> is the index of that next slot. Because the array is sorted, a value is new exactly when it differs from the last value we kept, <code>nums[write - 1]</code>.</p>
+  <pre><code class="lang-js">function removeDuplicates(nums) {
+  if (nums.length === 0) return 0;
+  let write = 1;                          // nums[0] is always kept
+  for (let read = 1; read &lt; nums.length; read++) {
+    if (nums[read] !== nums[write - 1]) { // new value: keep it
+      nums[write] = nums[read];
+      write++;
+    }
+  }
+  return write;
+}</code></pre>
+  <div class="trace">
+    <p><b>Trace: nums = [70, 70, 82, 90, 90, 95]</b></p>
+    <table class="tbl">
+      <thead><tr><th>read</th><th>nums[read]</th><th>last kept nums[write−1]</th><th>action</th><th>array after</th><th>write</th></tr></thead>
+      <tbody>
+        <tr><td>start</td><td></td><td></td><td>keep nums[0]</td><td><code>[70, 70, 82, 90, 90, 95]</code></td><td>1</td></tr>
+        <tr><td>1</td><td>70</td><td>70</td><td>same: skip</td><td><code>[70, 70, 82, 90, 90, 95]</code></td><td>1</td></tr>
+        <tr><td>2</td><td>82</td><td>70</td><td>new: nums[1] = 82</td><td><code>[70, 82, 82, 90, 90, 95]</code></td><td>2</td></tr>
+        <tr><td>3</td><td>90</td><td>82</td><td>new: nums[2] = 90</td><td><code>[70, 82, 90, 90, 90, 95]</code></td><td>3</td></tr>
+        <tr><td>4</td><td>90</td><td>90</td><td>same: skip</td><td><code>[70, 82, 90, 90, 90, 95]</code></td><td>3</td></tr>
+        <tr><td>5</td><td>95</td><td>90</td><td>new: nums[3] = 95</td><td><code>[70, 82, 90, 95, 90, 95]</code></td><td>4</td></tr>
+      </tbody>
+    </table>
+    <p>Return 4. The first four slots are <code>[70, 82, 90, 95]</code>; the leftover <code>90, 95</code> at the end is ignored. One pass, no shifting: <b>O(n) time, O(1) space</b>.</p>
+  </div>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 200" width="100%" role="img" aria-label="Read and write pointers moving in the same direction; slots before write are the kept unique values" style="font-family:inherit">
+      <defs><marker id="tp-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:currentColor"/></marker><marker id="tp-arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+      <rect x="106" y="38" width="238" height="56" rx="8" style="fill:var(--accent-soft);stroke:none"/>
+      <text x="225" y="28" text-anchor="middle" style="fill:var(--accent);font-size:12px;font-weight:600">kept (unique so far)</text>
+      <text x="465" y="28" text-anchor="middle" style="fill:var(--muted);font-size:12px">scratch: will be overwritten or ignored</text>
+      <g class="mono" style="font-size:15px">
+        <rect x="110" y="42" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="146" y="71" text-anchor="middle" style="fill:currentColor">70</text>
+        <rect x="190" y="42" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="226" y="71" text-anchor="middle" style="fill:currentColor">82</text>
+        <rect x="270" y="42" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="306" y="71" text-anchor="middle" style="fill:currentColor">90</text>
+        <rect x="350" y="42" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/><text x="386" y="71" text-anchor="middle" style="fill:currentColor">90</text>
+        <rect x="430" y="42" width="72" height="48" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="466" y="71" text-anchor="middle" style="fill:currentColor">90</text>
+        <rect x="510" y="42" width="72" height="48" rx="6" style="fill:var(--surface);stroke:currentColor;stroke-width:2"/><text x="546" y="71" text-anchor="middle" style="fill:currentColor">95</text>
+      </g>
+      <line x1="386" y1="140" x2="386" y2="98" style="stroke:var(--accent);stroke-width:2" marker-end="url(#tp-arr3)"/>
+      <text x="386" y="158" text-anchor="middle" style="fill:var(--accent);font-size:13px;font-weight:600">write = 3</text>
+      <text x="386" y="175" text-anchor="middle" style="fill:var(--muted);font-size:12px">next slot to fill</text>
+      <line x1="546" y1="140" x2="546" y2="98" style="stroke:currentColor;stroke-width:2" marker-end="url(#tp-arr2)"/>
+      <text x="546" y="158" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">read = 5</text>
+      <text x="546" y="175" text-anchor="middle" style="fill:var(--muted);font-size:12px">95 ≠ 90 → copy to slot 3</text>
+    </svg>
+    <figcaption>Same-direction pointers: <code>read</code> visits every slot once; <code>write</code> only advances when a value is kept. Both only move right.</figcaption>
+  </figure>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Removing items from an array while a <code>for</code> loop walks it: <code>for (let i = 0; i &lt; nums.length; i++) if (nums[i] === nums[i - 1]) nums.splice(i, 1);</code>. After the splice, the next element slides into slot <code>i</code>, then <code>i++</code> skips it. With <code>[90, 90, 90]</code> you end up with <code>[90, 90]</code>. Mutating while iterating is a classic bug; the read/write pattern avoids it because nothing ever shifts.</p></div>
+
+  <h2>7. Worked problem: merge two sorted lists</h2>
+  <p>Two classes' reading scores, each already sorted: <code>a = [62, 75, 90]</code> and <code>b = [70, 81, 88, 95]</code>. Produce one sorted list for the grade-level report.</p>
+  <p><b>Brute force:</b> <code>[...a, ...b].sort((x, y) =&gt; x - y)</code>. That is <b>O((n + m) log(n + m))</b>, where n and m are the two lengths. It's short and fine in real product code at small sizes, but it throws away the fact that each half is already sorted: the sort re-discovers an order you already had.</p>
+  <p><b>With two pointers</b> (shape 3 from the template): compare the two front items, take the smaller, advance that pointer.</p>
+  <div class="trace">
+    <p><b>Trace: merging a = [62, 75, 90] and b = [70, 81, 88, 95]</b></p>
+    <ol>
+      <li><code>i=0, j=0</code>: 62 vs 70 → take 62, <code>i=1</code>. Result <code>[62]</code>.</li>
+      <li><code>i=1, j=0</code>: 75 vs 70 → take 70, <code>j=1</code>. Result <code>[62, 70]</code>.</li>
+      <li><code>i=1, j=1</code>: 75 vs 81 → take 75, <code>i=2</code>. Result <code>[62, 70, 75]</code>.</li>
+      <li><code>i=2, j=1</code>: 90 vs 81 → take 81, <code>j=2</code>. Then 90 vs 88 → take 88, <code>j=3</code>. Then 90 vs 95 → take 90, <code>i=3</code>.</li>
+      <li><code>a</code> is used up. Copy the rest of <code>b</code>: 95. <span class="yes">Result [62, 70, 75, 81, 88, 90, 95]</span>, in exactly 7 steps.</li>
+    </ol>
+  </div>
+  <p><b>O(n + m) time</b>, O(n + m) space for the output. This exact loop is the "merge" step inside merge sort, and it is how databases merge sorted runs on disk.</p>
+
+  <h2>8. Two quick ones: palindromes and the container</h2>
+  <h3>Palindrome check</h3>
+  <p>A palindrome reads the same forwards and backwards ("Race car" if you ignore case and spaces). The easy approach builds a cleaned copy, reverses it, and compares: O(n) time but <b>O(n) extra space</b> for the copies. Two pointers from both ends compare characters in place: skip anything that isn't a letter or digit, compare lowercase versions, move both pointers inward. Same O(n) time, <b>O(1) extra space</b>. Here the pattern doesn't change the speed, it removes the copying. You'll write it in the first lab.</p>
+
+  <h3>Container with most water (intuition)</h3>
+  <p>You get an array of wall heights, e.g. <code>[1, 8, 6, 2, 5, 4, 8, 3, 7]</code>. Pick two walls; the water they hold is <code>min(height[left], height[right]) × (right − left)</code>: the <b>shorter</b> wall sets the water level, and the distance sets the width. Find the maximum.</p>
+  <p>Brute force tries all pairs: O(n²). The two-pointer insight: start with the widest pair (both ends). Now ask "which wall can I safely give up on?" If the left wall is shorter, then <b>every</b> other pair using that left wall is narrower <i>and</i> still capped at that same short height or lower. None of them can beat what you just measured. So the shorter wall is done: move it inward. You never need to move the taller one, because that can only shrink the width without raising the cap.</p>
+  <div class="trace">
+    <p><b>Trace: heights = [1, 8, 6, 2, 5, 4, 8, 3, 7]</b></p>
+    <ol>
+      <li><code>left=0 (1), right=8 (7)</code>: min 1 × width 8 = <b>8</b>. Left is shorter → <code>left++</code>.</li>
+      <li><code>left=1 (8), right=8 (7)</code>: min 7 × width 7 = <b>49</b>. New best. Right is shorter → <code>right--</code>.</li>
+      <li><code>left=1 (8), right=7 (3)</code>: 3 × 6 = 18. <code>right--</code>.</li>
+      <li><code>left=1 (8), right=6 (8)</code>: 8 × 5 = 40. Tie: moving either is safe; move right.</li>
+      <li>Remaining pairs: 4 × 4 = 16, 5 × 3 = 15, 2 × 2 = 4, 6 × 1 = 6. Pointers meet. <span class="yes">Answer 49</span> after 8 checks instead of 36 pairs.</li>
+    </ol>
+  </div>
+  <p>This is the hardest of the two-pointer arguments, so practice saying it: "the shorter wall limits every container it's part of, and all the others are narrower, so I can discard it". It's the third lab.</p>
+
+  <h2>9. Common mistakes</h2>
+  <ul>
+    <li><b>Using converging pointers on unsorted data</b> for a pair sum. The "too big → drop the right one" argument only works because the array is sorted. Unsorted? Sort first, or use a hash map.</li>
+    <li><b><code>left &lt;= right</code> instead of <code>left &lt; right</code></b> in pair problems. With <code>&lt;=</code>, when the pointers meet you add an element to itself: target 360 and a single 180 would wrongly "succeed".</li>
+    <li><b>Forgetting to move a pointer</b> in some branch. If no branch moves a pointer, the <code>while</code> loop never ends and the page freezes.</li>
+    <li><b>Starting <code>right</code> at <code>length</code></b> instead of <code>length - 1</code>. <code>nums[nums.length]</code> is <code>undefined</code>, and <code>undefined + 5</code> is <code>NaN</code>, which silently fails every comparison.</li>
+    <li><b>Forgetting the leftovers</b> when merging: once one list runs out, copy the rest of the other.</li>
+  </ul>
+
+  <h2>10. Labs</h2>
+  <p>Three classics, easy to medium. Each starter is an empty function; the hints escalate from "which shape?" to the code shape.</p>
+  <div data-lab="dsa-valid-palindrome"></div>
+  <div data-lab="dsa-remove-duplicates"></div>
+  <div data-lab="dsa-container-water"></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"Given a sorted array of prices and a budget, find two items whose prices add up to exactly the budget. Which approach fits best?","o":["Nested loops over all pairs","Two pointers from both ends","Sliding window","Binary search for each price"],"a":1,"why":"Sorted + pair + sum is the classic trigger. Two pointers is O(n) time and O(1) space. Binary search for each element also works but is O(n log n), and nested loops are O(n²)."},
+    {"q":"Remove every 0 from an array in place, keeping the order of the other values, and return the new length. Which shape?","o":["Opposite ends (converging)","Same direction (read / write)","Two inputs (merge)","Hash map of seen values"],"a":1,"why":"In place + keep some items in order = read/write pointers. read visits every item; write advances only when the item is kept (non-zero)."},
+    {"q":"In the sorted pair-sum loop, the current sum is larger than the target. Why is it safe to move the right pointer left?","o":["Because the right element is the largest, and it is already paired with the smallest remaining element, so it is too big with every partner","Because moving left always makes the sum smaller by exactly one","Because the left pointer has already checked it","It is not safe; you must try both moves"],"a":0,"why":"The right element plus the smallest remaining partner is already too big, so it is too big with every remaining partner. Dropping it loses no possible answer."},
+    {"q":"A problem says: given two sorted lists of student IDs, return the IDs that appear in both. Which approach fits best with O(1) extra space besides the output?","o":["Concatenate and sort","Two pointers, one per list, advancing the smaller value","Sliding window over the first list","Recursion"],"a":1,"why":"Two sorted inputs = one pointer each. If the values are equal, record it and advance both; otherwise advance the pointer with the smaller value. O(n + m) time."},
+    {"q":"In container with most water, the left wall is height 3 and the right wall is height 9. Which pointer do you move, and why?","o":["Right, because it is taller and wastes water","Left, because every other container using the left wall is narrower and still capped at height 3 or less","Both at once","Whichever is closer to the middle"],"a":1,"why":"The shorter wall caps the water level. Any other partner for it gives less width and no higher cap, so the left wall can never beat what you just measured. Discard it."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Two pointers turn a nested loop over pairs (<b>O(n²)</b>) into a single pass (<b>O(n)</b>) because <b>no pointer ever moves backward</b>.</li>
+    <li>Triggers: <b>sorted + pair/sum</b>, <b>palindrome/reverse</b>, <b>in place / O(1) space</b>, <b>merge two sorted</b>, <b>area between two lines</b>.</li>
+    <li>Three shapes: <b>opposite ends</b> (move the side that can't be in the answer), <b>read/write</b> (keep items by copying forward), <b>two inputs</b> (advance the one you used).</li>
+    <li>Every move must be justified by "this element can't be part of any answer". That argument is what you say in the interview.</li>
+    <li>Watch for <code>&lt;</code> vs <code>&lt;=</code>, a branch that doesn't move a pointer, and splicing while iterating.</li>
+  </ul>
+</template>

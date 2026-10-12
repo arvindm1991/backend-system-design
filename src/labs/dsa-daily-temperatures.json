@@ -1,0 +1,44 @@
+{
+  "id": "dsa-daily-temperatures",
+  "title": "Daily temperatures",
+  "minutes": 20,
+  "prompt": "<p>For each day, find how many days you have to wait until a <b>strictly warmer</b> day. If no warmer day comes, the answer for that day is <code>0</code>. (PageTurn uses the same logic for &quot;days until you read more than today&quot;.)</p>\n<p>Write <code>daysUntilWarmer(temps)</code> that returns an array of the same length. Aim for <b>O(n)</b> time; scanning forward from every day is O(n²).</p>\n<p>Examples:</p>\n<ul>\n<li><code>daysUntilWarmer([73, 74, 75, 71, 69, 72, 76, 73])</code> → <code>[1, 1, 4, 2, 1, 1, 0, 0]</code></li>\n<li><code>daysUntilWarmer([30, 20, 25, 40, 10, 15, 50])</code> → <code>[3, 1, 1, 3, 1, 1, 0]</code></li>\n<li><code>daysUntilWarmer([50, 50, 50])</code> → <code>[0, 0, 0]</code> (equal is not warmer)</li>\n</ul>\n<p>Constraints: 0 ≤ <code>temps.length</code> ≤ 10<sup>5</sup>, values can be negative.</p>",
+  "starter": "function daysUntilWarmer(temps) {\n  // TODO: monotonic stack of INDEXES of days still waiting for a warmer day.\n  // Each new day pops every waiting day colder than itself and is their answer.\n  return temps.map(() => 0);\n}",
+  "solution": "function daysUntilWarmer(temps) {\n  const answer = new Array(temps.length).fill(0);\n  const waiting = []; // indexes; temps decrease from bottom to top\n  for (let today = 0; today < temps.length; today++) {\n    while (waiting.length > 0 && temps[today] > temps[waiting[waiting.length - 1]]) {\n      const earlierDay = waiting.pop();\n      answer[earlierDay] = today - earlierDay;\n    }\n    waiting.push(today);\n  }\n  return answer;\n}",
+  "tests": [
+    {
+      "name": "classic example",
+      "code": "assertEqual(daysUntilWarmer([73, 74, 75, 71, 69, 72, 76, 73]), [1, 1, 4, 2, 1, 1, 0, 0]);"
+    },
+    {
+      "name": "reading minutes from the lesson",
+      "code": "assertEqual(daysUntilWarmer([30, 20, 25, 40, 10, 15, 50]), [3, 1, 1, 3, 1, 1, 0]);"
+    },
+    {
+      "name": "always rising and always falling",
+      "code": "assertEqual(daysUntilWarmer([30, 40, 50, 60]), [1, 1, 1, 0]);\nassertEqual(daysUntilWarmer([90, 80, 70]), [0, 0, 0]);"
+    },
+    {
+      "name": "equal temperatures are not warmer",
+      "code": "assertEqual(daysUntilWarmer([50, 50, 50]), [0, 0, 0]);\nassertEqual(daysUntilWarmer([50, 50, 51]), [2, 1, 0]);"
+    },
+    {
+      "name": "empty and single day",
+      "code": "assertEqual(daysUntilWarmer([]), []);\nassertEqual(daysUntilWarmer([42]), [0]);"
+    },
+    {
+      "name": "negative temperatures",
+      "code": "assertEqual(daysUntilWarmer([-5, -10, -3, -20, 0]), [2, 1, 2, 1, 0]);"
+    },
+    {
+      "name": "matches scanning forward on many small inputs",
+      "code": "let seed = 23;\nconst rand = (m) => { seed = (seed * 48271) % 2147483647; return seed % m; };\nfunction brute(t) {\n  const a = new Array(t.length).fill(0);\n  for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) if (t[j] > t[i]) { a[i] = j - i; break; }\n  return a;\n}\nfor (let k = 0; k < 40; k++) {\n  const t = Array.from({ length: rand(14) }, () => rand(9) - 4);\n  assertEqual(daysUntilWarmer(t), brute(t), JSON.stringify(t));\n}"
+    }
+  ],
+  "hints": [
+    "<p>&quot;For each element, the next greater element to its right&quot; is the monotonic stack trigger. Instead of each day looking forward, let each new day answer the earlier days that are still waiting.</p>",
+    "<p>Keep a stack of <b>indexes</b> of days that haven&#39;t found a warmer day yet. For each new day: while the stack isn&#39;t empty and today is warmer than the day on top, pop that day and set its answer to <code>today - thatDay</code>. Then push today.</p>",
+    "<p>Shape:</p><pre><code>const answer = new Array(temps.length).fill(0);\nconst waiting = [];\nfor (let today = 0; today &lt; temps.length; today++) {\n  while (waiting.length &gt; 0 &amp;&amp; temps[today] &gt; temps[waiting[waiting.length - 1]]) {\n    const day = waiting.pop();\n    answer[day] = today - day;\n  }\n  waiting.push(today);\n}\nreturn answer;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n), space O(n).</b> Each index is pushed once and popped at most once, so all the inner <code>while</code> loops together do at most n pops. The forward-scan brute force is O(n²) on inputs like a long cool spell followed by one hot day.</p><p>The stack is <b>monotonic</b>: the temperatures of waiting days only decrease from bottom to top, because a warmer day would have popped any colder day below it.</p><p><b>In an interview:</b> &quot;This is next-greater-element, so I&#39;ll use a monotonic stack of indexes still waiting for a warmer day. Each new day pops every colder waiting day and records the distance. Every index is pushed and popped once: O(n) time, O(n) space.&quot;</p>"
+}

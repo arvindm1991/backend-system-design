@@ -1,0 +1,44 @@
+{
+  "id": "dsa-longest-unique-substring",
+  "title": "Longest substring without repeating characters",
+  "minutes": 20,
+  "prompt": "<p>PageTurn records which book a student opened in each session as one character per session. A &quot;focus streak&quot; is a run of <b>consecutive</b> sessions with no character repeated.</p>\n<p>Write <code>lengthOfLongestUnique(text)</code> that returns the length of the longest substring of <code>text</code> with no repeated characters. Aim for <b>O(n)</b> time.</p>\n<p>Examples:</p>\n<ul>\n<li><code>lengthOfLongestUnique(&quot;ABCBDAE&quot;)</code> → <code>5</code> (&quot;CBDAE&quot;)</li>\n<li><code>lengthOfLongestUnique(&quot;abcabcbb&quot;)</code> → <code>3</code> (&quot;abc&quot;)</li>\n<li><code>lengthOfLongestUnique(&quot;bbbbb&quot;)</code> → <code>1</code></li>\n<li><code>lengthOfLongestUnique(&quot;pwwkew&quot;)</code> → <code>3</code> (&quot;wke&quot;; &quot;pwke&quot; is not contiguous)</li>\n</ul>\n<p>Constraints: 0 ≤ <code>text.length</code> ≤ 5 × 10<sup>4</sup>; any characters, including spaces and digits. Characters are case-sensitive.</p>",
+  "starter": "function lengthOfLongestUnique(text) {\n  // TODO: variable sliding window.\n  // Expand right; while the new character is already inside, shrink from the left.\n  return 0;\n}",
+  "solution": "function lengthOfLongestUnique(text) {\n  const inWindow = new Set();\n  let left = 0;\n  let best = 0;\n  for (let right = 0; right < text.length; right++) {\n    const ch = text[right];\n    while (inWindow.has(ch)) {\n      inWindow.delete(text[left]);\n      left++;\n    }\n    inWindow.add(ch);\n    best = Math.max(best, right - left + 1);\n  }\n  return best;\n}",
+  "tests": [
+    {
+      "name": "book sessions example",
+      "code": "assertEqual(lengthOfLongestUnique('ABCBDAE'), 5);"
+    },
+    {
+      "name": "classic examples",
+      "code": "assertEqual(lengthOfLongestUnique('abcabcbb'), 3);\nassertEqual(lengthOfLongestUnique('pwwkew'), 3);"
+    },
+    {
+      "name": "all the same character",
+      "code": "assertEqual(lengthOfLongestUnique('bbbbb'), 1);"
+    },
+    {
+      "name": "empty string and single character",
+      "code": "assertEqual(lengthOfLongestUnique(''), 0);\nassertEqual(lengthOfLongestUnique('a'), 1);\nassertEqual(lengthOfLongestUnique(' '), 1);"
+    },
+    {
+      "name": "the left edge never moves backward",
+      "code": "assertEqual(lengthOfLongestUnique('abba'), 2);\nassertEqual(lengthOfLongestUnique('dvdf'), 3);"
+    },
+    {
+      "name": "all unique and case-sensitive",
+      "code": "assertEqual(lengthOfLongestUnique('abcdef'), 6);\nassertEqual(lengthOfLongestUnique('aA bB'), 5);"
+    },
+    {
+      "name": "matches checking every substring on many small inputs",
+      "code": "let seed = 11;\nconst rand = (m) => { seed = (seed * 48271) % 2147483647; return seed % m; };\nfunction brute(s) {\n  let best = 0;\n  for (let i = 0; i < s.length; i++) { const seen = new Set(); for (let j = i; j < s.length; j++) { if (seen.has(s[j])) break; seen.add(s[j]); best = Math.max(best, j - i + 1); } }\n  return best;\n}\nfor (let t = 0; t < 40; t++) {\n  let s = '';\n  const len = rand(14);\n  for (let i = 0; i < len; i++) s += 'abcde'[rand(5)];\n  assertEqual(lengthOfLongestUnique(s), brute(s), JSON.stringify(s));\n}"
+    }
+  ],
+  "hints": [
+    "<p>&quot;Longest substring such that a rule holds&quot; is a variable sliding window. The rule here: no character appears twice inside the window.</p>",
+    "<p>Keep a <code>Set</code> of the characters in the window <code>text[left..right]</code>. For each new <code>right</code>: while the set already has <code>text[right]</code>, remove <code>text[left]</code> and move <code>left</code> forward. Then add <code>text[right]</code> and record <code>right - left + 1</code>.</p>",
+    "<p>Shape:</p><pre><code>const inWindow = new Set();\nlet left = 0, best = 0;\nfor (let right = 0; right &lt; text.length; right++) {\n  while (inWindow.has(text[right])) {\n    inWindow.delete(text[left]);\n    left++;\n  }\n  inWindow.add(text[right]);\n  best = Math.max(best, right - left + 1);\n}\nreturn best;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n), space O(k)</b> where k is the number of distinct characters (bounded by the alphabet). Each character enters the set once and leaves at most once. Checking every substring is O(n²) or worse.</p><p>If you used a <code>Map</code> of last-seen indexes and jumped <code>left</code> to <code>lastIndex + 1</code>, the <code>&quot;abba&quot;</code> test is the trap: you must use <code>Math.max(left, lastIndex + 1)</code> so the left edge never moves backward.</p><p><b>In an interview:</b> &quot;Longest contiguous substring with a rule, so a sliding window. I expand right, keep a set of characters in the window, and shrink from the left while there&#39;s a duplicate. Every character enters and leaves once: O(n) time, O(k) space.&quot;</p>"
+}

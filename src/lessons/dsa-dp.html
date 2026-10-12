@@ -1,0 +1,324 @@
+<template id="tpl-dsa-dp" data-title="Dynamic programming, gently" data-part="Part 5 · Coding patterns (DSA)" data-order="410">
+  <h1>Dynamic programming, gently</h1>
+  <p class="lede">Dynamic programming (DP) has a scary name and a simple idea: <b>if you keep solving the same small question over and over, write the answer down the first time</b>. After this lesson you will turn a plain recursive solution into a memoized one, then into a table, in three mechanical steps. You will solve climbing stairs, house robber and coin change, understand longest common subsequence as a 2D table, and know the problem words that should make you think &quot;DP&quot;.</p>
+
+  <h2>1. Start with a staircase</h2>
+  <p>Running example: Maya climbs the stairs to the Lincoln Middle School library every morning. She takes either <b>1 step or 2 steps</b> at a time, and she likes to vary it. <b>In how many different ways can she climb a staircase of n steps?</b></p>
+  <p>Don&#39;t reach for a formula. Count by hand for small staircases:</p>
+  <table class="tbl">
+    <thead><tr><th>n</th><th>All the ways</th><th>Count</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td>2</td><td>1+1, 2</td><td>2</td></tr>
+      <tr><td>3</td><td>1+1+1, 1+2, 2+1</td><td>3</td></tr>
+      <tr><td>4</td><td>1+1+1+1, 1+1+2, 1+2+1, 2+1+1, 2+2</td><td>5</td></tr>
+      <tr><td>5</td><td>1+1+1+1+1, 1+1+1+2, 1+1+2+1, 1+2+1+1, 2+1+1+1, 1+2+2, 2+1+2, 2+2+1</td><td>8</td></tr>
+    </tbody>
+  </table>
+  <p>Listing every way is backtracking, and it gets out of hand fast (n = 30 has 1,346,269 ways). But we don&#39;t need the list; we only need the <b>count</b>. So let&#39;s look for a shortcut.</p>
+  <p><b>Think about the last move.</b> Maya is standing on step 5. How did she get there? Her last move was either a 1-step (so before it she was on step 4) or a 2-step (so she was on step 3). Those are the only two options, and they never overlap. So:</p>
+  <p style="text-align:center"><b>ways(5) = ways(4) + ways(3) = 5 + 3 = 8</b></p>
+  <p>The table agrees. In general: <b>ways(n) = ways(n − 1) + ways(n − 2)</b>, with ways(1) = 1 and ways(2) = 2. A rule that defines an answer using answers to smaller versions of the same question is called a <b>recurrence</b>. Finding it is the only creative part of DP. Everything after this is mechanical.</p>
+
+  <h2>2. Step 1: plain recursion (correct, but slow)</h2>
+  <p>The recurrence translates straight into code. Remember the recursion rule from the trees lesson: handle the base case, then <b>trust the function</b> to answer the smaller questions.</p>
+  <pre><code class="lang-js">// In TypeScript: function ways(n: number): number
+function ways(n) {
+  if (n &lt;= 2) return n;              // base cases: ways(1) = 1, ways(2) = 2
+  return ways(n - 1) + ways(n - 2);  // last move was a 1-step or a 2-step
+}
+ways(5); // 8</code></pre>
+  <p>It&#39;s correct. Now draw every call it makes for <code>ways(5)</code>:</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 300" width="100%" role="img" aria-label="Recursion tree for ways(5). ways(5) calls ways(4) and ways(3). ways(4) calls ways(3) and ways(2). Each ways(3) calls ways(2) and ways(1). ways(3) is computed twice and ways(2) three times." style="font-family:inherit">
+      <g style="stroke:var(--muted);stroke-width:1.6">
+        <line x1="340" y1="46" x2="190" y2="96"/>
+        <line x1="340" y1="46" x2="520" y2="96"/>
+        <line x1="190" y1="120" x2="110" y2="170"/>
+        <line x1="190" y1="120" x2="280" y2="170"/>
+        <line x1="520" y1="120" x2="460" y2="170"/>
+        <line x1="520" y1="120" x2="590" y2="170"/>
+        <line x1="110" y1="194" x2="60" y2="244"/>
+        <line x1="110" y1="194" x2="160" y2="244"/>
+      </g>
+      <g style="font-size:13px;font-family:var(--font-mono)">
+        <rect x="295" y="22" width="90" height="26" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="340" y="40" text-anchor="middle" style="fill:currentColor">ways(5)</text>
+        <rect x="145" y="96" width="90" height="26" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="190" y="114" text-anchor="middle" style="fill:currentColor">ways(4)</text>
+        <rect x="475" y="96" width="90" height="26" rx="6" style="fill:var(--accent);fill-opacity:.16;stroke:var(--accent);stroke-width:2"/>
+        <text x="520" y="114" text-anchor="middle" style="fill:currentColor;font-weight:700">ways(3)</text>
+        <rect x="65" y="170" width="90" height="26" rx="6" style="fill:var(--accent);fill-opacity:.16;stroke:var(--accent);stroke-width:2"/>
+        <text x="110" y="188" text-anchor="middle" style="fill:currentColor;font-weight:700">ways(3)</text>
+        <rect x="235" y="170" width="90" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:1.5;stroke-dasharray:4 3"/>
+        <text x="280" y="188" text-anchor="middle" style="fill:currentColor">ways(2)</text>
+        <rect x="415" y="170" width="90" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:1.5;stroke-dasharray:4 3"/>
+        <text x="460" y="188" text-anchor="middle" style="fill:currentColor">ways(2)</text>
+        <rect x="545" y="170" width="90" height="26" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="590" y="188" text-anchor="middle" style="fill:currentColor">ways(1)</text>
+        <rect x="15" y="244" width="90" height="26" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:1.5;stroke-dasharray:4 3"/>
+        <text x="60" y="262" text-anchor="middle" style="fill:currentColor">ways(2)</text>
+        <rect x="115" y="244" width="90" height="26" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="160" y="262" text-anchor="middle" style="fill:currentColor">ways(1)</text>
+      </g>
+      <g style="font-size:12px">
+        <rect x="300" y="226" width="16" height="12" rx="3" style="fill:var(--accent);fill-opacity:.16;stroke:var(--accent);stroke-width:2"/>
+        <text x="324" y="236" style="fill:currentColor">ways(3) computed 2 times (same answer: 3)</text>
+        <rect x="300" y="250" width="16" height="12" rx="3" style="fill:var(--surface);stroke:var(--accent);stroke-width:1.5;stroke-dasharray:4 3"/>
+        <text x="324" y="260" style="fill:currentColor">ways(2) computed 3 times (same answer: 2)</text>
+        <text x="300" y="286" style="fill:var(--muted)">9 calls to answer only 5 different questions</text>
+      </g>
+    </svg>
+    <figcaption>Every call plain recursion makes for ways(5). The highlighted boxes are the same question asked again. The whole right branch, ways(3), is an exact copy of work already done on the left.</figcaption>
+  </figure>
+  <p>There are only 5 different questions (ways(1) to ways(5)), but the function asks 9. That doesn&#39;t sound bad until n grows. Each call spawns two more, so the tree roughly doubles in size with each extra step:</p>
+  <table class="tbl">
+    <thead><tr><th>n</th><th>Calls made by plain recursion</th><th>Different questions</th></tr></thead>
+    <tbody>
+      <tr><td>5</td><td>9</td><td>5</td></tr>
+      <tr><td>10</td><td>109</td><td>10</td></tr>
+      <tr><td>20</td><td>13,529</td><td>20</td></tr>
+      <tr><td>30</td><td>1,664,079</td><td>30</td></tr>
+      <tr><td>40</td><td>204,668,309 (a second or more)</td><td>40</td></tr>
+      <tr><td>50</td><td>about 25 billion (minutes, the tab freezes)</td><td>50</td></tr>
+    </tbody>
+  </table>
+  <p>That growth is exponential, about O(1.6<sup>n</sup>), usually just called O(2<sup>n</sup>). The bottleneck (step 3 of the six-step method) is crystal clear: <b>the repeated work is the same sub-question being re-solved</b>. When you see that, you have found a DP problem. Formally, DP applies when a problem has <b>overlapping subproblems</b> (the same smaller questions come up many times) and the answer can be built from the answers to those smaller questions.</p>
+
+  <h2>3. Step 2: memoization (write the answer down)</h2>
+  <p>Fix: keep a notebook. Before computing <code>ways(k)</code>, check the notebook. If the answer is there, use it. If not, compute it and write it down. The notebook is a <code>Map</code>, and the technique is called <b>memoization</b> (from &quot;memo&quot;, a note to yourself).</p>
+  <pre><code class="lang-js">function climbStairs(n) {
+  const memo = new Map();               // k -&gt; ways(k)
+  function ways(k) {
+    if (k &lt;= 2) return k;               // base cases (unchanged)
+    if (memo.has(k)) return memo.get(k);// asked before? reuse the answer
+    const answer = ways(k - 1) + ways(k - 2);   // same recurrence as before
+    memo.set(k, answer);                // write it down
+    return answer;
+  }
+  return ways(n);
+}</code></pre>
+  <p>Three added lines. The recurrence didn&#39;t change at all. Here is what happens now:</p>
+  <div class="trace">
+    <p><b>Trace: memoized ways(5)</b></p>
+    <ol>
+      <li><code>ways(5)</code>: not in memo. Needs <code>ways(4)</code> first.</li>
+      <li><code>ways(4)</code>: not in memo. Needs <code>ways(3)</code>.</li>
+      <li><code>ways(3)</code>: not in memo. Needs <code>ways(2)</code> → base case, 2. And <code>ways(1)</code> → base case, 1. Answer 3. <b>memo = {3: 3}</b>.</li>
+      <li>Back in <code>ways(4)</code>: also needs <code>ways(2)</code> → 2. Answer 3 + 2 = 5. <b>memo = {3: 3, 4: 5}</b>.</li>
+      <li>Back in <code>ways(5)</code>: also needs <code>ways(3)</code> → <b>found in memo: 3</b>. No subtree this time. Answer 5 + 3 = 8. <b>memo = {3: 3, 4: 5, 5: 8}</b>.</li>
+      <li><b>Total:</b> 7 calls instead of 9. For n = 50: about 100 calls instead of 25 billion.</li>
+    </ol>
+  </div>
+  <p>Each different question is now computed once, and each computation does O(1) work (one addition), so the time is <b>O(n)</b>. The memo holds n answers, so space is O(n) too. This is called <b>top-down DP</b>: you start from the big question and recurse down, caching as you go.</p>
+  <p>If you only remember one thing from this lesson: <b>memoization is the caching lesson applied to a function</b>. Key = the function&#39;s arguments, value = its result. It works whenever the function always returns the same answer for the same arguments.</p>
+
+  <h2>4. Step 3: the table (bottom-up)</h2>
+  <p>Look at the memo trace again: the answers were written down in the order 3, 4, 5. Smallest first. So skip the recursion and fill the notebook in that order yourself, starting from the base cases. That&#39;s the <b>table</b> version, also called <b>bottom-up DP</b> or <b>tabulation</b>.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 170" width="100%" role="img" aria-label="A table of ways for steps 1 to 6: 1, 2, 3, 5, 8, 13. Arrows show each cell is the sum of the two cells to its left." style="font-family:inherit">
+      <defs><marker id="dp-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+      <g style="font-size:12px;fill:var(--muted)">
+        <text x="40" y="40" text-anchor="middle">step</text>
+        <text x="40" y="84" text-anchor="middle">ways</text>
+      </g>
+      <g style="font-size:13px">
+        <text x="125" y="40" text-anchor="middle" style="fill:var(--muted)">1</text>
+        <text x="215" y="40" text-anchor="middle" style="fill:var(--muted)">2</text>
+        <text x="305" y="40" text-anchor="middle" style="fill:var(--muted)">3</text>
+        <text x="395" y="40" text-anchor="middle" style="fill:var(--muted)">4</text>
+        <text x="485" y="40" text-anchor="middle" style="fill:var(--muted)">5</text>
+        <text x="575" y="40" text-anchor="middle" style="fill:var(--muted)">6</text>
+        <rect x="85" y="58" width="80" height="40" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="125" y="83" text-anchor="middle" style="fill:currentColor">1</text>
+        <rect x="175" y="58" width="80" height="40" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="215" y="83" text-anchor="middle" style="fill:currentColor">2</text>
+        <rect x="265" y="58" width="80" height="40" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-width:1.5"/>
+        <text x="305" y="83" text-anchor="middle" style="fill:currentColor">3</text>
+        <rect x="355" y="58" width="80" height="40" rx="6" style="fill:var(--accent);fill-opacity:.14;stroke:var(--accent);stroke-width:1.5"/>
+        <text x="395" y="83" text-anchor="middle" style="fill:currentColor">5</text>
+        <rect x="445" y="58" width="80" height="40" rx="6" style="fill:var(--accent);fill-opacity:.14;stroke:var(--accent);stroke-width:1.5"/>
+        <text x="485" y="83" text-anchor="middle" style="fill:currentColor">8</text>
+        <rect x="535" y="58" width="80" height="40" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2.5"/>
+        <text x="575" y="83" text-anchor="middle" style="fill:currentColor;font-weight:700">13</text>
+      </g>
+      <path d="M395,100 C430,140 520,140 560,102" style="fill:none;stroke:var(--accent);stroke-width:1.6" marker-end="url(#dp-arr)"/>
+      <path d="M485,100 C510,125 540,125 568,102" style="fill:none;stroke:var(--accent);stroke-width:1.6" marker-end="url(#dp-arr)"/>
+      <text x="85" y="132" style="fill:currentColor;font-size:13px">base cases</text>
+      <text x="85" y="150" style="fill:var(--muted);font-size:12px">(given)</text>
+      <text x="620" y="150" text-anchor="end" style="fill:currentColor;font-size:13px">ways(6) = ways(5) + ways(4) = 8 + 5</text>
+    </svg>
+    <figcaption>The bottom-up table. Fill left to right; each cell only needs the two cells before it, which are already filled.</figcaption>
+  </figure>
+  <pre><code class="lang-js">function climbStairs(n) {
+  if (n &lt;= 2) return n;
+  const ways = new Array(n + 1);   // ways[k] = number of ways to reach step k
+  ways[1] = 1;                     // base cases
+  ways[2] = 2;
+  for (let k = 3; k &lt;= n; k++) {  // smallest to largest, so inputs are ready
+    ways[k] = ways[k - 1] + ways[k - 2];
+  }
+  return ways[n];
+}</code></pre>
+  <p>No recursion (so no stack-depth limits), O(n) time, O(n) space. And one last squeeze: each cell only looks at the <b>two</b> cells before it, so you don&#39;t need the whole array, just two variables. That drops space to <b>O(1)</b>:</p>
+  <pre><code class="lang-js">function climbStairs(n) {
+  if (n &lt;= 2) return n;
+  let twoBelow = 1, oneBelow = 2;          // ways(1), ways(2)
+  for (let k = 3; k &lt;= n; k++) {
+    const current = oneBelow + twoBelow;
+    twoBelow = oneBelow;
+    oneBelow = current;
+  }
+  return oneBelow;
+}</code></pre>
+  <table class="tbl">
+    <thead><tr><th>Version</th><th>Time</th><th>Space</th><th>When to use it</th></tr></thead>
+    <tbody>
+      <tr><td>Plain recursion</td><td>O(2<sup>n</sup>)</td><td>O(n) stack</td><td>Only to find and say the recurrence</td></tr>
+      <tr><td>Memoization (top-down)</td><td>O(n)</td><td>O(n)</td><td>Fastest to write from the recursion; good default in an interview</td></tr>
+      <tr><td>Table (bottom-up)</td><td>O(n)</td><td>O(n)</td><td>No recursion limits; easy to see the fill order</td></tr>
+      <tr><td>Table with rolling variables</td><td>O(n)</td><td>O(1)</td><td>When each cell needs only the last few cells; a nice follow-up</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. The four-step DP recipe</h2>
+  <p>Every DP problem in this lesson was solved the same way. Write these four things down (out loud in an interview) before any code:</p>
+  <ol>
+    <li><b>State</b>: define the sub-question in words. &quot;ways(k) = number of ways to reach step k.&quot; Most bugs come from a fuzzy definition here.</li>
+    <li><b>Recurrence</b>: how the answer for k uses smaller answers. Trick: <b>think about the last choice</b> (last step, last house, last coin, last letter).</li>
+    <li><b>Base cases</b>: the smallest questions you can answer directly (ways(1) = 1, ways(2) = 2).</li>
+    <li><b>Order and answer</b>: fill from small to large (or memoize), and say which cell is the final answer (ways[n]).</li>
+  </ol>
+  <p>Time complexity is then easy to state: <b>number of states × work per state</b>. Climbing stairs: n states × O(1) = O(n).</p>
+
+  <h2>6. Worked problem: house robber (take it or skip it)</h2>
+  <p><b>Problem.</b> Maya tutors after school. Each day pays a different amount, but she can&#39;t tutor two days in a row. This week&#39;s offers: <code>[2, 7, 9, 3, 1]</code> dollars (Mon to Fri). What&#39;s the most she can earn? (The classic name is &quot;House Robber&quot;: houses with money, can&#39;t rob two neighbours.)</p>
+  <p><b>Brute force.</b> Each day is take or skip: 2<sup>5</sup> = 32 schedules, throw out ones with two days in a row, take the best. For 100 days that&#39;s 2<sup>100</sup> schedules, which would take longer than the age of the universe. The repeated work: deciding Thursday and Friday is the same sub-question whether Monday was taken or not.</p>
+  <p><b>Greedy doesn&#39;t work either.</b> &quot;Take every other day&quot; gives 2 + 9 + 1 = 12 or 7 + 3 = 10 here, but for <code>[2, 1, 1, 2]</code> the best is 2 + 2 = 4 (skip two days in a row), which neither alternating pattern finds.</p>
+  <p><b>The recipe:</b></p>
+  <ol>
+    <li><b>State</b>: best(i) = the most she can earn using days 0 to i.</li>
+    <li><b>Recurrence</b> (last choice = day i): skip day i → best(i − 1). Take day i → pay[i] + best(i − 2) (day i − 1 must be skipped). best(i) = max of the two.</li>
+    <li><b>Base cases</b>: best(−1) = 0 (no days), best(0) = pay[0].</li>
+    <li><b>Answer</b>: best(last day).</li>
+  </ol>
+  <div class="trace">
+    <p><b>Trace: pay = [2, 7, 9, 3, 1]</b></p>
+    <ol>
+      <li><b>Mon</b> (2): take → 2 + 0 = 2; skip → 0. best = <b>2</b>.</li>
+      <li><b>Tue</b> (7): take → 7 + 0 = 7; skip → 2. best = <b>7</b>.</li>
+      <li><b>Wed</b> (9): take → 9 + best(Mon) = 9 + 2 = 11; skip → 7. best = <b>11</b>.</li>
+      <li><b>Thu</b> (3): take → 3 + best(Tue) = 3 + 7 = 10; skip → 11. best = <b>11</b>.</li>
+      <li><b>Fri</b> (1): take → 1 + best(Wed) = 1 + 11 = 12; skip → 11. best = <b>12</b>.</li>
+      <li><b>Answer: 12</b> (Mon + Wed + Fri). Five steps instead of 32 schedules.</li>
+    </ol>
+  </div>
+  <p>Each step looks back only two days, so two variables are enough: <b>O(n) time, O(1) space</b>. You&#39;ll write it in the second lab.</p>
+
+  <h2>7. Worked problem: coin change (fewest coins)</h2>
+  <p><b>Problem.</b> The school store uses odd tokens worth 1, 3 and 4 points. What&#39;s the fewest tokens that add up to exactly 6 points? (Return −1 if it can&#39;t be done.)</p>
+  <p><b>Greedy is the trap.</b> &quot;Biggest token first&quot; takes 4, then 1, then 1: 3 tokens. But 3 + 3 is 2 tokens. Greedy works for US coins by luck of their values; it doesn&#39;t work in general, and interviewers pick values that break it.</p>
+  <p><b>Brute force.</b> Recursively try every token at every step: fewest(6) tries fewest(5), fewest(3), fewest(2), each of which branches 3 ways again. For amount 100 the call tree has more than 10<sup>20</sup> nodes, while there are only 101 different questions (amounts 0 to 100); small amounts like fewest(2) get recomputed an astronomical number of times. Repeated sub-questions again.</p>
+  <p><b>The recipe:</b></p>
+  <ol>
+    <li><b>State</b>: fewest[a] = fewest tokens that make exactly a points.</li>
+    <li><b>Recurrence</b> (last choice = the last token used, c): the rest makes a − c as cheaply as possible. fewest[a] = 1 + min over tokens c ≤ a of fewest[a − c].</li>
+    <li><b>Base case</b>: fewest[0] = 0. Unreachable amounts stay at Infinity.</li>
+    <li><b>Answer</b>: fewest[amount], or −1 if it&#39;s still Infinity.</li>
+  </ol>
+  <div class="trace">
+    <p><b>Trace: tokens [1, 3, 4], amount 6</b> (∞ = can&#39;t make it)</p>
+    <table class="tbl">
+      <thead><tr><th>a</th><th>last token 1 → 1 + fewest[a−1]</th><th>last token 3 → 1 + fewest[a−3]</th><th>last token 4 → 1 + fewest[a−4]</th><th>fewest[a]</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td colspan="3">base case</td><td><b>0</b></td></tr>
+        <tr><td>1</td><td>1 + 0 = 1</td><td>too big</td><td>too big</td><td><b>1</b></td></tr>
+        <tr><td>2</td><td>1 + 1 = 2</td><td>too big</td><td>too big</td><td><b>2</b></td></tr>
+        <tr><td>3</td><td>1 + 2 = 3</td><td>1 + 0 = 1</td><td>too big</td><td><b>1</b></td></tr>
+        <tr><td>4</td><td>1 + 1 = 2</td><td>1 + 1 = 2</td><td>1 + 0 = 1</td><td><b>1</b></td></tr>
+        <tr><td>5</td><td>1 + 1 = 2</td><td>1 + 2 = 3</td><td>1 + 1 = 2</td><td><b>2</b></td></tr>
+        <tr><td>6</td><td>1 + 2 = 3</td><td>1 + 1 = 2</td><td>1 + 2 = 3</td><td><b>2</b> (3 + 3)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <pre><code class="lang-js">function coinChange(coins, amount) {
+  const fewest = new Array(amount + 1).fill(Infinity);   // amount + 1 cells: 0..amount
+  fewest[0] = 0;
+  for (let a = 1; a &lt;= amount; a++) {
+    for (const coin of coins) {
+      if (coin &lt;= a) fewest[a] = Math.min(fewest[a], fewest[a - coin] + 1);
+    }
+  }
+  return fewest[amount] === Infinity ? -1 : fewest[amount];
+}</code></pre>
+  <p>States: amount + 1. Work per state: one check per coin. So <b>O(amount × coins)</b> time, <b>O(amount)</b> space. For amount 10,000 with 4 coins, 40,000 steps. Third lab.</p>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Initialising a &quot;minimum&quot; table with 0 instead of Infinity. Then every <code>Math.min</code> returns 0 and the answer is always 0. For min problems start at Infinity (and translate it to −1 at the end); for max problems start at 0 or −Infinity; for &quot;number of ways&quot; start at 0 with the base case set to 1. The other classic: an array of size <code>amount</code> instead of <code>amount + 1</code>, so the cell you need for the answer doesn&#39;t exist.</p></div>
+
+  <h2>8. Two dimensions: longest common subsequence (concept)</h2>
+  <p>Some sub-questions need two numbers to describe them. Example from a reading app: the passage says <b>READ</b>, a student reads aloud and the speech-to-text hears <b>RAID</b>. How many letters did they get right, in order? A <b>subsequence</b> keeps the order but may skip items (R_A_D is a subsequence of READ). The <b>longest common subsequence</b> (LCS) of READ and RAID is RAD, length 3. This is the same idea that powers <code>git diff</code> and spell-checkers, usually on words or lines rather than letters.</p>
+  <ol>
+    <li><b>State</b>: lcs[i][j] = LCS length of the first i letters of word 1 and the first j letters of word 2.</li>
+    <li><b>Recurrence</b> (last letters): if they match, lcs[i][j] = lcs[i−1][j−1] + 1. If not, drop one or the other: max(lcs[i−1][j], lcs[i][j−1]).</li>
+    <li><b>Base cases</b>: row 0 and column 0 are 0 (an empty word shares nothing).</li>
+    <li><b>Answer</b>: the bottom-right cell.</li>
+  </ol>
+  <table class="tbl">
+    <thead><tr><th></th><th>&quot;&quot;</th><th>R</th><th>A</th><th>I</th><th>D</th></tr></thead>
+    <tbody>
+      <tr><td><b>&quot;&quot;</b></td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td><b>R</b></td><td>0</td><td><b>1</b> (R=R)</td><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td><b>E</b></td><td>0</td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td><b>A</b></td><td>0</td><td>1</td><td><b>2</b> (A=A)</td><td>2</td><td>2</td></tr>
+      <tr><td><b>D</b></td><td>0</td><td>1</td><td>2</td><td>2</td><td><b>3</b> (D=D)</td></tr>
+    </tbody>
+  </table>
+  <p>Fill row by row, left to right; each cell needs only the cell above, to the left, and diagonally up-left. States: (m + 1) × (n + 1); work per state: O(1). So <b>O(m × n)</b> time. For two 1,000-word passages, about a million cells: instant. Brute force would check all 2<sup>1000</sup> subsequences of one passage. You don&#39;t need to code this one from memory for most interviews; you do need to recognise &quot;two strings, compare in order&quot; as a 2D table.</p>
+
+  <h2>9. How to spot DP</h2>
+  <table class="tbl">
+    <thead><tr><th>You read...</th><th>Think...</th></tr></thead>
+    <tbody>
+      <tr><td>&quot;<b>number of ways</b>&quot; / &quot;how many distinct ways&quot;</td><td>Counting DP: ways[k] = sum over choices</td></tr>
+      <tr><td>&quot;<b>minimum cost</b> / fewest / <b>maximum</b> profit / longest / shortest&quot; with a choice at each step</td><td>Optimisation DP: best[k] = min/max over choices</td></tr>
+      <tr><td>&quot;can you reach / is it possible to make / can it be split&quot;</td><td>Boolean DP: ok[k] = any choice works</td></tr>
+      <tr><td>&quot;longest increasing subsequence&quot;, &quot;edit distance&quot;, &quot;common subsequence&quot; of two strings</td><td>DP over one index or a 2D table of two indexes</td></tr>
+      <tr><td>you wrote a recursion and the <b>same arguments</b> keep coming back</td><td>Memoize it: that&#39;s DP</td></tr>
+    </tbody>
+  </table>
+  <p>How it differs from its neighbours:</p>
+  <table class="tbl">
+    <thead><tr><th>Pattern</th><th>Gives you</th><th>Use it when</th></tr></thead>
+    <tbody>
+      <tr><td>Greedy</td><td>One pass, take the locally best choice</td><td>You can argue the local best is always safe (intervals by end time). Test it on a small counterexample first.</td></tr>
+      <tr><td>DP</td><td>Tries every choice, but each sub-question is solved once</td><td>Counting or best-of, and greedy has a counterexample</td></tr>
+      <tr><td>Backtracking</td><td>Lists every option</td><td>You must output all of them, and n is small</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Memoizing with a key that leaves out an argument. If your recursive function is <code>best(i, holding)</code> and you key the memo on <code>i</code> only, two different questions share one answer and the result is silently wrong. The key must include <b>every</b> argument that changes: <code>memo.get(i + &#39;,&#39; + holding)</code>. A cousin bug: a missing base case, which recurses into negative numbers until the stack overflows.</p></div>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;The brute force tries every choice and re-solves the same sub-question many times, so this is DP. Let me define the state: best of i is the most we can earn using the first i days. Thinking about the last choice, best of i is the max of skipping day i, best of i minus 1, or taking it, pay of i plus best of i minus 2. Base cases are zero days and one day. I&#39;ll fill it bottom-up; there are n states with constant work each, so O(n) time, and since I only look back two steps I can get space down to O(1).&quot;</p></div>
+
+  <div data-quiz='[
+    {"q":"Given a grid, count the number of distinct paths from the top-left to the bottom-right moving only right or down. Which approach fits?","o":["BFS shortest path","DP: paths[r][c] = paths[r-1][c] + paths[r][c-1]","Backtracking that lists every path, then count","Two pointers"],"a":1,"why":"Number of ways with a choice at each step, and the same cells are reached by many routes: counting DP. Each cell is reached from above or from the left. O(rows × cols)."},
+    {"q":"Climbing stairs, but you may take 1, 2 or 3 steps. What is the recurrence?","o":["ways(n) = ways(n-1) + ways(n-2)","ways(n) = ways(n-1) + ways(n-2) + ways(n-3)","ways(n) = 3 × ways(n-1)","ways(n) = ways(n-1) × ways(n-2)"],"a":1,"why":"Think about the last move: it was a 1, 2 or 3-step, so add the ways to reach each of those three earlier steps."},
+    {"q":"Why is plain recursive climbStairs(50) so slow?","o":["JavaScript recursion is slow in general","It recomputes the same sub-questions (like ways(10)) millions of times, so the number of calls grows exponentially","The numbers are too big for JavaScript","It uses too much memory"],"a":1,"why":"There are only 50 different questions, but the call tree doubles at each level (about 25 billion calls). Memoization computes each once: O(n)."},
+    {"q":"Given coin values and an amount, find the fewest coins. A teammate proposes always taking the biggest coin that fits. What do you say?","o":["Great, that is O(n) and always optimal","Greedy fails for coins like [1,3,4] and amount 6 (4+1+1 vs 3+3); use DP: fewest[a] = 1 + min fewest[a-c]","Use binary search on the number of coins","Use backtracking to list all combinations"],"a":1,"why":"Greedy is only correct for special coin systems. DP over amounts considers every last coin and is O(amount × coins)."},
+    {"q":"Given two strings, find the minimum number of single-letter inserts, deletes or replacements to turn one into the other. Which approach fits?","o":["Sliding window","Hash map of letter counts","2D DP over (prefix of word 1, prefix of word 2)","Topological sort"],"a":2,"why":"This is edit distance: like LCS, the state is a pair of prefix lengths, and the recurrence looks at the last letters of each. O(m × n)."},
+    {"q":"A house robber DP table uses best(i) = max(best(i-1), pay[i] + best(i-2)). What is the time and space if you keep only two variables?","o":["O(2^n) time, O(n) space","O(n) time, O(n) space","O(n) time, O(1) space","O(n log n) time, O(1) space"],"a":2,"why":"n states with O(1) work each gives O(n) time. Each step only needs the previous two answers, so two variables are enough: O(1) extra space."}
+  ]'></div>
+
+  <h2>Labs</h2>
+  <p>Do them in order: each one uses the same four-step recipe with a slightly harder recurrence. Try writing the plain recursion in your head first, then the memo, then the table.</p>
+  <div data-lab="dsa-climbing-stairs"></div>
+  <div data-lab="dsa-house-robber"></div>
+  <div data-lab="dsa-coin-change"></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>DP = recursion + not repeating yourself. If a brute force re-solves the same sub-question, DP applies.</li>
+    <li>The mechanical path: plain recursion (find the recurrence) → add a memo <code>Map</code> (top-down) → fill a table smallest-first (bottom-up) → keep only the cells you need.</li>
+    <li>The recipe: <b>state</b> in words, <b>recurrence</b> by thinking about the last choice, <b>base cases</b>, <b>order and answer</b>.</li>
+    <li>Time = number of states × work per state: climbing stairs O(n), house robber O(n), coin change O(amount × coins), LCS O(m × n).</li>
+    <li>Triggers: &quot;number of ways&quot;, &quot;min/max/fewest/longest&quot; with choices at each step, &quot;is it possible&quot;, two strings compared in order.</li>
+    <li>Greedy is faster when it&#39;s right; check it against a small counterexample. If it breaks, use DP. If you must list every option, use backtracking.</li>
+  </ul>
+</template>

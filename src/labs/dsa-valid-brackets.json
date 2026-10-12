@@ -1,0 +1,40 @@
+{
+  "id": "dsa-valid-brackets",
+  "title": "Valid parentheses",
+  "minutes": 10,
+  "prompt": "<p>PageTurn&#39;s quiz builder lets teachers type math expressions such as <code>{[(2+3)*4]-1}</code>. Before saving, reject expressions whose brackets don&#39;t balance.</p>\n<p>Write <code>isBalanced(text)</code> that returns <code>true</code> if every opener <code>(</code> <code>[</code> <code>{</code> is closed by the matching closer <code>)</code> <code>]</code> <code>}</code> in the right order, and <code>false</code> otherwise. Ignore every other character.</p>\n<p>Examples:</p>\n<ul>\n<li><code>isBalanced(&quot;{[(2+3)*4]-1}&quot;)</code> → <code>true</code></li>\n<li><code>isBalanced(&quot;()[]{}&quot;)</code> → <code>true</code></li>\n<li><code>isBalanced(&quot;([)]&quot;)</code> → <code>false</code> (closed in the wrong order)</li>\n<li><code>isBalanced(&quot;((&quot;)</code> → <code>false</code> (never closed)</li>\n<li><code>isBalanced(&quot;&quot;)</code> → <code>true</code></li>\n</ul>\n<p>Constraints: 0 ≤ <code>text.length</code> ≤ 10<sup>4</sup>.</p>",
+  "starter": "function isBalanced(text) {\n  // TODO: push openers onto a stack; on a closer, pop and check it matches.\n  return true;\n}",
+  "solution": "function isBalanced(text) {\n  const partner = { ')': '(', ']': '[', '}': '{' };\n  const open = [];\n  for (const ch of text) {\n    if (ch === '(' || ch === '[' || ch === '{') {\n      open.push(ch);\n    } else if (ch in partner) {\n      if (open.length === 0) return false;\n      if (open.pop() !== partner[ch]) return false;\n    }\n  }\n  return open.length === 0;\n}",
+  "tests": [
+    {
+      "name": "simple balanced strings",
+      "code": "assertEqual(isBalanced('()'), true);\nassertEqual(isBalanced('()[]{}'), true);"
+    },
+    {
+      "name": "nested expression with other characters",
+      "code": "assertEqual(isBalanced('{[(2+3)*4]-1}'), true);\nassertEqual(isBalanced('(((([[{{}}]]))))'), true);"
+    },
+    {
+      "name": "wrong type or wrong order",
+      "code": "assertEqual(isBalanced('(]'), false);\nassertEqual(isBalanced('([)]'), false);"
+    },
+    {
+      "name": "unclosed openers",
+      "code": "assertEqual(isBalanced('(('), false);\nassertEqual(isBalanced('{[()]'), false);"
+    },
+    {
+      "name": "closer with nothing open",
+      "code": "assertEqual(isBalanced(']'), false);\nassertEqual(isBalanced(')('), false);\nassertEqual(isBalanced('())'), false);"
+    },
+    {
+      "name": "empty string and no brackets at all",
+      "code": "assertEqual(isBalanced(''), true);\nassertEqual(isBalanced('2 + 3 = 5'), true);"
+    }
+  ],
+  "hints": [
+    "<p>Every closer must match the <b>most recent</b> opener that is still open. &quot;Most recent first&quot; is last-in-first-out: a stack.</p>",
+    "<p>Walk the string. Push openers. On a closer: if the stack is empty, it&#39;s invalid; otherwise pop and check the popped opener is its partner. At the end, the stack must be empty.</p>",
+    "<p>Shape:</p><pre><code>const partner = { ')': '(', ']': '[', '}': '{' };\nconst open = [];\nfor (const ch of text) {\n  if ('([{'.includes(ch)) open.push(ch);\n  else if (ch in partner) {\n    if (open.length === 0 || open.pop() !== partner[ch]) return false;\n  }\n}\nreturn open.length === 0;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n), space O(n)</b> in the worst case (a string of only openers). Each character is pushed and popped at most once. The repeated-deletion approach is O(n²) because it rescans the whole string for every pair.</p><p>Parsers for JSON, HTML and programming languages use exactly this idea (often an explicit or implicit stack of what&#39;s currently open) to catch &quot;unexpected token&quot; errors.</p><p><b>In an interview:</b> &quot;Each closer has to match the most recent unmatched opener, so I&#39;ll use a stack: push openers, pop and compare on closers, and require an empty stack at the end. O(n) time, O(n) space.&quot;</p>"
+}

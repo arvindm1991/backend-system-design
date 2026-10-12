@@ -1,0 +1,252 @@
+<template id="tpl-dsa-hashing" data-title="Hash maps &amp; sets" data-part="Part 5 · Coding patterns (DSA)" data-order="310">
+  <h1>Hash maps &amp; sets</h1>
+  <p class="lede">The hash map is the single most useful tool in coding interviews: it turns &quot;search the whole list&quot; into one step. After this lesson you&#39;ll recognize the four shapes it solves (counting, &quot;have I seen this?&quot;, complement lookup, grouping by a key), write each from a template using JavaScript&#39;s <code>Map</code> and <code>Set</code>, and solve Two Sum, Group Anagrams and Longest Consecutive Sequence in O(n).</p>
+
+  <h2>1. The trigger</h2>
+  <p>Think &quot;hash map or set&quot; when the problem says any of:</p>
+  <ul>
+    <li><b>&quot;count&quot;, &quot;frequency&quot;, &quot;how many times&quot;, &quot;most common&quot;, &quot;majority&quot;</b> → count with a map.</li>
+    <li><b>&quot;duplicate&quot;, &quot;unique&quot;, &quot;seen before&quot;, &quot;first repeated&quot;, &quot;contains&quot;</b> → remember with a set.</li>
+    <li><b>&quot;two numbers that add up to&quot;</b> on an <i>unsorted</i> array, or &quot;a pair with difference k&quot; → look up the partner.</li>
+    <li><b>&quot;anagram&quot;, &quot;group by&quot;, &quot;same pattern&quot;, &quot;isomorphic&quot;</b> → group by a computed key.</li>
+  </ul>
+  <p>And the deeper trigger, from the <a href="#dsa-approach">attack method</a>: your brute force has an <b>inner loop that searches for something</b>. If the inner loop&#39;s job is &quot;find the item equal to X&quot;, a hash map can do that job in one step.</p>
+
+  <h2>2. What a hash map actually does</h2>
+  <p>The running example for this lesson is a school reading app. It has a checkout log of book titles, page counts for every book, and weekly spelling lists.</p>
+  <p>Imagine the school library keeps checkouts on a paper list, in the order they happened. To answer &quot;has anyone checked out <i>Wonder</i>?&quot; the librarian reads the list from the top. With 5,000 checkouts, that&#39;s up to 5,000 lines read. That&#39;s an array and <code>includes</code>: O(n).</p>
+  <p>Now imagine a wall of 26 drawers labeled A to Z. Every checkout card goes into the drawer for the first letter of the title. To find <i>Wonder</i>, go straight to drawer W. You don&#39;t look at any other drawer. That&#39;s the idea of a hash map.</p>
+  <p>A real <b>hash map</b> does the same thing with a much better labeling rule. A <b>hash function</b> turns any key (a string, a number) into a number, and that number picks a slot (a <b>bucket</b>) in an internal array. Storing and finding a key both go: key → hash function → bucket → done. The cost doesn&#39;t depend on how many items are stored, so lookups, inserts and deletes are <b>O(1) on average</b>.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 260" width="100%" role="img" aria-label="Three keys pass through a hash function that maps each to a bucket index in an array of 8 buckets; looking up a key repeats the same calculation and goes straight to its bucket" style="font-family:inherit">
+      <defs><marker id="dsah-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <g style="font-size:13px">
+        <rect x="10" y="30" width="140" height="36" rx="7" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="80" y="53" text-anchor="middle" class="mono" style="fill:currentColor">&quot;holes&quot;</text>
+        <rect x="10" y="100" width="140" height="36" rx="7" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="80" y="123" text-anchor="middle" class="mono" style="fill:currentColor">&quot;wonder&quot;</text>
+        <rect x="10" y="170" width="140" height="36" rx="7" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="80" y="193" text-anchor="middle" class="mono" style="fill:currentColor">&quot;matilda&quot;</text>
+        <rect x="220" y="70" width="150" height="100" rx="10" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="295" y="112" text-anchor="middle" style="fill:currentColor;font-weight:600">hash function</text>
+        <text x="295" y="132" text-anchor="middle" style="fill:var(--muted);font-size:12px">key → number → slot</text>
+      </g>
+      <line x1="150" y1="48" x2="216" y2="95" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsah-arr)"/>
+      <line x1="150" y1="118" x2="216" y2="118" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsah-arr)"/>
+      <line x1="150" y1="188" x2="216" y2="145" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsah-arr)"/>
+      <g style="font-size:12px">
+        <text x="560" y="20" text-anchor="middle" style="fill:var(--muted)">buckets (internal array)</text>
+        <g style="fill:var(--surface);stroke:var(--line)">
+          <rect x="480" y="28" width="160" height="26"/><rect x="480" y="54" width="160" height="26"/><rect x="480" y="80" width="160" height="26"/><rect x="480" y="106" width="160" height="26"/>
+          <rect x="480" y="132" width="160" height="26"/><rect x="480" y="158" width="160" height="26"/><rect x="480" y="184" width="160" height="26"/><rect x="480" y="210" width="160" height="26"/>
+        </g>
+        <g style="fill:var(--muted)" text-anchor="end">
+          <text x="470" y="46">0</text><text x="470" y="72">1</text><text x="470" y="98">2</text><text x="470" y="124">3</text><text x="470" y="150">4</text><text x="470" y="176">5</text><text x="470" y="202">6</text><text x="470" y="228">7</text>
+        </g>
+        <text x="490" y="72" class="mono" style="fill:currentColor">holes → 3 checkouts</text>
+        <rect x="480" y="132" width="160" height="26" style="fill:none;stroke:var(--accent);stroke-width:2"/>
+        <text x="490" y="150" class="mono" style="fill:currentColor">wonder → 7 checkouts</text>
+        <text x="490" y="228" class="mono" style="fill:currentColor">matilda → 2 checkouts</text>
+      </g>
+      <line x1="370" y1="100" x2="450" y2="67" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsah-arr)"/>
+      <line x1="370" y1="125" x2="450" y2="144" style="stroke:var(--accent);stroke-width:2" marker-end="url(#dsah-arr)"/>
+      <line x1="370" y1="150" x2="450" y2="220" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dsah-arr)"/>
+      <text x="190" y="248" text-anchor="middle" style="fill:currentColor;font-size:12px">get(&quot;wonder&quot;): same math → bucket 4. No scanning.</text>
+    </svg>
+    <figcaption>A hash map turns a key into a bucket number. Finding a key repeats that calculation instead of searching, so it costs the same with 3 keys or 3 million.</figcaption>
+  </figure>
+  <p>Two keys can land in the same bucket (a <b>collision</b>); the bucket then holds a short list. Good hash functions and automatic resizing keep those lists tiny, which is why we say O(1) <i>average</i>. The worst case (everything in one bucket) is O(n), but with built-in maps you can ignore it in interviews unless asked.</p>
+  <p>A <b>hash set</b> is the same machine with keys only, no values. It answers one question: &quot;is this in here?&quot;</p>
+
+  <h2>3. The JavaScript tools: Map, Set, and plain objects</h2>
+  <table class="tbl">
+    <thead><tr><th>Tool</th><th>Use it for</th><th>Key operations (all O(1) average)</th></tr></thead>
+    <tbody>
+      <tr><td><code>new Map()</code></td><td>key → value: counts, indexes, groups</td><td><code>m.set(k, v)</code>, <code>m.get(k)</code>, <code>m.has(k)</code>, <code>m.delete(k)</code>, <code>m.size</code></td></tr>
+      <tr><td><code>new Set()</code></td><td>&quot;have I seen it?&quot;, dedupe</td><td><code>s.add(x)</code>, <code>s.has(x)</code>, <code>s.delete(x)</code>, <code>s.size</code></td></tr>
+      <tr><td><code>{}</code> plain object</td><td>Quick counts with string keys</td><td><code>obj[k] = v</code>, <code>k in obj</code></td></tr>
+    </tbody>
+  </table>
+  <p>Prefer <code>Map</code> and <code>Set</code> in interviews. A plain object turns every key into a string (so the number <code>1</code> and the string <code>&quot;1&quot;</code> collide), and it comes with inherited keys like <code>&quot;constructor&quot;</code> that can surprise you. A <code>Map</code> keeps any key type exactly as given and remembers insertion order, which is handy for &quot;first&quot; questions.</p>
+  <pre><code class="lang-js">const checkouts = ['holes', 'wonder', 'matilda', 'wonder'];
+
+const unique = new Set(checkouts);       // Set { 'holes', 'wonder', 'matilda' }
+unique.has('wonder');                    // true, O(1)
+const deduped = [...new Set(checkouts)]; // ['holes', 'wonder', 'matilda'], O(n), keeps first-seen order
+
+const counts = new Map();
+for (const title of checkouts) {
+  counts.set(title, (counts.get(title) || 0) + 1);
+}
+// Map { 'holes' =&gt; 1, 'wonder' =&gt; 2, 'matilda' =&gt; 1 }</code></pre>
+
+  <h2>4. The four shapes (templates)</h2>
+  <p>Almost every hash map solution is one of these four loops. In TypeScript you&#39;d just add types, e.g. <code>new Map&lt;string, number&gt;()</code>.</p>
+  <h3>Shape 1: Count (frequency map)</h3>
+  <pre><code class="lang-js">function countEach(items) {
+  const counts = new Map();                 // item -&gt; how many times
+  for (const item of items) {
+    counts.set(item, (counts.get(item) || 0) + 1);
+  }
+  return counts;
+}</code></pre>
+  <h3>Shape 2: Have I seen this before? (set)</h3>
+  <pre><code class="lang-js">function firstRepeat(items) {
+  const seen = new Set();
+  for (const item of items) {
+    if (seen.has(item)) return item;        // check BEFORE adding
+    seen.add(item);
+  }
+  return null;
+}</code></pre>
+  <h3>Shape 3: Complement lookup (find the partner)</h3>
+  <pre><code class="lang-js">function findPair(nums, target) {
+  const indexOf = new Map();                // value -&gt; index where we saw it
+  for (let i = 0; i &lt; nums.length; i++) {
+    const partner = target - nums[i];       // the value that would complete the pair
+    if (indexOf.has(partner)) return [indexOf.get(partner), i];
+    indexOf.set(nums[i], i);                // add AFTER checking
+  }
+  return [];
+}</code></pre>
+  <h3>Shape 4: Group by a key</h3>
+  <pre><code class="lang-js">function groupBy(items, keyOf) {
+  const groups = new Map();                 // key -&gt; array of items with that key
+  for (const item of items) {
+    const key = keyOf(item);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  return [...groups.values()];
+}</code></pre>
+  <p>The thinking in each case: <b>what do I wish I could look up instantly?</b> That thing is the key. What do I need back when I find it? That&#39;s the value.</p>
+
+  <h2>5. Worked problem: the first book checked out twice</h2>
+  <p><b>Problem:</b> given the checkout log in order, return the first title that appears a second time (or <code>null</code>).</p>
+  <p><b>Brute force:</b> for each checkout, look back through all earlier checkouts for the same title.</p>
+  <pre><code class="lang-js">function firstRepeatBrute(log) {
+  for (let i = 0; i &lt; log.length; i++) {
+    for (let j = 0; j &lt; i; j++) {
+      if (log[j] === log[i]) return log[i];
+    }
+  }
+  return null;
+}
+// O(n^2) time: the inner loop re-reads the whole history for every new checkout.</code></pre>
+  <p><b>The repeated work:</b> the inner loop is a search (&quot;is <code>log[i]</code> anywhere in the history?&quot;) over a history that only ever grows by one. Keep the history in a <code>Set</code> and the search is one <code>has</code> call. That&#39;s Shape 2.</p>
+  <div class="trace">
+    <div class="trace-title">Trace: firstRepeat([&#39;holes&#39;, &#39;wonder&#39;, &#39;matilda&#39;, &#39;wonder&#39;, &#39;dogman&#39;])</div>
+    <ol>
+      <li><code>&#39;holes&#39;</code>: <code>seen.has</code> → <span class="no">false</span>. Add. seen = {holes}</li>
+      <li><code>&#39;wonder&#39;</code>: not seen. Add. seen = {holes, wonder}</li>
+      <li><code>&#39;matilda&#39;</code>: not seen. Add. seen = {holes, wonder, matilda}</li>
+      <li><code>&#39;wonder&#39;</code>: <code>seen.has</code> → <span class="yes">true</span>. Return <code>&#39;wonder&#39;</code>. We never look at <code>&#39;dogman&#39;</code>.</li>
+    </ol>
+  </div>
+  <p><b>Result:</b> O(n) time (one pass, each step O(1)), O(n) space (the set can hold every title). We traded memory for time.</p>
+
+  <h2>6. Worked problem: Two Sum (complement lookup)</h2>
+  <p><b>Problem:</b> a student wants to read exactly 500 pages this month in two books. Given <code>pages = [320, 150, 410, 180, 60]</code> and <code>goal = 500</code>, return the indexes of the two books that add up to exactly the goal. (This is LeetCode&#39;s Two Sum, the most-asked interview question there is.)</p>
+  <p><b>Brute force:</b> try every pair <code>i &lt; j</code>. O(n²): 10 pairs here, 5 billion for 100,000 books.</p>
+  <p><b>The repeated work:</b> for book <code>i</code>, the inner loop is searching for one specific number: <code>goal − pages[i]</code>, its <b>complement</b> (the partner value that completes the sum). &quot;Search for a specific value&quot; is exactly what a hash map does in O(1). So walk once, and for each book ask the map: &quot;have I already seen my complement?&quot; If not, record this book so a <i>later</i> book can find it.</p>
+  <div class="trace">
+    <div class="trace-title">Trace: findPair([320, 150, 410, 180, 60], 500)</div>
+    <table class="tbl">
+      <thead><tr><th>i</th><th>pages[i]</th><th>complement = 500 − pages[i]</th><th>in map?</th><th>map after (value → index)</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>320</td><td>180</td><td class="no">no</td><td>{320→0}</td></tr>
+        <tr><td>1</td><td>150</td><td>350</td><td class="no">no</td><td>{320→0, 150→1}</td></tr>
+        <tr><td>2</td><td>410</td><td>90</td><td class="no">no</td><td>{320→0, 150→1, 410→2}</td></tr>
+        <tr><td>3</td><td>180</td><td>320</td><td class="yes">yes, index 0</td><td>return <b>[0, 3]</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 200" width="100%" role="img" aria-label="At index 3, value 180 computes complement 320 and finds it in the map at index 0, returning indexes 0 and 3" style="font-family:inherit">
+      <defs><marker id="dsah-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+      <g style="font-size:14px" text-anchor="middle">
+        <rect x="30" y="40" width="80" height="44" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="70" y="67" class="mono" style="fill:currentColor">320</text>
+        <rect x="110" y="40" width="80" height="44" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="150" y="67" class="mono" style="fill:currentColor">150</text>
+        <rect x="190" y="40" width="80" height="44" rx="6" style="fill:var(--surface);stroke:var(--line)"/><text x="230" y="67" class="mono" style="fill:currentColor">410</text>
+        <rect x="270" y="40" width="80" height="44" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2.5"/><text x="310" y="67" class="mono" style="fill:currentColor">180</text>
+        <rect x="350" y="40" width="80" height="44" rx="6" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:4 3"/><text x="390" y="67" class="mono" style="fill:var(--muted)">60</text>
+        <g style="fill:var(--muted);font-size:12px"><text x="70" y="30">0</text><text x="150" y="30">1</text><text x="230" y="30">2</text><text x="310" y="30">3 ← i</text><text x="390" y="30">4</text></g>
+      </g>
+      <rect x="30" y="110" width="320" height="34" rx="6" style="fill:none;stroke:var(--line);stroke-dasharray:4 3"/>
+      <text x="190" y="132" text-anchor="middle" style="fill:var(--muted);font-size:12px">already in the map: 320→0, 150→1, 410→2</text>
+      <rect x="470" y="40" width="210" height="104" rx="10" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="575" y="66" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">ask the map</text>
+      <text x="575" y="90" text-anchor="middle" class="mono" style="fill:currentColor;font-size:13px">has(500 − 180 = 320)?</text>
+      <text x="575" y="114" text-anchor="middle" style="fill:var(--ok);font-size:13px;font-weight:600">yes → index 0</text>
+      <text x="575" y="134" text-anchor="middle" style="fill:var(--muted);font-size:12px">one O(1) lookup, no inner loop</text>
+      <path d="M330,84 C345,102 430,102 466,100" style="fill:none;stroke:var(--accent);stroke-width:2" marker-end="url(#dsah-arr2)"/>
+      <text x="350" y="182" text-anchor="middle" style="fill:currentColor;font-size:13px">answer: [0, 3] → 320 + 180 = 500</text>
+    </svg>
+    <figcaption>The map holds everything to the left of i. Each new value asks one question about its partner instead of scanning the left side.</figcaption>
+  </figure>
+  <p><b>Result:</b> O(n) time, O(n) space. Why check <i>before</i> adding? So a book can&#39;t pair with itself: with <code>goal = 640</code> and 320 in the list once, checking first means 320 doesn&#39;t find its own entry.</p>
+  <div class="callout tip"><span class="callout-label">If the array were sorted</span><p>Then you don&#39;t need the map: put one pointer at each end and move them inward (O(n) time, O(1) space). That&#39;s the <a href="#dsa-two-pointers">two pointers</a> lesson. &quot;Unsorted + pair&quot; → hash map. &quot;Sorted + pair&quot; → two pointers.</p></div>
+  <div data-lab="dsa-two-sum"></div>
+
+  <h2>7. Worked problem: anagrams (counting and grouping)</h2>
+  <p>Two words are <b>anagrams</b> if they use exactly the same letters the same number of times: <code>listen</code> and <code>silent</code>.</p>
+  <h3>Is it an anagram?</h3>
+  <p><b>Brute force:</b> for each letter of the first word, search the second word for a matching unused letter and cross it out. That&#39;s a search inside a loop: O(n²) for words of length n.</p>
+  <p><b>Better:</b> the question is really &quot;do they have the same letter counts?&quot; That&#39;s Shape 1. Count up for the first word, count down for the second; every count must end at zero.</p>
+  <pre><code class="lang-js">function isAnagram(a, b) {
+  if (a.length !== b.length) return false;
+  const counts = new Map();                         // letter -&gt; net count
+  for (const ch of a) counts.set(ch, (counts.get(ch) || 0) + 1);
+  for (const ch of b) {
+    if (!counts.get(ch)) return false;              // missing OR 0: either way, a ran out of this letter
+    counts.set(ch, counts.get(ch) - 1);
+  }
+  return true;
+}
+// O(n) time; space is O(number of distinct letters), at most 26 for lowercase English: O(1).</code></pre>
+  <p>(Sorting both words and comparing, <code>[...a].sort().join(&#39;&#39;) === [...b].sort().join(&#39;&#39;)</code>, is O(n log n) and perfectly fine to mention as a simpler option.)</p>
+  <h3>Group the anagrams in a spelling list</h3>
+  <p><b>Problem:</b> the spelling list is <code>[&#39;tea&#39;, &#39;eat&#39;, &#39;ate&#39;, &#39;tan&#39;, &#39;nat&#39;, &#39;bat&#39;]</code>. Group words that are anagrams of each other.</p>
+  <p><b>Brute force:</b> compare every word with every other word using <code>isAnagram</code>, and union them into groups. O(n²) comparisons.</p>
+  <p><b>The repeated work:</b> we keep comparing pairs to discover something each word could tell us by itself. Give every word a <b>signature</b> that is identical for all its anagrams, and use it as a map key: Shape 4. The easiest signature is the word&#39;s letters sorted: <code>tea</code>, <code>eat</code> and <code>ate</code> all become <code>aet</code>.</p>
+  <div class="trace">
+    <div class="trace-title">Trace: group by sorted letters</div>
+    <ol>
+      <li><code>tea</code> → key <code>aet</code> (new). groups = {aet: [tea]}</li>
+      <li><code>eat</code> → key <code>aet</code> (exists). groups = {aet: [tea, eat]}</li>
+      <li><code>ate</code> → key <code>aet</code>. groups = {aet: [tea, eat, ate]}</li>
+      <li><code>tan</code> → key <code>ant</code> (new). groups = {aet: [...], ant: [tan]}</li>
+      <li><code>nat</code> → key <code>ant</code>. groups = {aet: [...], ant: [tan, nat]}</li>
+      <li><code>bat</code> → key <code>abt</code> (new). Result: <span class="yes">[[tea, eat, ate], [tan, nat], [bat]]</span></li>
+    </ol>
+  </div>
+  <p><b>Result:</b> n words of length up to k: each key costs O(k log k) to sort, so O(n · k log k) time, O(n · k) space. Compared with O(n²) pair checks, that&#39;s the difference between 10,000 words taking a moment and taking minutes.</p>
+  <div data-lab="dsa-group-anagrams"></div>
+
+  <h2>8. When the set answers a smarter question</h2>
+  <p>Sometimes the clever part is <i>what</i> you ask the set. <b>Longest consecutive sequence:</b> given reading-streak days like <code>[100, 4, 200, 1, 3, 2]</code>, find the longest run of consecutive numbers (here 1, 2, 3, 4 → length 4), in O(n), without sorting.</p>
+  <p>Put every number in a set. Then only start counting from a number that <b>begins</b> a run, which you can tell in O(1): <code>!set.has(x - 1)</code>. From a start, count upward while <code>set.has(next)</code>. Each number is counted as part of exactly one run, so the total work is O(n) even though there&#39;s a <code>while</code> inside the <code>for</code>. The lab below is this problem.</p>
+  <div data-lab="dsa-longest-consecutive"></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistakes</span><p><b>1. Adding before checking</b> in complement problems, so an element pairs with itself (Two Sum with <code>[3, 5]</code> and target 6 wrongly returns <code>[0, 0]</code>). <b>2. Testing a count with <code>if (map.get(k))</code></b> when the stored value can be <code>0</code>; use <code>map.has(k)</code>. <b>3. Using arrays or objects as Map keys:</b> <code>map.set([1, 2], &#39;x&#39;)</code> then <code>map.get([1, 2])</code> is <code>undefined</code>, because two arrays are different objects. Turn them into a string key like <code>&#39;1,2&#39;</code>. <b>4. Using a plain object for numeric keys</b> and being surprised that <code>Object.keys</code> gives back strings.</p></div>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;The brute force has an inner loop that searches for one specific value, the complement. I&#39;ll keep a hash map from value to index of everything I&#39;ve seen so far, so each lookup is O(1). That makes it one pass: O(n) time, and O(n) extra space for the map, which I think is the right trade here.&quot;</p></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q":"Given an unsorted array, return true if any value appears at least twice. Which approach fits best?","o":["Nested loops comparing every pair","A Set: return true as soon as set.has(x) before adding x","Binary search for each element","A sliding window of size 2"],"a":1,"why":"Have I seen this before? is the Set trigger. One pass, O(n) time, O(n) space. Nested loops are O(n²)."},
+    {"q":"Find the most common word in a passage of 50,000 words. What is the core tool?","o":["Sort the words and binary search","A frequency Map: word to count, then take the max","Two pointers from each end","A stack of words"],"a":1,"why":"Most common is the counting trigger. Count each word in a Map in O(n), then scan the map once for the largest count."},
+    {"q":"Two Sum on a SORTED array with O(1) extra space required. What fits best?","o":["Hash map of value to index","Two pointers from both ends","Group by key","Prefix sums"],"a":1,"why":"The hash map works but uses O(n) space. Sorted input plus a pair is the two pointers trigger: move the left pointer up if the sum is too small, the right pointer down if it is too big."},
+    {"q":"Group words that are anagrams of each other. What key makes all anagrams land in the same Map entry?","o":["The word itself","The word length","The word with its letters sorted","The first letter"],"a":2,"why":"Sorting the letters gives the same signature for every anagram (tea, eat, ate all become aet). Length or first letter would merge words that are not anagrams."},
+    {"q":"In Two Sum with a map, why do you check for the complement BEFORE adding the current number?","o":["It is faster","So a number cannot pair with itself","Maps do not allow overwriting","It keeps the map sorted"],"a":1,"why":"If you add first, target = 6 with a single 3 would find its own entry and return the same index twice."},
+    {"q":"What is the average time cost of map.get(key) on a JavaScript Map holding 1 million entries?","o":["O(1)","O(log n)","O(n)","O(n²)"],"a":0,"why":"Hashing jumps straight to the bucket, so the cost does not grow with the number of entries (on average)."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>A hash map turns a key into a bucket number, so <b>get, set, has and delete are O(1) on average</b>. A set is the same thing with keys only.</li>
+    <li>Trigger: count/frequency, duplicate/seen before, a pair that sums to a target in an <i>unsorted</i> array, anagram/group by. Or any brute force whose inner loop <b>searches for a specific value</b>.</li>
+    <li>Four shapes: <b>count</b> (<code>map.set(k, (map.get(k) || 0) + 1)</code>), <b>seen</b> (Set, check before add), <b>complement</b> (map of value → index), <b>group by key</b> (map of key → array).</li>
+    <li>Use <code>Map</code>/<code>Set</code> over plain objects; use string keys for compound keys; use <code>has</code> to test presence.</li>
+    <li>The usual trade: <b>O(n) extra space for O(n²) → O(n) time</b>. Say it out loud.</li>
+  </ul>
+</template>

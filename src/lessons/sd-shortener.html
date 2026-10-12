@@ -1,0 +1,218 @@
+<template id="tpl-sd-shortener" data-title="Case: URL shortener" data-part="Part 4 · System design" data-order="160">
+  <h1>Case study: URL shortener</h1>
+  <p class="lede">The URL shortener is the "hello world" of system design: tiny API, huge read volume, and one genuinely interesting problem (generating short, unique codes). After this lesson you can run the full six steps on it in 40 minutes, explain three ways to generate codes and what each costs, and handle the follow-ups about viral links, analytics and abuse.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: a link shortener like bit.ly. A teacher pastes <code>https://library.example.com/books/charlottes-web/chapter-3?utm_source=newsletter</code> and gets <code>sho.rt/2TX9a1Q</code> to put on a slide.</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>Create a short link for a long URL; optionally a custom alias (<code>sho.rt/field-trip</code>).</li>
+    <li>Visiting the short link redirects to the long URL.</li>
+    <li>Links can expire (optional expiry date).</li>
+    <li>The owner sees click counts per day (nice to have).</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li>Redirects are fast: under ~20 ms at the server at p99 (the 99th percentile: 99 of 100 requests are faster).</li>
+    <li>Redirects are highly available. A broken short link on a printed worksheet is a broken worksheet.</li>
+    <li>Codes are unique forever and not trivially guessable (you shouldn't be able to walk through everyone's links).</li>
+    <li>Analytics can lag by minutes.</li>
+  </ul>
+  <p><b>Out of scope:</b> user accounts and billing (assume an existing auth service), link editing UI.</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Writes.</b> Assume 100 million new links per month. A month is about 2.6 million seconds (30 × 86,400). 100,000,000 / 2,600,000 ≈ <b>40 writes/second</b> on average; with a 3–5× peak, about 120–200/second. Tiny.</li>
+      <li><b>Reads.</b> Assume 100 redirects per link created (read:write = 100:1). 10 billion redirects/month / 2.6 million s ≈ <b>3,900 reads/second</b> average, peaking around 15,000–20,000/second.</li>
+      <li><b>Storage per link.</b> Code 7 bytes, long URL ~100–200 bytes (allow up to 2 KB), owner ID, timestamps, plus index overhead: call it <b>~500 bytes</b>.</li>
+      <li><b>Total storage.</b> 100 M/month × 12 × 5 years = 6 billion links × 500 B = <b>3 TB</b>. Fits on a handful of database nodes.</li>
+      <li><b>Cache.</b> Traffic is skewed (a small share of links get most clicks). If the hot set is 10–20 million links × 500 B, that's <b>5–10 GB</b>: one Redis node's worth of memory.</li>
+      <li><b>Code length.</b> Using base62 (characters 0–9, a–z, A–Z): 62<sup>6</sup> ≈ 57 billion, 62<sup>7</sup> ≈ 3.5 trillion. We need 6 billion. Six characters would technically fit, but then 10% of all possible codes are taken and guessing is easy. <b>Seven characters</b> keeps the space under 0.2% full.</li>
+    </ol>
+  </div>
+  <p>Conclusion to say out loud: "This is a read-heavy system with a small dataset. The write path is easy; the interesting parts are code generation and making reads fast and always available."</p>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-http">POST /v1/links
+Authorization: Bearer &lt;token&gt;
+Idempotency-Key: 6f1c...            (retries don't create duplicates)
+{ "long_url": "https://library.example.com/books/...",
+  "custom_alias": "field-trip",      (optional)
+  "expires_at": "2027-06-30T00:00:00Z" }   (optional)
+
+201 Created
+{ "code": "2TX9a1Q", "short_url": "https://sho.rt/2TX9a1Q", "expires_at": "..." }
+409 Conflict   when the custom alias is taken
+
+GET /{code}
+302 Found
+Location: https://library.example.com/books/...
+404 Not Found  (unknown)   410 Gone  (expired or disabled)
+
+GET /v1/links/{code}/stats?from=2026-10-01&amp;to=2026-10-07
+{ "daily": [ { "date": "2026-10-01", "clicks": 412 }, ... ] }</code></pre>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">CREATE TABLE links (
+  code        VARCHAR(16) PRIMARY KEY,   -- '2TX9a1Q' or a custom alias
+  long_url    TEXT NOT NULL,
+  owner_id    BIGINT NOT NULL,
+  is_custom   BOOLEAN NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL,
+  expires_at  TIMESTAMPTZ,               -- NULL = never
+  disabled    BOOLEAN NOT NULL DEFAULT false   -- abuse takedowns
+);
+CREATE INDEX links_by_owner ON links (owner_id, created_at DESC);
+
+-- analytics lives elsewhere (a columnar store), keyed by (code, day)
+-- click_counts(code, day, clicks)</code></pre>
+  <p>The main access pattern is a point lookup by <code>code</code>, which suits both a key-value store (DynamoDB, Cassandra) and a sharded SQL database. With 3 TB and 40 writes/second, either works; pick what your team operates well.</p>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 760 410" width="100%" role="img" aria-label="URL shortener architecture" xmlns="http://www.w3.org/2000/svg" style="max-width:760px;font-family:inherit">
+
+<rect x="20" y="155" width="110" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="75.0" y="185.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Browser / app</text>
+<rect x="165" y="155" width="120" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="225.0" y="185.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Load balancer</text>
+<rect x="330" y="60" width="140" height="52" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="400.0" y="83.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Write API</text>
+<text x="400.0" y="98.0" text-anchor="middle" font-size="12" fill="var(--muted)">POST /links</text>
+<rect x="330" y="250" width="140" height="52" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="400.0" y="273.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Redirect service</text>
+<text x="400.0" y="288.0" text-anchor="middle" font-size="12" fill="var(--muted)">GET /:code</text>
+<rect x="540" y="18" width="190" height="52" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="635.0" y="41.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">ID range allocator</text>
+<text x="635.0" y="56.0" text-anchor="middle" font-size="12" fill="var(--muted)">hands out blocks of 1M</text>
+<path d="M560,128 a80.0,8 0 0,0 160,0 a80.0,8 0 0,0 -160,0 v64 a80.0,8 0 0,0 160,0 v-64" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="640.0" y="162.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Links DB</text>
+<text x="640.0" y="177.0" text-anchor="middle" font-size="12" fill="var(--muted)">KV, sharded by code</text>
+<rect x="540" y="250" width="190" height="52" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="635.0" y="273.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Redis cache</text>
+<text x="635.0" y="288.0" text-anchor="middle" font-size="12" fill="var(--muted)">hot codes, ~5-10 GB</text>
+<rect x="330" y="345" width="140" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="460" y1="353" x2="460" y2="383" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="453" y1="353" x2="453" y2="383" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="446" y1="353" x2="446" y2="383" stroke="currentColor" stroke-opacity=".45"/>
+<text x="388.0" y="373.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Click events</text>
+<rect x="540" y="345" width="190" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="635.0" y="365.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Analytics jobs</text>
+<text x="635.0" y="380.0" text-anchor="middle" font-size="12" fill="var(--muted)">clicks per code per day</text>
+<path d="M130.0,180.0 L162.0,180.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M162.0,180.0 L153.0,184.5 L153.0,175.5 Z" fill="currentColor"/>
+<path d="M271.5,155.0 L349.0,113.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M349.0,113.4 L343.2,121.6 L338.9,113.7 Z" fill="currentColor"/>
+<path d="M270.6,205.0 L350.0,248.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M350.0,248.6 L339.9,248.2 L344.2,240.3 Z" fill="currentColor"/>
+<path d="M470.0,73.5 L537.0,61.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M537.0,61.5 L529.0,67.5 L527.4,58.7 Z" fill="currentColor"/>
+<path d="M470.0,107.6 L557.1,134.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M557.1,134.4 L547.2,136.1 L549.9,127.5 Z" fill="currentColor"/>
+<path d="M470.0,276.0 L537.0,276.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M537.0,276.0 L528.0,280.5 L528.0,271.5 Z" fill="currentColor"/>
+<path d="M453.8,250.0 L557.3,200.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M557.3,200.0 L551.2,207.9 L547.2,199.8 Z" fill="currentColor"/>
+<path d="M400.0,302.0 L400.0,342.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M400.0,342.0 L395.5,333.0 L404.5,333.0 Z" fill="currentColor"/>
+<path d="M470.0,368.0 L537.0,368.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M537.0,368.0 L528.0,372.5 L528.0,363.5 Z" fill="currentColor"/>
+<text x="503.5" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">next block</text>
+<text x="507.6" y="113.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">insert</text>
+<text x="503.5" y="268.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">1 get</text>
+<text x="471.5" y="225.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">2 on miss</text>
+<text x="430.0" y="326.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">3 async</text>
+</svg>
+    <figcaption>Two separate paths. Writes are rare and go through the Write API. Redirects are the hot path: cache first, database on a miss, and analytics sent asynchronously so they never slow a redirect.</figcaption>
+  </figure>
+  <p><b>Write path.</b> The Write API validates the URL, checks it against a malware/phishing list, gets the next ID from its local block (see deep dive 1), encodes it as a 7-character code, and inserts the row. If a custom alias is requested it inserts that directly; the primary key makes the insert fail if the alias is taken, which becomes a 409.</p>
+  <p><b>Read path.</b> The Redirect service looks up the code in Redis. On a hit (the vast majority) it returns the redirect in about a millisecond. On a miss it reads the database, fills the cache, and redirects. Either way it fires a click event onto a queue and does not wait for it.</p>
+
+  <h2>6. Deep dive: generating unique short codes</h2>
+  <p>This is the question the interviewer is waiting for. There are three families of answers.</p>
+  <table class="tbl">
+    <thead><tr><th>Approach</th><th>How it works</th><th>Gives you</th><th>Costs you</th></tr></thead>
+    <tbody>
+      <tr><td>Hash the URL</td><td>Take the first 7 base62 characters of a hash (e.g. SHA-256) of the long URL</td><td>Same URL → same code (free dedupe); no coordination</td><td>Collisions as the table fills: you must check and re-hash with a salt; can't give two owners separate analytics for the same URL</td></tr>
+      <tr><td>Random code</td><td>Generate 7 random base62 characters; insert; retry if the key exists</td><td>Unguessable; no coordination</td><td>An extra round trip on collision (≈0.17% of inserts when 6 B of 3.5 T codes are used); needs a uniqueness check on every write</td></tr>
+      <tr><td>Counter + encode</td><td>Each server takes a block of IDs (e.g. 1,000,000) from a central counter, then converts the number to base62</td><td>Never collides; no read-before-write; very fast</td><td>Sequential codes are guessable unless you scramble them; the block allocator is a (tiny) central dependency</td></tr>
+    </tbody>
+  </table>
+  <p>Here's the counter approach traced with real values:</p>
+  <div class="trace">
+    <ol>
+      <li>Write server W3 starts and runs <code>UPDATE id_blocks SET next_start = next_start + 1000000 RETURNING next_start - 1000000</code>. It gets 11,000,000 and now owns IDs 11,000,000 to 11,999,999. No other server can get that range.</li>
+      <li>W3 serves requests from memory: the next link gets ID 11,000,000, then 11,000,001... No coordination per request.</li>
+      <li>To stop people walking the sequence, W3 scrambles the ID with a reversible permutation (for example, multiply by a large constant that shares no factors with 62<sup>7</sup>, modulo 62<sup>7</sup>). Neighboring IDs land far apart.</li>
+      <li>W3 encodes the scrambled number in base62. Small example of encoding: 11,157 = 2×62² + 55×62 + 59, and digits 2, 55, 59 map to "2", "T", "X", giving <code>2TX</code>. Padding to 7 characters gives a fixed-length code.</li>
+      <li>If W3 crashes, the rest of its block is simply never used. Losing a million IDs out of 3.5 trillion doesn't matter.</li>
+    </ol>
+  </div>
+  <p>My default: counter blocks plus scrambling, because it never collides and keeps the write path to a single insert. If the team already runs a key-value store with conditional puts, random codes with retry are equally good and simpler to explain.</p>
+
+  <h2>7. Deep dive: making redirects fast and always up</h2>
+  <ul>
+    <li><b>Cache-aside in Redis.</b> Read Redis; on miss read the DB and set the key with a TTL (time to live) such as 24 hours, but never past the link's <code>expires_at</code>. At a 95% hit rate, the database sees only ~1,000 reads/second at peak.</li>
+    <li><b>Negative caching.</b> Bots hammer random codes. Cache "not found" for a minute so they don't all reach the database.</li>
+    <li><b>Hot links.</b> A link on a national news site might take 1 million clicks a minute (≈17,000/second) on one key. A single Redis shard handles that, but add a tiny in-process cache (a few seconds) in each redirect server so the hottest keys never leave the box.</li>
+    <li><b>Read replicas and regions.</b> Redirects only need reads, so serve them from replicas in several regions. A brand-new link might not have replicated yet (usually under a second); on a local miss, fall back to the primary before returning 404.</li>
+  </ul>
+  <p><b>301 or 302?</b> A <code>301 Moved Permanently</code> lets browsers cache the redirect, so repeat clicks never reach you: cheaper, but you lose those clicks from analytics and can't reliably expire or retarget the link for that browser. A <code>302 Found</code> sends every click through you. If analytics or takedowns matter, use 302 (or 301 with a short <code>Cache-Control</code> max-age).</p>
+
+  <h2>8. Deep dive: click analytics without slowing redirects</h2>
+  <p>Writing a database row per click would turn a 3,900/second read path into 3,900 writes/second, all to make a counter. Instead:</p>
+  <ol>
+    <li>The redirect service appends <code>{code, ts, country, referrer, device}</code> to an in-memory buffer and flushes to a log or queue (Kafka, Kinesis) every ~100 ms. If the queue is down, it drops events after the buffer fills rather than blocking redirects. Say this choice out loud: analytics are allowed to lose a little data; redirects are not allowed to fail.</li>
+    <li>A stream job aggregates clicks per <code>(code, day)</code> and writes them to a columnar store (ClickHouse, BigQuery, Druid) built for counting.</li>
+    <li>Volume: 333 million clicks/day × ~200 bytes ≈ 67 GB/day of raw events. Keep raw events for ~30–90 days; keep daily counts forever (they're tiny).</li>
+  </ol>
+
+  <h2>9. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Counter blocks</td><td>Zero collisions, one write per link</td><td>A small allocator service; codes must be scrambled</td><td>You want the simplest fast write path</td></tr>
+      <tr><td>Random codes</td><td>Unguessable, stateless</td><td>Uniqueness check, rare retries</td><td>Your store supports "insert if absent" cheaply</td></tr>
+      <tr><td>302 redirects</td><td>Every click counted; instant takedowns</td><td>All traffic hits your servers</td><td>Analytics or abuse control matter (most real products)</td></tr>
+      <tr><td>Key-value store</td><td>Easy horizontal scaling, predictable latency</td><td>No ad-hoc queries or joins</td><td>Access is almost entirely by primary key (it is here)</td></tr>
+      <tr><td>Async analytics</td><td>Redirect latency unaffected</td><td>Counts lag by minutes and can drop a few events</td><td>Analytics are "nice to have" (stated in requirements)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Follow-up questions and strong answers</h2>
+  <h3>"The same teacher shortens the same URL twice. Same code or new code?"</h3>
+  <p>Product decision first: separate codes let them track two campaigns separately. If we want dedupe, add a unique index on <code>(owner_id, sha256(long_url))</code> and return the existing code. Dedupe across different owners is a bad idea because it mixes their analytics and lets one owner's takedown break another's link.</p>
+  <h3>"How do you take down a phishing link in under a minute?"</h3>
+  <p>Set <code>disabled = true</code> in the database, delete the Redis key, and purge any CDN cache. Because the in-process caches have a few-second TTL, all servers converge within seconds. This is also why I'd avoid long-lived 301s.</p>
+  <h3>"What happens if Redis dies?"</h3>
+  <p>Redirects fall back to the database. At peak that is ~20,000 reads/second instead of ~1,000, so the database must either be sized for it (replicas) or the redirect service must shed load. Run Redis with a replica and automatic failover so this is rare.</p>
+  <h3>"How do you expire links?"</h3>
+  <p>Check <code>expires_at</code> on every read (cheap, always correct) and return 410. A nightly job deletes rows long past expiry. Cache TTLs never exceed the remaining lifetime.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Reads outnumber writes 100 to 1 and the whole dataset is about 3 TB, so this isn't a storage problem; it's a latency and availability problem on the redirect path. I'll generate codes from pre-allocated counter blocks, scrambled so they aren't guessable, which means a write is a single insert with no collision check. Redirects hit Redis first, and click analytics go onto a queue so a slow analytics pipeline can never slow a redirect."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Saying "hash the URL with MD5 and take 7 characters" and stopping there. The interviewer will immediately ask "what about collisions?" Truncating any hash to 42 bits means collisions become likely after a few million links (the birthday effect), so you need a check-and-retry, which is exactly what the random approach does without the hashing. Lead with the approach whose collision story you can explain.</p></div>
+
+  <h2>11. Your turn</h2>
+  <p>Design <b>Pastebin</b>: users paste text up to 10 MB and get a short link; pastes can expire; most pastes are read a handful of times, a few go viral.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>What changes:</b> the payload. A link was 500 bytes; a paste averages maybe 10 KB with a long tail to 10 MB. Assume 5 million pastes/day × 10 KB = 50 GB/day ≈ 18 TB/year. That's too big and too blob-like for the database.</p>
+    <p><b>Design:</b> keep the same code generation (counter blocks + scrambling). Store paste content in object storage (S3-style) under the key <code>pastes/{code}</code>; store only metadata (<code>code, owner, size, content_type, created_at, expires_at, storage_key</code>) in the database. On create, the API can either accept the body (fine for small pastes) or hand back a presigned upload URL for large ones.</p>
+    <p><b>Reads:</b> serve content through a CDN with the paste code in the URL, so viral pastes are served from the edge. Small, hot pastes can also be cached in Redis.</p>
+    <p><b>Expiry:</b> object-storage lifecycle rules delete expired content, and the read path checks <code>expires_at</code> so an expired paste returns 410 even before deletion runs.</p>
+    <p><b>Trade-off to name:</b> object storage gives cheap, durable storage for big blobs at the cost of an extra hop and eventual cleanup jobs; worth it because the DB stays small and fast.</p>
+  </details>
+
+  <div data-quiz='[{"q":"Read traffic is 100 times write traffic and total data is about 3 TB. What should the design focus on?","o":["Sharding writes across hundreds of nodes","Fast, highly available reads (cache, replicas) and a simple write path","Strong consistency across regions for every click","Compressing long URLs"],"a":1,"why":"The numbers say this is a read latency and availability problem. 40 writes per second is trivial."},{"q":"Why choose 7 base62 characters instead of 6 for 6 billion links?","o":["6 characters cannot represent 6 billion codes","7 characters keeps the code space under 0.2 percent full, making guessing and collisions rare","Browsers require 7 characters","Base62 only works with odd lengths"],"a":1,"why":"62^6 is about 57 billion (10 percent full at 6 billion); 62^7 is about 3.5 trillion."},{"q":"What is the main downside of plain sequential counter codes?","o":["They collide often","Anyone can enumerate other people links by counting","They are slower to generate than hashes","They need a database join"],"a":1,"why":"Sequential codes are predictable. Scrambling the ID with a reversible permutation before encoding fixes it."},{"q":"Why send click events to a queue instead of writing a row per click?","o":["Queues are always cheaper than databases","So redirect latency and availability never depend on the analytics pipeline","Because SQL cannot count","To make analytics exactly-once"],"a":1,"why":"Analytics can lag and even drop a few events; redirects must stay fast. The queue decouples them."},{"q":"Which redirect status lets you count every click and take links down instantly?","o":["301 with a one-year cache","302 Found","200 OK with the long URL in the body","404"],"a":1,"why":"A 302 is not cached by browsers by default, so every click reaches your service."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Numbers first: ~40 writes/s, ~4,000 reads/s average, ~3 TB over five years. Read-heavy and small.</li>
+    <li>Code generation: counter blocks plus scrambling (no collisions) or random with retry (stateless); avoid truncated hashes unless you explain collisions.</li>
+    <li>Redirect path: Redis cache-aside, negative caching, a tiny in-process cache for viral links, replicas per region.</li>
+    <li>Analytics asynchronously through a queue into a columnar store; a lost click is acceptable, a failed redirect is not.</li>
+    <li>302 when you need click counts and takedowns; 301 only when you truly want browsers to cache forever.</li>
+  </ul>
+</template>

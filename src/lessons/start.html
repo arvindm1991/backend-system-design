@@ -1,0 +1,94 @@
+<template id="tpl-start" data-title="Start here" data-part="Start" data-order="0">
+  <p class="eyebrow">A course for full-stack builders</p>
+  <h1>Backend &amp; System Design</h1>
+  <p class="lede">You already ship products and talk to engineers every day. This course gives you the layer underneath: how requests, data, queues and failures really behave, so you can design a system on a whiteboard, defend every box you draw, and build the thing afterwards.</p>
+  <div data-continue></div>
+
+  <h2>1. How this course works</h2>
+  <p>There are five parts: Parts 1–4 are the backend and system design course, and <b>Part 5</b> is a coding patterns (DSA) track for LeetCode-style interview problems. Each lesson is one page you can finish in about an hour. Every lesson follows the same shape, so you always know where you are:</p>
+  <div class="cards">
+    <div class="card"><span class="card-k">Scenario first</span><h3>A real product, real numbers</h3><p>Each lesson follows one running example (a reading app for schools, a Claude-like chat app, a ticket site) and starts with what actually happens to it.</p></div>
+    <div class="card"><span class="card-k">Traces</span><h3>Step by step, with values</h3><p>Numbered walkthroughs show the exact requests, rows and timings. Read them slowly. They are the lesson.</p></div>
+    <div class="card"><span class="card-k">Say it</span><h3>Interview-ready sentences</h3><p>Blue callouts give you the one or two sentences to say in a design discussion. Amber ones flag the classic mistakes.</p></div>
+    <div class="card"><span class="card-k">Labs</span><h3>Build the mechanism</h3><p>Small JavaScript exercises that run right here in the page: a paginator, an index, a permission check, a rate limiter, a queue.</p></div>
+  </div>
+
+  <h3>Labs, in 30 seconds</h3>
+  <p>A lab gives you a short prompt, a starter file and a set of tests. You edit the code in the page and press <b>Run tests</b> (or <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd>). Each test shows a tick or a cross with the reason. Stuck? <b>Hint</b> reveals one nudge at a time. <b>Show solution</b> is there, behind a confirm, for when you have really tried. When every test passes you get a short note on how the mechanism shows up in real systems and what to say about it.</p>
+  <p>The backend labs are plain JavaScript, no frameworks, and they are deliberately small (15 to 30 minutes). Anything that depends on time takes a fake clock, so tests are repeatable. That is also how real backend code is tested.</p>
+  <div class="callout tip"><span class="callout-label">Part 5 is how you pass the coding round</span><p>Most interview problems are one of about 13 patterns in disguise. Part 5 starts from zero (what O(n) actually means, and how the input size tells you how fast you need to be), then teaches each pattern by its <b>trigger words</b>, a step-by-step trace and 2–3 classic problems you solve right here. Start with <a href="#dsa-approach">How to attack any problem</a>.</p></div>
+
+  <h3>Your progress</h3>
+  <p>Lessons you mark as read and labs you pass are saved in this browser only. The bar at the top shows both. Use <b>Mark as read</b> at the bottom of a lesson, or just click <b>Done · next</b>. Nothing is sent anywhere.</p>
+
+  <div class="callout key"><span class="callout-label">The one habit that matters</span><p>After each lesson, close the page and explain the main idea out loud in two minutes, as if a colleague asked "why didn't we just…?". If you stumble, that is the part to reread. System design interviews reward people who can reason out loud, not people who memorised diagrams.</p></div>
+
+  <h2>2. A 6-week plan, about an hour a day</h2>
+  <p>Five sessions a week, one lighter review day. A <b>coding patterns track</b> (Part 5) runs alongside all six weeks: two or three pattern lessons a week, each with LeetCode-style problems you solve in the browser. Do them as a second short block on Mon/Wed/Fri, or on the weekend. By week 6 you can recognize the ~13 patterns behind most interview problems and know how to attack one you have never seen.</p>
+  <p> A good hour looks like this: <b>10 minutes</b> redoing yesterday's quiz from memory, <b>35 minutes</b> reading with a notepad (redraw the diagram, follow the trace), and <b>15 minutes</b> on the lab or on saying the interview callouts out loud. Lessons with labs may spill into a second day. That is fine.</p>
+  <ol class="weeks">
+    <li class="week"><span class="week-n">Week 1</span><div><h3>Foundations</h3><p>How a request travels, API design, data modeling and SQL, auth and multi-tenancy. Everything later assumes this vocabulary.</p>
+      <div class="days"><a href="#web">Mon · Requests</a><a href="#api">Tue · API design</a><a href="#sql">Wed–Thu · Data &amp; SQL</a><a href="#auth">Fri · Auth</a><span>Sat · Review: sketch your own product's API + schema</span></div>
+      <div class="days days-py"><span class="days-label">Patterns track</span><a href="#dsa-approach">How to attack any problem</a><a href="#dsa-hashing">Hash maps</a></div></div></li>
+    <li class="week"><span class="week-n">Week 2</span><div><h3>Scaling building blocks, part A</h3><p>How systems grow, caching, queues and background jobs, rate limiting. The pieces every design diagram is made of.</p>
+      <div class="days"><a href="#scaling">Mon · Scaling</a><a href="#caching">Tue · Caching</a><a href="#queues">Wed–Thu · Queues</a><a href="#ratelimit">Fri · Rate limiting</a><span>Sat · Redo the labs from a blank file</span></div>
+      <div class="days days-py"><span class="days-label">Patterns track</span><a href="#dsa-prefix">Prefix sums</a><a href="#dsa-two-pointers">Two pointers</a><a href="#dsa-sliding-window">Sliding window</a></div></div></li>
+    <li class="week"><span class="week-n">Week 3</span><div><h3>Building blocks B, into distributed systems</h3><p>Realtime and streaming, storage choices and sharding, then why distributed systems are hard and how machines agree.</p>
+      <div class="days"><a href="#realtime">Mon · Realtime</a><a href="#storage">Tue · Storage</a><a href="#distributed">Wed · Distributed</a><a href="#consensus">Thu · Consensus</a><span>Fri · Review + quizzes</span></div>
+      <div class="days days-py"><span class="days-label">Patterns track</span><a href="#dsa-stack">Stacks</a><a href="#dsa-binary-search">Binary search</a><a href="#dsa-sorting-intervals">Intervals &amp; greedy</a></div></div></li>
+    <li class="week"><span class="week-n">Week 4</span><div><h3>Reliability, events, AI backends, the framework</h3><p>Timeouts, retries and circuit breakers; outbox and sagas; backends for LLM products; then the 6-step interview framework and your first case study.</p>
+      <div class="days"><a href="#reliability">Mon · Reliability</a><a href="#events">Tue · Events</a><a href="#ai-backend">Wed · AI backends</a><a href="#sd-framework">Thu · The framework</a><a href="#sd-shortener">Fri · URL shortener</a></div>
+      <div class="days days-py"><span class="days-label">Patterns track</span><a href="#dsa-linked-lists">Linked lists</a><a href="#dsa-trees">Trees &amp; recursion</a><a href="#dsa-heaps">Heaps &amp; top-K</a></div></div></li>
+    <li class="week"><span class="week-n">Week 5</span><div><h3>Case studies, part A</h3><p>One full design a day. Before reading, spend 15 minutes designing it yourself on paper with the 6 steps, then compare.</p>
+      <div class="days"><a href="#sd-feed">Mon · News feed</a><a href="#sd-chat">Tue · Chat</a><a href="#sd-notifications">Wed · Notifications</a><a href="#sd-ratelimiter">Thu · Rate limiter</a><a href="#sd-upload">Fri · File upload</a><a href="#sd-autocomplete">Sat · Autocomplete</a></div>
+      <div class="days days-py"><span class="days-label">Patterns track</span><a href="#dsa-graphs">Graphs</a><a href="#dsa-backtracking">Backtracking</a></div></div></li>
+    <li class="week"><span class="week-n">Week 6</span><div><h3>Case studies, part B, and mocks</h3><p>The designs closest to your own work (LLM chat, a K-12 platform), plus booking and collaboration. End with timed 45-minute mocks using the "your turn" prompts.</p>
+      <div class="days"><a href="#sd-llm-chat">Mon · LLM chat</a><a href="#sd-booking">Tue · Booking</a><a href="#sd-classroom">Wed · K-12 platform</a><a href="#sd-collab">Thu · Collab editing</a><a href="#sd-cheatsheet">Fri · Cheat sheet</a><span>Sat · Two timed mocks</span></div>
+      <div class="days days-py"><span class="days-label">Patterns track</span><a href="#dsa-dp">Dynamic programming</a><a href="#dsa-recognition">Recognition drill</a></div></div></li>
+  </ol>
+
+  <h2>3. How the parts build on each other</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 720 250" role="img" aria-label="Four layers stacked: Foundations at the bottom, then Scaling building blocks, then Distributed systems, with System design on top. Alongside them, a Part 5 coding patterns column spans all layers. An arrow on the right shows each layer builds on the ones below.">
+      <defs>
+        <marker id="st-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+      </defs>
+      <g font-size="14">
+        <rect x="20" y="4" width="64" height="236" rx="10" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+        <text x="58" y="122" font-weight="600" fill="var(--ok)" text-anchor="middle" transform="rotate(-90 58 122)">Part 5 · Patterns</text>
+        <text x="74" y="122" font-size="12" fill="currentColor" text-anchor="middle" transform="rotate(-90 74 122)">how you pass the coding round</text>
+        <rect x="96" y="190" width="524" height="50" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+        <text x="114" y="212" font-weight="600" fill="currentColor">Part 1 · Foundations</text>
+        <text x="114" y="230" font-size="13" fill="var(--muted)">requests · APIs · SQL and indexes · auth and tenants</text>
+        <rect x="96" y="128" width="524" height="50" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+        <text x="114" y="150" font-weight="600" fill="currentColor">Part 2 · Scaling building blocks</text>
+        <text x="114" y="168" font-size="13" fill="var(--muted)">load balancers · caches · queues · rate limits · realtime · storage</text>
+        <rect x="96" y="66" width="524" height="50" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+        <text x="114" y="88" font-weight="600" fill="currentColor">Part 3 · Distributed systems</text>
+        <text x="114" y="106" font-size="13" fill="var(--muted)">failure · consistency · consensus · retries · events · AI backends</text>
+        <rect x="96" y="4" width="524" height="50" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="114" y="26" font-weight="600" fill="var(--accent)">Part 4 · System design</text>
+        <text x="114" y="44" font-size="13" fill="currentColor">a 6-step method + 11 worked designs using everything below</text>
+        <path d="M650 236 V 12" stroke="var(--accent)" stroke-width="2" fill="none" marker-end="url(#st-arrow)"/>
+        <text x="672" y="124" font-size="13" fill="var(--muted)" text-anchor="middle" transform="rotate(-90 672 124)">each layer builds on the ones below</text>
+      </g>
+    </svg>
+    <figcaption>The coding patterns run alongside everything: they are what the coding round tests, while the other parts are what the design round tests. Each part is the vocabulary for the next. A system design answer is just Parts 1–3, chosen on purpose and explained out loud.</figcaption>
+  </figure>
+  <table class="tbl">
+    <thead><tr><th>Part</th><th>In an interview it lets you…</th><th>When building it lets you…</th></tr></thead>
+    <tbody>
+      
+      <tr><td>1 · Foundations</td><td>Write a clean API and data model in steps 3–4 of the framework, and spot the auth and tenancy questions early.</td><td>Design endpoints and tables your developers won't have to redo in six months; review PRs for N+1 queries and IDOR bugs.</td></tr>
+      <tr><td>2 · Building blocks</td><td>Draw the high-level design with the right boxes and do quick capacity math to justify them.</td><td>Know when a cache, a queue or a read replica is the fix, and what each one will cost you.</td></tr>
+      <tr><td>3 · Distributed systems</td><td>Handle the deep-dive questions: "what if this node dies?", "can a user be charged twice?", "how fresh is this data?"</td><td>Make features that survive retries, outages and slow vendors (including LLM APIs) without double-sending or losing work.</td></tr>
+      <tr><td>4 · System design</td><td>Drive a 45-minute conversation: clarify, estimate, design, then go deep on the trade-offs that matter.</td><td>Write a one-page design doc before a big feature, and lead the review of one.</td></tr>
+      <tr><td>5 · Coding patterns</td><td>Recognize the pattern behind an unfamiliar problem, say the brute force and its Big-O, then the faster approach and why it is faster.</td><td>Spot the hidden O(n²) in real code (a <code>.includes</code> inside a loop) and fix it with a Map, a sort or a precomputed table.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. What "good" sounds like</h2>
+  <p>You are not trying to sound like a textbook. You are trying to sound like the person in the room who has thought about what happens at 8:05am when 40,000 students open the app at once. Every trade-off in this course is phrased the same way, and you should borrow the phrasing:</p>
+  <div class="callout"><span class="callout-label">The trade-off sentence</span><p><b>X gives you A at the cost of B. I'd choose it here because C.</b> For example: "Cursor pagination gives us stable pages while new posts arrive, at the cost of not being able to jump to page 37. Our feed only scrolls forward, so I'd use cursors."</p></div>
+  <p>Ready? Start with how a single request travels from a browser to a database and back.</p>
+</template>

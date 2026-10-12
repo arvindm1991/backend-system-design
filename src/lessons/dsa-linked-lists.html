@@ -1,0 +1,270 @@
+<template id="tpl-dsa-linked-lists" data-title="Linked lists" data-part="Part 5 · Coding patterns (DSA)" data-order="380">
+  <h1>Linked lists</h1>
+  <p class="lede">After this lesson you will know what a linked list is and when it beats an array, and you will have three moves that solve most linked-list interview questions: <b>reverse with three pointers</b>, the <b>dummy head</b> trick, and <b>fast/slow pointers</b> (for the middle, cycles and "n-th from the end"). You will draw the arrows before you write code, which is how you stop losing half your list.</p>
+
+  <p>Running example for the whole lesson: <b>a read-aloud playlist in a reading app.</b> A student queues up chapters to listen to. Each chapter knows only which chapter plays next. We will reverse the playlist, merge two playlists, find the middle chapter, and detect a playlist that accidentally loops forever.</p>
+
+  <h2>1. What a linked list is (and how it differs from an array)</h2>
+  <p>An <b>array</b> is a row of numbered lockers. Want locker 500? Walk straight to it: the computer computes its address from the number. That&#39;s why <code>arr[500]</code> is <b>O(1)</b>, constant time no matter how long the array is.</p>
+  <p>A <b>linked list</b> is a scavenger hunt. Each clue (a <b>node</b>) holds a value and a pointer to where the next clue is (<code>next</code>). The last node points to <code>null</code>. You only hold the first clue, the <b>head</b>. Want the 500th chapter? You have to follow 499 pointers: <b>O(n)</b>.</p>
+  <p>So why would anyone use one? Because <b>inserting or removing</b> a node is cheap once you&#39;re standing next to it: change one or two pointers, O(1). In an array, inserting at the front means shifting every other element over by one: O(n).</p>
+  <table class="tbl">
+    <thead><tr><th>Operation</th><th>Array</th><th>Singly linked list</th></tr></thead>
+    <tbody>
+      <tr><td>Read the i-th item</td><td>O(1)</td><td>O(n): walk from the head</td></tr>
+      <tr><td>Insert/remove at the front</td><td>O(n): shift everything</td><td>O(1): repoint the head</td></tr>
+      <tr><td>Insert/remove next to a node you already hold</td><td>O(n): shift the rest</td><td>O(1): change a pointer</td></tr>
+      <tr><td>Find a value</td><td>O(n)</td><td>O(n)</td></tr>
+      <tr><td>Extra memory</td><td>Just the values</td><td>A pointer per node</td></tr>
+    </tbody>
+  </table>
+  <p>In everyday JavaScript you&#39;ll almost always use arrays. Linked lists matter in two places: <b>interviews</b>, because they test whether you can rewire pointers without losing data, and <b>inside real systems</b>: a classic LRU cache is a hash map plus a doubly linked list (each node also has a <code>prev</code> pointer), so moving an entry to the front is O(1).</p>
+  <p>JavaScript has no built-in linked list. Interviews (and the labs below) use this tiny class:</p>
+  <pre><code class="lang-js">// In TypeScript you would add types: class ListNode { val: number; next: ListNode | null; ... }
+class ListNode {
+  constructor(val, next = null) {
+    this.val = val;
+    this.next = next;
+  }
+}
+
+// The playlist 1 -&gt; 2 -&gt; 3 (chapter numbers):
+const head = new ListNode(1, new ListNode(2, new ListNode(3)));
+
+// Walking a list: the loop you will write a hundred times.
+let node = head;
+while (node !== null) {
+  console.log(node.val);
+  node = node.next;
+}</code></pre>
+  <p>The labs also give you two helpers: <code>fromArray([1, 2, 3])</code> builds that list, and <code>toArray(head)</code> turns a list back into an array so you can print or compare it.</p>
+
+  <h2>2. The trigger</h2>
+  <ul>
+    <li>The input is a <b><code>ListNode</code> head</b>. That alone tells you the toolset: pointers, a dummy node, fast/slow.</li>
+    <li><b>"Reverse"</b> (the whole list, a part of it, in groups of k) → three pointers: previous, current, next.</li>
+    <li><b>"Merge"</b>, <b>"remove"</b>, <b>"insert"</b>, <b>"partition"</b>, anything that might change the head → <b>dummy head</b>.</li>
+    <li><b>"Middle"</b>, <b>"cycle"</b>, <b>"n-th from the end"</b>, <b>"palindrome list"</b> → <b>fast/slow</b> (or fixed-gap) pointers.</li>
+    <li><b>"In place"</b> or <b>"O(1) extra space"</b> → you are expected to rewire pointers, not copy into an array.</li>
+  </ul>
+  <p>A useful fallback: copying the list into an array and solving it there is almost always a correct O(n)-time brute force. It costs O(n) extra space. Say it first, then improve it.</p>
+
+  <h2>3. Move 1: reverse with three pointers</h2>
+  <p>The app shows reading history oldest first, <code>1 → 2 → 3 → 4</code>. Product wants newest first. Reverse the list in place.</p>
+  <p><b>Brute force:</b> copy the values into an array, reverse the array, and build a new list. That is O(n) time but <b>O(n) extra space</b>, and it creates new nodes (bad if other code holds references to the old ones). The interviewer will ask for O(1) space.</p>
+  <p><b>The pattern:</b> walk the list once and flip each arrow to point backwards. The danger: the moment you write <code>current.next = previous</code>, you&#39;ve lost your only pointer to the rest of the list. So you save it first. Three pointers: <code>previous</code> (the reversed part), <code>current</code> (the node you&#39;re flipping), <code>next</code> (the rest, saved).</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 680 270" width="100%" role="img" aria-label="Top: list 1 to 2 to 3 to 4 to null. Bottom: halfway through reversal, null is pointed to by 1, 1 by 2, with previous at node 2 and current at node 3 which still points to 4" style="font-family:inherit">
+      <defs><marker id="dll-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:currentColor"/></marker>
+      <marker id="dll-arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+      <g style="font-size:13px">
+        <text x="20" y="22" style="fill:var(--muted);font-size:12px">before: head points at 1</text>
+        <rect x="40" y="36" width="70" height="36" rx="6" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="75" y="59" text-anchor="middle" style="fill:currentColor;font-weight:600">1</text>
+        <rect x="160" y="36" width="70" height="36" rx="6" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="195" y="59" text-anchor="middle" style="fill:currentColor;font-weight:600">2</text>
+        <rect x="280" y="36" width="70" height="36" rx="6" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="315" y="59" text-anchor="middle" style="fill:currentColor;font-weight:600">3</text>
+        <rect x="400" y="36" width="70" height="36" rx="6" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="435" y="59" text-anchor="middle" style="fill:currentColor;font-weight:600">4</text>
+        <text x="540" y="59" text-anchor="middle" style="fill:var(--muted)">null</text>
+        <line x1="110" y1="54" x2="156" y2="54" style="stroke:currentColor;stroke-width:1.5" marker-end="url(#dll-arr)"/>
+        <line x1="230" y1="54" x2="276" y2="54" style="stroke:currentColor;stroke-width:1.5" marker-end="url(#dll-arr)"/>
+        <line x1="350" y1="54" x2="396" y2="54" style="stroke:currentColor;stroke-width:1.5" marker-end="url(#dll-arr)"/>
+        <line x1="470" y1="54" x2="516" y2="54" style="stroke:currentColor;stroke-width:1.5" marker-end="url(#dll-arr)"/>
+
+        <text x="20" y="122" style="fill:var(--muted);font-size:12px">after 2 steps: the left part is already reversed</text>
+        <text x="60" y="164" text-anchor="middle" style="fill:var(--muted)">null</text>
+        <rect x="110" y="141" width="70" height="36" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="145" y="164" text-anchor="middle" style="fill:currentColor;font-weight:600">1</text>
+        <rect x="230" y="141" width="70" height="36" rx="6" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+        <text x="265" y="164" text-anchor="middle" style="fill:currentColor;font-weight:600">2</text>
+        <rect x="390" y="141" width="70" height="36" rx="6" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="425" y="164" text-anchor="middle" style="fill:currentColor;font-weight:600">3</text>
+        <rect x="510" y="141" width="70" height="36" rx="6" style="fill:var(--surface);stroke:currentColor;stroke-width:1.5"/>
+        <text x="545" y="164" text-anchor="middle" style="fill:currentColor;font-weight:600">4</text>
+        <text x="645" y="164" text-anchor="middle" style="fill:var(--muted)">null</text>
+        <line x1="110" y1="159" x2="84" y2="159" style="stroke:var(--accent);stroke-width:2" marker-end="url(#dll-arr2)"/>
+        <line x1="230" y1="159" x2="184" y2="159" style="stroke:var(--accent);stroke-width:2" marker-end="url(#dll-arr2)"/>
+        <line x1="460" y1="159" x2="506" y2="159" style="stroke:currentColor;stroke-width:1.5" marker-end="url(#dll-arr)"/>
+        <line x1="580" y1="159" x2="621" y2="159" style="stroke:currentColor;stroke-width:1.5" marker-end="url(#dll-arr)"/>
+        <line x1="300" y1="159" x2="386" y2="159" style="stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 4"/>
+        <text x="343" y="150" text-anchor="middle" style="fill:var(--muted);font-size:12px">no link</text>
+        <line x1="265" y1="215" x2="265" y2="182" style="stroke:var(--accent);stroke-width:1.5" marker-end="url(#dll-arr2)"/>
+        <text x="265" y="232" text-anchor="middle" style="fill:var(--accent);font-weight:600">previous</text>
+        <line x1="425" y1="215" x2="425" y2="182" style="stroke:currentColor;stroke-width:1.5" marker-end="url(#dll-arr)"/>
+        <text x="425" y="232" text-anchor="middle" style="fill:currentColor;font-weight:600">current</text>
+        <line x1="545" y1="215" x2="545" y2="182" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#dll-arr)"/>
+        <text x="545" y="232" text-anchor="middle" style="fill:var(--muted)">next (saved)</text>
+        <text x="340" y="260" text-anchor="middle" style="fill:var(--muted);font-size:12px">next step: current.next = previous, then slide all three one node right</text>
+      </g>
+    </svg>
+    <figcaption>Reversal keeps two separate chains: the reversed part (head = previous) and the untouched rest (head = current). Each step moves one node from the right chain to the left.</figcaption>
+  </figure>
+  <table class="tbl">
+    <thead><tr><th>Step</th><th>Save <code>next</code></th><th>Flip</th><th><code>previous</code> after</th><th><code>current</code> after</th><th>Reversed part</th></tr></thead>
+    <tbody>
+      <tr><td>start</td><td></td><td></td><td>null</td><td>1</td><td>(empty)</td></tr>
+      <tr><td>1</td><td>2</td><td>1.next = null</td><td>1</td><td>2</td><td>1</td></tr>
+      <tr><td>2</td><td>3</td><td>2.next = 1</td><td>2</td><td>3</td><td>2 → 1</td></tr>
+      <tr><td>3</td><td>4</td><td>3.next = 2</td><td>3</td><td>4</td><td>3 → 2 → 1</td></tr>
+      <tr><td>4</td><td>null</td><td>4.next = 3</td><td>4</td><td>null</td><td>4 → 3 → 2 → 1</td></tr>
+    </tbody>
+  </table>
+  <p>When <code>current</code> becomes <code>null</code>, <code>previous</code> holds the old tail, which is the new head. Return it.</p>
+  <pre><code class="lang-js">function reverseList(head) {
+  let previous = null;
+  let current = head;
+  while (current !== null) {
+    const next = current.next; // 1. save the rest
+    current.next = previous;   // 2. flip the arrow
+    previous = current;        // 3. slide both forward
+    current = next;
+  }
+  return previous;
+}</code></pre>
+  <p><b>Big-O:</b> O(n) time, <b>O(1) space</b>. The pattern removed the extra array: you reuse the nodes you already have.</p>
+
+  <h2>4. Move 2: the dummy head</h2>
+  <p>Many list operations have an annoying special case: <b>the head might change</b>. Removing the first node, merging two lists (which list&#39;s first node is the new head?), inserting before the head. You end up writing <code>if (result === null) ... else ...</code> everywhere.</p>
+  <p>The fix: create a fake node in front of everything, <code>const dummy = new ListNode(0)</code>. Now every real node, including the first, has a node before it. Build the answer after <code>dummy</code>, and at the end return <code>dummy.next</code>. It&#39;s like putting a bookmark before page 1 so "insert before page 1" is no different from "insert before page 50".</p>
+  <h3>Worked problem: merge two sorted playlists</h3>
+  <p>Two classes each have a playlist of chapters sorted by length: <code>1 → 4 → 6</code> and <code>2 → 3 → 7</code>. Merge them into one sorted playlist.</p>
+  <p><b>Brute force:</b> put every value in one array, sort it, build a new list. <b>O((n + m) log(n + m))</b> for the sort, plus O(n + m) extra space. The wasted work: both lists were <i>already</i> sorted and you threw that away.</p>
+  <p><b>The pattern:</b> one pointer per list. At each step, compare the two front nodes, attach the smaller one to the tail of the result, and advance that list. Because both lists are sorted, the smaller front node is always the next smallest overall.</p>
+  <div class="trace">
+    <p><b>Trace: merging <code>1 → 4 → 6</code> and <code>2 → 3 → 7</code></b></p>
+    <ol>
+      <li><code>dummy → </code>, tail = dummy. Fronts: 1 vs 2. Take <b>1</b>. Result: 1.</li>
+      <li>Fronts: 4 vs 2. Take <b>2</b>. Result: 1 → 2.</li>
+      <li>Fronts: 4 vs 3. Take <b>3</b>. Result: 1 → 2 → 3. The second list now has only 7.</li>
+      <li>Fronts: 4 vs 7. Take <b>4</b>. Then 6 vs 7: take <b>6</b>. The first list is empty.</li>
+      <li>Attach whatever is left (7) in one move: <code>tail.next = 7</code>. Return <code>dummy.next</code>: <b>1 → 2 → 3 → 4 → 6 → 7</b>.</li>
+    </ol>
+  </div>
+  <pre><code class="lang-js">function mergeTwoLists(list1, list2) {
+  const dummy = new ListNode(0);
+  let tail = dummy;
+  let a = list1;
+  let b = list2;
+  while (a !== null &amp;&amp; b !== null) {
+    if (a.val &lt;= b.val) {
+      tail.next = a;
+      a = a.next;
+    } else {
+      tail.next = b;
+      b = b.next;
+    }
+    tail = tail.next;
+  }
+  tail.next = a !== null ? a : b; // the leftover is already sorted
+  return dummy.next;
+}</code></pre>
+  <p><b>Big-O:</b> <b>O(n + m)</b> time, O(1) extra space. Without the dummy, you&#39;d need a separate block of code just to pick the first node.</p>
+
+  <h2>5. Move 3: fast and slow pointers</h2>
+  <p>Picture two runners on a track: one runs two steps for every one step of the other. When the fast runner reaches the finish, the slow runner is exactly halfway. And if the track is a loop, the fast runner eventually laps the slow one. Those two facts solve two classic problems.</p>
+  <h3>Worked problem: the middle chapter</h3>
+  <p>"Resume from the middle of the playlist." <b>Brute force:</b> copy into an array and take index <code>Math.floor(length / 2)</code> (O(n) space), or walk once to count and again to the middle (O(1) space, two passes; perfectly fine to say). <b>Fast/slow</b> does it in one pass with O(1) space:</p>
+  <div class="trace">
+    <p><b>Trace: <code>1 → 2 → 3 → 4 → 5</code></b></p>
+    <ol>
+      <li>slow = 1, fast = 1.</li>
+      <li>fast can take two steps: slow = 2, fast = 3.</li>
+      <li>fast can take two steps: slow = 3, fast = 5.</li>
+      <li>fast.next is null, so stop. <b>Middle = 3.</b> (For <code>1 → ... → 6</code> the same loop stops with slow = 4, the second of the two middles.)</li>
+    </ol>
+  </div>
+  <h3>Worked problem: does the playlist loop forever?</h3>
+  <p>A bug made the last chapter point back to chapter 3: <code>1 → 2 → 3 → 4 → 5 → (back to 3)</code>. A normal "walk until null" loop would never end. Detect the cycle.</p>
+  <p><b>Brute force:</b> walk the list and put every node in a <code>Set</code>. If you meet a node already in the set, there&#39;s a cycle. That&#39;s O(n) time but <b>O(n) space</b>. (Store the nodes themselves, not their values: two chapters can have the same value.)</p>
+  <p><b>Fast/slow (Floyd&#39;s cycle detection):</b> if there&#39;s no cycle, fast hits <code>null</code>. If there is one, both runners end up going around the loop, and each step the fast one gains exactly one node on the slow one, so it can&#39;t jump over it: they must land on the same node.</p>
+  <div class="trace">
+    <p><b>Trace: <code>1 → 2 → 3 → 4 → 5 → 3 ...</code></b></p>
+    <ol>
+      <li>slow = 1, fast = 1.</li>
+      <li>Step 1: slow = 2, fast = 3.</li>
+      <li>Step 2: slow = 3, fast = 5.</li>
+      <li>Step 3: slow = 4, fast goes 5 → 3 → 4, so fast = 4. <b>Same node: cycle found.</b></li>
+    </ol>
+  </div>
+  <pre><code class="lang-js">function middleNode(head) {
+  let slow = head;
+  let fast = head;
+  while (fast !== null &amp;&amp; fast.next !== null) {
+    slow = slow.next;
+    fast = fast.next.next;
+  }
+  return slow;
+}
+
+function hasCycle(head) {
+  let slow = head;
+  let fast = head;
+  while (fast !== null &amp;&amp; fast.next !== null) {
+    slow = slow.next;
+    fast = fast.next.next;
+    if (slow === fast) return true; // compare nodes, not values
+  }
+  return false;
+}</code></pre>
+  <p>A close cousin is the <b>fixed gap</b>: to find the n-th node from the end, move one pointer n steps ahead, then move both together. When the front pointer reaches the end, the back pointer is n from the end. You&#39;ll build that in the third lab, combined with a dummy head.</p>
+
+  <h2>6. The templates</h2>
+  <pre><code class="lang-js">// (In TypeScript, type nodes as ListNode | null.)
+
+// Walk
+for (let node = head; node !== null; node = node.next) { /* use node.val */ }
+
+// Reverse: previous / current / next
+let previous = null, current = head;
+while (current !== null) {
+  const next = current.next;
+  current.next = previous;
+  previous = current;
+  current = next;
+}
+// previous is the new head
+
+// Dummy head: build or edit, then return dummy.next
+const dummy = new ListNode(0, head);
+let tail = dummy;
+// ... tail.next = someNode; tail = tail.next; ...
+// return dummy.next;
+
+// Fast / slow
+let slow = head, fast = head;
+while (fast !== null &amp;&amp; fast.next !== null) {
+  slow = slow.next;
+  fast = fast.next.next;
+}</code></pre>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><b>Overwriting <code>next</code> before saving it.</b> Write <code>current.next = previous</code> first and the rest of the list is gone. Always save <code>const next = current.next</code> first. Other classics: checking only <code>fast !== null</code> and then crashing on <code>fast.next.next</code> (check <code>fast.next</code> too); returning <code>dummy</code> instead of <code>dummy.next</code>; forgetting to set the old head&#39;s <code>next</code> to <code>null</code>, which leaves a two-node cycle; and comparing values instead of nodes in cycle detection. Before coding, draw three boxes and arrows and walk your loop through them by hand.</p></div>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;It&#39;s a singly linked list, so I can&#39;t index or walk backwards. The easy version copies it into an array, O(n) space. To do it in O(1) space I&#39;ll rewire pointers: [reverse with previous, current, next] / [a dummy head so the first node isn&#39;t a special case] / [fast and slow pointers: when fast reaches the end, slow is in the middle; if there&#39;s a cycle, they meet]. Let me draw it on three nodes first.&quot;</p></div>
+
+  <div data-quiz='[
+    {"q":"Given the head of a singly linked list, return true if the list is a palindrome (reads the same both ways), using O(1) extra space. Which moves fit?","o":["Sort the list","Fast/slow pointers to find the middle, reverse the second half, then compare the two halves","A hash map of value to count","Binary search on the list"],"a":1,"why":"Fast/slow finds the middle in one pass, and reversing the second half in place lets you compare front and back with O(1) extra space. Copying to an array works too but is O(n) space."},
+    {"q":"Remove every node with value 7 from a linked list, including possibly the first few nodes. Which trick removes the special case for the head?","o":["Fast and slow pointers","A dummy node before the head; return dummy.next","Reverse the list first","Recursion only"],"a":1,"why":"With a dummy in front, the real head has a previous node like everyone else, so removing it is the same code as removing any node."},
+    {"q":"In reverseList, what goes wrong if you write current.next = previous before saving current.next?","o":["Nothing; JavaScript keeps a copy","You lose the only pointer to the rest of the list","The list becomes sorted","It only fails on empty lists"],"a":1,"why":"current.next was the only reference to the remaining nodes. Overwrite it first and they are unreachable. Save it in a variable before flipping."},
+    {"q":"Detect whether a linked list with up to 100,000 nodes has a cycle, using O(1) extra space. Which approach fits?","o":["Put every node in a Set","Walk until you reach null","Fast and slow pointers; a cycle exists if they ever point to the same node","Count nodes and compare with the length"],"a":2,"why":"A Set works but is O(n) space. Walking until null never ends on a cycle. Floyd fast/slow uses O(1) space: the fast pointer gains one node per step, so inside a loop it must land on the slow one."},
+    {"q":"Which operation is O(1) on a singly linked list but O(n) on a JavaScript array?","o":["Reading the 1,000th element","Inserting a new element at the front","Finding whether a value exists","Reading the last element by index"],"a":1,"why":"Adding at the front of a list just points the new node at the old head. An array must shift every existing element over by one."},
+    {"q":"Merge two sorted linked lists of lengths n and m. What is the best time and extra space?","o":["O(n × m) time, O(1) space","O((n + m) log(n + m)) time, O(n + m) space","O(n + m) time, O(1) extra space","O(log(n + m)) time, O(1) space"],"a":2,"why":"Two pointers attach each existing node once, and the dummy-head approach reuses nodes rather than copying them."}
+  ]'></div>
+
+  <h2>Labs</h2>
+  <p>Each lab&#39;s editor starts with the <code>ListNode</code> class and the <code>fromArray</code>/<code>toArray</code> helpers. Leave them in place: the tests use them. Use <code>console.log(toArray(head))</code> to see a list while debugging.</p>
+  <div data-lab="dsa-reverse-list"></div>
+  <div data-lab="dsa-merge-two-lists"></div>
+  <div data-lab="dsa-remove-nth-from-end"></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>A linked list trades O(1) indexing for O(1) insert/remove next to a node you hold. You only have the <b>head</b>, and you walk with <code>node = node.next</code>.</li>
+    <li><b>Reverse</b> with previous / current / next. Save <code>next</code> before you flip the arrow; return <code>previous</code>.</li>
+    <li><b>Dummy head</b> whenever the head might change (merge, remove, insert). Return <code>dummy.next</code>.</li>
+    <li><b>Fast/slow</b>: fast at 2× speed finds the middle in one pass and detects cycles in O(1) space. A <b>fixed gap</b> finds the n-th from the end.</li>
+    <li>The copy-to-array version is a fine brute force (O(n) space); say it, then rewire pointers for O(1) space. Draw three nodes before you code.</li>
+    <li>Practice next: LeetCode 206 (Reverse), 21 (Merge Two), 876 (Middle), 141 (Cycle), 19 (Remove Nth From End), 234 (Palindrome List).</li>
+  </ul>
+</template>

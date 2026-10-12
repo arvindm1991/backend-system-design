@@ -1,0 +1,44 @@
+{
+  "id": "dsa-first-last-position",
+  "title": "First and last position of an element",
+  "minutes": 15,
+  "prompt": "<p>A sorted list holds the reading levels of a class&#39;s assigned books. When the teacher filters by one level, the app needs the range of books at that level.</p>\n<p>Write <code>firstAndLast(nums, target)</code> that returns <code>[firstIndex, lastIndex]</code> of <code>target</code> in the sorted array <code>nums</code>, or <code>[-1, -1]</code> if it isn&#39;t there. Must run in <b>O(log n)</b> time, even if every element equals the target. Values may be decimals, so don&#39;t rely on <code>target + 1</code>.</p>\n<p>Examples with <code>nums = [5, 7, 7, 8, 8, 10]</code>:</p>\n<ul>\n<li><code>firstAndLast(nums, 8)</code> → <code>[3, 4]</code></li>\n<li><code>firstAndLast(nums, 6)</code> → <code>[-1, -1]</code></li>\n<li><code>firstAndLast([], 0)</code> → <code>[-1, -1]</code></li>\n</ul>\n<p>Constraints: 0 ≤ <code>nums.length</code> ≤ 10<sup>5</sup>, sorted in non-decreasing order.</p>",
+  "starter": "function firstAndLast(nums, target) {\n  // TODO: two binary searches.\n  // first = first index with nums[i] >= target\n  // last  = (first index with nums[i] > target) - 1\n  return [-1, -1];\n}",
+  "solution": "function firstIndexWhere(nums, isYes) {\n  let lo = 0;\n  let hi = nums.length;\n  while (lo < hi) {\n    const mid = lo + Math.floor((hi - lo) / 2);\n    if (isYes(nums[mid])) {\n      hi = mid;\n    } else {\n      lo = mid + 1;\n    }\n  }\n  return lo;\n}\n\nfunction firstAndLast(nums, target) {\n  const first = firstIndexWhere(nums, (value) => value >= target);\n  if (first === nums.length || nums[first] !== target) return [-1, -1];\n  const afterLast = firstIndexWhere(nums, (value) => value > target);\n  return [first, afterLast - 1];\n}",
+  "tests": [
+    {
+      "name": "classic example",
+      "code": "assertEqual(firstAndLast([5, 7, 7, 8, 8, 10], 8), [3, 4]);\nassertEqual(firstAndLast([5, 7, 7, 8, 8, 10], 7), [1, 2]);"
+    },
+    {
+      "name": "target missing",
+      "code": "assertEqual(firstAndLast([5, 7, 7, 8, 8, 10], 6), [-1, -1]);\nassertEqual(firstAndLast([5, 7, 7, 8, 8, 10], 11), [-1, -1]);\nassertEqual(firstAndLast([5, 7, 7, 8, 8, 10], 1), [-1, -1]);"
+    },
+    {
+      "name": "empty array",
+      "code": "assertEqual(firstAndLast([], 0), [-1, -1]);"
+    },
+    {
+      "name": "single element",
+      "code": "assertEqual(firstAndLast([1], 1), [0, 0]);\nassertEqual(firstAndLast([1], 2), [-1, -1]);"
+    },
+    {
+      "name": "every element is the target",
+      "code": "assertEqual(firstAndLast([3, 3, 3, 3], 3), [0, 3]);"
+    },
+    {
+      "name": "decimal values (no target + 1 shortcut)",
+      "code": "assertEqual(firstAndLast([0.5, 1.5, 1.5, 1.7, 2.5], 1.5), [1, 2]);"
+    },
+    {
+      "name": "matches a linear scan on many small inputs",
+      "code": "let seed = 31;\nconst rand = (m) => { seed = (seed * 48271) % 2147483647; return seed % m; };\nfunction brute(nums, t) { const f = nums.indexOf(t); return f === -1 ? [-1, -1] : [f, nums.lastIndexOf(t)]; }\nfor (let k = 0; k < 40; k++) {\n  const nums = Array.from({ length: rand(12) }, () => rand(7) - 3).sort((a, b) => a - b);\n  const t = rand(9) - 4;\n  assertEqual(firstAndLast(nums, t), brute(nums, t), JSON.stringify(nums) + ' target=' + t);\n}"
+    }
+  ],
+  "hints": [
+    "<p>Finding one copy and walking outward is O(n) when there are many copies. Instead, ask two different yes/no questions that each flip once, and binary search each.</p>",
+    "<p>First = the first index where <code>nums[i] &gt;= target</code>. If that index is past the end or doesn&#39;t hold the target, return <code>[-1, -1]</code>. Last = (the first index where <code>nums[i] &gt; target</code>) − 1.</p>",
+    "<p>Write the template once and pass the question in:</p><pre><code>function firstIndexWhere(nums, isYes) {\n  let lo = 0, hi = nums.length;\n  while (lo &lt; hi) {\n    const mid = lo + Math.floor((hi - lo) / 2);\n    if (isYes(nums[mid])) hi = mid;\n    else lo = mid + 1;\n  }\n  return lo;\n}\n// first = firstIndexWhere(nums, v =&gt; v &gt;= target)\n// last  = firstIndexWhere(nums, v =&gt; v &gt; target) - 1</code></pre>"
+  ],
+  "explain": "<p><b>Time O(log n), space O(1).</b> Two binary searches, about 2 × log₂ n checks, even if a million elements equal the target. The count of matches is simply <code>last - first + 1</code>, which is how you answer &quot;how many books are at level 3?&quot; in O(log n).</p><p><b>In an interview:</b> &quot;I&#39;ll run the same lower-bound binary search twice: the first index with value at least the target, and the first index with value greater than the target. The range between them is the answer. Both are O(log n), and walking outward would be O(n) with many duplicates.&quot;</p>"
+}

@@ -1,0 +1,189 @@
+<template id="tpl-queues" data-title="Queues and background jobs" data-part="Part 2 · Scaling building blocks" data-order="70">
+  <h1>Queues and background jobs</h1>
+  <p class="lede">After this lesson you will know when to take work out of the request and put it on a queue, what &quot;at-least-once delivery&quot; really means for your code, how acks and visibility timeouts recover from crashed workers, how to retry with exponential backoff and jitter, where failed messages go (dead-letter queues), and how to make consumers idempotent so duplicates are harmless. You will build the retry helper and the idempotent consumer yourself.</p>
+
+  <h2>1. The problem: one click, five slow things</h2>
+  <p>In PageTurn, when Maya finishes the last page of &quot;Holes&quot;, the app calls <code>POST /api/books/311/complete</code>. Version 1 does everything inside that request:</p>
+  <div class="trace">
+    <p><b>Trace: the synchronous version</b></p>
+    <ol>
+      <li>Save the completion row in Postgres: <b>10 ms</b>.</li>
+      <li>Award 10 XP and check badges: <b>30 ms</b>.</li>
+      <li>Update the teacher&#39;s class dashboard aggregates: <b>80 ms</b>.</li>
+      <li>Email Maya&#39;s parent through an email provider&#39;s API: <b>400 ms</b> on a good day.</li>
+      <li>Ask an LLM to generate a 5-question comprehension quiz for Maya: <b>8 seconds</b>.</li>
+      <li>Total: Maya stares at a spinner for about <b>8.5 seconds</b>. If the email provider is down, the whole request fails with a 500, and the app tells her the completion didn&#39;t save, even though step 1 succeeded.</li>
+    </ol>
+  </div>
+  <p>Only step 1 needs to happen before we answer Maya. Everything else can happen a few seconds later. And steps 4 and 5 call outside services that are slow and sometimes fail.</p>
+  <p>The fix: save the completion, put a message saying <i>&quot;Maya completed book 311&quot;</i> on a <b>queue</b>, and respond in about 15 ms. <b>Background workers</b> pull messages off the queue and do the slow work, retrying when something fails.</p>
+  <p>Use a queue when the work is <b>slow</b> (seconds), <b>unreliable</b> (third-party APIs), <b>bursty</b> (a teacher assigns a book to 6 classes at once: 180 students), or <b>not needed for the response</b>. Keep it in the request when the user needs the result right now to continue.</p>
+
+  <h2>2. Producers, queues, consumers</h2>
+  <p>The vocabulary:</p>
+  <ul>
+    <li><b>Message</b> (or job): a small record describing work, like <code>{"type":"book.completed","studentId":8812,"bookId":311}</code>. Put IDs in it, not big payloads.</li>
+    <li><b>Producer</b>: the code that sends messages (the API server).</li>
+    <li><b>Queue</b> (the <b>broker</b>): a durable service that stores messages until someone handles them. Examples: Amazon SQS, RabbitMQ, Google Pub/Sub, Redis-based job libraries like BullMQ or Sidekiq. Kafka is a related tool covered at the end.</li>
+    <li><b>Consumer</b> (or worker): a process that receives messages, does the work, and tells the queue it&#39;s done.</li>
+  </ul>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 260" width="100%" role="img" aria-label="API server produces messages into a queue; three workers consume; failed messages move to a dead-letter queue after 5 attempts" style="font-family:inherit">
+      <defs><marker id="queu-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <rect x="10" y="90" width="120" height="60" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+      <text x="70" y="116" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">API server</text>
+      <text x="70" y="134" text-anchor="middle" style="fill:var(--muted);font-size:12px">producer</text>
+      <line x1="130" y1="120" x2="186" y2="120" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#queu-arr)"/>
+      <text x="158" y="110" text-anchor="middle" style="fill:var(--muted);font-size:12px">send</text>
+      <rect x="190" y="86" width="230" height="68" rx="8" style="fill:var(--surface);stroke:var(--accent);stroke-width:2"/>
+      <text x="305" y="78" text-anchor="middle" style="fill:currentColor;font-size:13px;font-weight:600">Queue: book-events</text>
+      <g style="stroke:var(--line);fill:var(--surface)">
+        <rect x="204" y="100" width="36" height="40" rx="4"/><rect x="248" y="100" width="36" height="40" rx="4"/><rect x="292" y="100" width="36" height="40" rx="4"/>
+        <rect x="336" y="100" width="36" height="40" rx="4" style="stroke:var(--accent);stroke-dasharray:4 3"/>
+      </g>
+      <text x="222" y="125" text-anchor="middle" style="fill:currentColor;font-size:12px">m4</text>
+      <text x="266" y="125" text-anchor="middle" style="fill:currentColor;font-size:12px">m3</text>
+      <text x="310" y="125" text-anchor="middle" style="fill:currentColor;font-size:12px">m2</text>
+      <text x="354" y="125" text-anchor="middle" style="fill:var(--muted);font-size:12px">m1</text>
+      <text x="305" y="172" text-anchor="middle" style="fill:var(--muted);font-size:12px">m1 is invisible while a worker holds it</text>
+      <g>
+        <rect x="490" y="20" width="120" height="44" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="550" y="47" text-anchor="middle" style="fill:currentColor;font-size:13px">worker 1</text>
+        <rect x="490" y="98" width="120" height="44" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="550" y="125" text-anchor="middle" style="fill:currentColor;font-size:13px">worker 2</text>
+        <rect x="490" y="176" width="120" height="44" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="550" y="203" text-anchor="middle" style="fill:currentColor;font-size:13px">worker 3</text>
+      </g>
+      <line x1="420" y1="108" x2="486" y2="46" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#queu-arr)"/>
+      <line x1="420" y1="120" x2="486" y2="120" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#queu-arr)"/>
+      <line x1="420" y1="132" x2="486" y2="194" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#queu-arr)"/>
+      <text x="452" y="68" style="fill:var(--muted);font-size:12px">receive</text>
+      <text x="620" y="125" style="fill:var(--muted);font-size:12px">ack =</text>
+      <text x="620" y="141" style="fill:var(--muted);font-size:12px">delete</text>
+      <rect x="190" y="206" width="230" height="44" rx="8" style="fill:var(--surface);stroke:var(--line);stroke-dasharray:5 4"/>
+      <text x="305" y="226" text-anchor="middle" style="fill:currentColor;font-size:13px">Dead-letter queue</text>
+      <text x="305" y="242" text-anchor="middle" style="fill:var(--muted);font-size:12px">after 5 failed receives</text>
+      <line x1="305" y1="154" x2="305" y2="202" style="stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3" marker-end="url(#queu-arr)"/>
+    </svg>
+    <figcaption>The API produces messages and moves on. Workers receive, process, and acknowledge. A message that keeps failing is moved aside to a dead-letter queue.</figcaption>
+  </figure>
+  <p>What you just bought:</p>
+  <ul>
+    <li><b>Fast responses.</b> The user waits for the enqueue (a few ms), not the work.</li>
+    <li><b>Isolation from failures.</b> If the email provider is down for 10 minutes, messages wait and get retried. The user-facing API is unaffected.</li>
+    <li><b>Load leveling.</b> At 3:00pm, 30,000 students finish their reading and 30,000 messages arrive in a few minutes. Ten workers chew through them at their own pace instead of the spike hitting the database all at once.</li>
+    <li><b>Independent scaling.</b> Add workers when the queue grows, without touching the API fleet.</li>
+  </ul>
+  <p>What it costs: the work is no longer done when you respond, so the UI must handle &quot;in progress&quot; states (&quot;Your quiz is being prepared...&quot;), and you now operate one more system with its own failure modes, which the rest of this lesson is about.</p>
+
+  <h2>3. Delivery guarantees: why &quot;at least once&quot;</h2>
+  <p>Networks and processes fail at the worst moments. Consider a worker that receives a message, awards the XP, and crashes before telling the queue it&#39;s done. Did the work happen? The queue can&#39;t know. It has two choices:</p>
+  <table class="tbl">
+    <thead><tr><th>Guarantee</th><th>What the queue does</th><th>Risk</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>At-most-once</td><td>Delete the message as soon as it&#39;s handed out</td><td>A crash loses the work forever</td><td>Losing some is fine (metrics samples, &quot;typing...&quot; signals)</td></tr>
+      <tr><td>At-least-once</td><td>Keep the message until the worker confirms; redeliver otherwise</td><td>Work can run twice</td><td>Almost always: you&#39;d rather do it twice than never</td></tr>
+      <tr><td>Exactly-once</td><td>Not achievable end to end over an unreliable network on its own</td><td>n/a</td><td>You get the <i>effect</i> of it with at-least-once + idempotent consumers</td></tr>
+    </tbody>
+  </table>
+  <p>So the rule of thumb: <b>assume every message can arrive more than once</b>, and write consumers so that&#39;s harmless. Some brokers advertise &quot;exactly-once&quot; features (for example SQS FIFO deduplication within a 5-minute window, or Kafka transactions), but they cover narrow cases, not your side effects like sending an email or charging a card.</p>
+
+  <h2>4. Acks and visibility timeouts</h2>
+  <p>How does the queue know a worker finished? The worker sends an <b>acknowledgment</b> (ack): &quot;done, delete it&quot;. Until then the message is held, not deleted.</p>
+  <p>In SQS-style queues, a received message becomes <b>invisible</b> to other workers for a <b>visibility timeout</b> (say 30 seconds). If the worker acks (deletes) it in time, it&#39;s gone. If not, it becomes visible again and another worker gets it. RabbitMQ does the same thing based on the worker&#39;s connection: if the connection drops with the message unacked, it&#39;s requeued.</p>
+  <div class="trace">
+    <p><b>Trace: a worker crash, visibility timeout 30 s</b></p>
+    <ol>
+      <li><b>10:00:00.</b> Worker 1 receives message m1 (<code>book.completed</code>, Maya, book 311). m1 becomes invisible until 10:00:30. Receive count: 1.</li>
+      <li><b>10:00:01.</b> Worker 1 awards 10 XP in the database. Maya now has 510 XP.</li>
+      <li><b>10:00:02.</b> Worker 1 is killed by a deploy before it calls delete. No ack.</li>
+      <li><b>10:00:30.</b> m1&#39;s visibility timeout expires. It&#39;s visible again. Receive count will become 2.</li>
+      <li><b>10:00:31.</b> Worker 3 receives m1 and runs the same handler. Without protection, Maya gets 10 more XP: <b>520</b>. That&#39;s the duplicate at-least-once promised you. Section 7 fixes it.</li>
+      <li><b>10:00:32.</b> Worker 3 finishes and deletes m1. Done.</li>
+    </ol>
+  </div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>A visibility timeout shorter than the job. The LLM quiz generation takes 8 s normally but 45 s when the provider is slow. With a 30 s timeout, the message reappears while worker 1 is still working, worker 2 starts the same job, and now two quizzes are generated and paid for. Set the timeout comfortably above the slowest normal run (here, 2–5 minutes), and for long jobs have the worker extend it while working (a &quot;heartbeat&quot;).</p></div>
+
+  <h2>5. Retries with exponential backoff and jitter</h2>
+  <p>When the email provider returns <code>503 Service Unavailable</code>, the right move is to try again later. How much later matters.</p>
+  <p><b>Transient</b> errors (timeouts, 429 Too Many Requests, 502/503) might succeed later: retry. <b>Permanent</b> errors (400 Bad Request, 404, a validation error) will fail the same way every time: don&#39;t retry, send the message to the dead-letter queue right away.</p>
+  <p><b>Immediate retries</b> are bad: if the provider is overloaded, hammering it makes recovery slower. <b>Exponential backoff</b> waits longer after each failure: base × 2<sup>attempt</sup>, with a cap.</p>
+  <p>But if 3,000 parent emails all fail at 10:00:00 and all wait exactly 1 s, 2 s, 4 s, they all retry together, in synchronized waves. <b>Jitter</b> adds randomness. With <b>full jitter</b>, each wait is a random time between 0 and the exponential ceiling, which spreads the herd across the whole window.</p>
+  <table class="tbl">
+    <thead><tr><th>Retry #</th><th>Ceiling (base 1 s, cap 60 s)</th><th>Full-jitter wait (random in range)</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>1 s</td><td>0–1 s</td></tr>
+      <tr><td>2</td><td>2 s</td><td>0–2 s</td></tr>
+      <tr><td>3</td><td>4 s</td><td>0–4 s</td></tr>
+      <tr><td>4</td><td>8 s</td><td>0–8 s</td></tr>
+      <tr><td>7</td><td>64 s, capped to 60 s</td><td>0–60 s</td></tr>
+    </tbody>
+  </table>
+  <pre><code class="lang-js">function backoffDelay(attempt, { baseMs, maxMs, random }) {
+  const ceiling = Math.min(maxMs, baseMs * 2 ** attempt);
+  return random() * ceiling;           // full jitter
+}</code></pre>
+  <p>Retries can live in two places. <b>In-process retries</b> (inside the handler, a few quick attempts) handle blips. <b>Queue-level retries</b> (don&#39;t ack, or re-enqueue with a delay) handle longer outages without tying up a worker. Use a small number of each; retries multiply, and three layers of 3 retries each is 27 attempts against a service that is already struggling.</p>
+  <div data-lab="retry-backoff"></div>
+
+  <h2>6. Dead-letter queues</h2>
+  <p>Some messages will never succeed: a <code>book.completed</code> for a student who was deleted, or a payload with a bug in it. Without a limit, such a <b>poison message</b> is retried forever, wasting workers and filling logs.</p>
+  <p>A <b>dead-letter queue</b> (DLQ) is a separate queue where messages go after too many failures. In SQS you set <code>maxReceiveCount</code> (for example 5) on the main queue; on the 6th receive attempt the message is moved to the DLQ instead.</p>
+  <p>A DLQ is only useful if someone looks at it:</p>
+  <ul>
+    <li><b>Alert</b> when the DLQ is not empty (or grows quickly).</li>
+    <li><b>Inspect</b> messages to find the bug.</li>
+    <li><b>Redrive</b>: after deploying the fix, move the messages back to the main queue to be processed. This only works safely because consumers are idempotent.</li>
+  </ul>
+
+  <h2>7. Idempotent consumers</h2>
+  <p>An operation is <b>idempotent</b> if doing it twice has the same effect as doing it once. &quot;Set Maya&#39;s XP to 510&quot; is idempotent. &quot;Add 10 XP to Maya&quot; is not. Since at-least-once delivery will hand you duplicates (section 4&#39;s trace), consumers must be idempotent.</p>
+  <p>Two techniques:</p>
+  <p><b>1. Make the operation naturally idempotent.</b> Use upserts and absolute values instead of increments: <code>INSERT ... ON CONFLICT DO NOTHING</code> on a completion row with a unique key, then compute XP from completions.</p>
+  <p><b>2. Deduplicate with an idempotency key.</b> Give each logical event a key that is the same on every redelivery and re-publish, like <code>complete:8812:311</code> (student, book). Record processed keys, and skip any key you&#39;ve seen. Do the recording and the side effect in <b>one database transaction</b>, so you can&#39;t end up with one without the other:</p>
+  <pre><code class="lang-sql">BEGIN;
+-- Fails silently (0 rows) if this event was already processed.
+INSERT INTO processed_events (key) VALUES ('complete:8812:311')
+  ON CONFLICT (key) DO NOTHING;
+-- App checks the row count: if 0, ROLLBACK and ack the message as a duplicate.
+UPDATE students SET xp = xp + 10 WHERE id = 8812;
+COMMIT;</code></pre>
+  <p>Side effects outside your database (sending the parent email) can&#39;t join that transaction. Pass the key to the provider if it supports idempotency keys (many payment and some email APIs do), or record &quot;email sent for key X&quot; and accept a small chance of a duplicate email if the crash lands between sending and recording.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>&quot;Completing a book writes the row and enqueues an event; workers do XP, dashboards, email and quiz generation asynchronously. The queue is at-least-once, so each consumer is idempotent: I dedupe on a business key like student-plus-book, recorded in the same transaction as the side effect. Transient failures retry with exponential backoff and jitter; after five attempts the message goes to a DLQ with an alert, and we redrive after a fix.&quot;</p></div>
+  <div data-lab="idempotent-consumer"></div>
+
+  <h2>8. Queue depth, ordering, and logs</h2>
+  <p><b>Queue depth</b> (messages waiting) and <b>age of the oldest message</b> are your health signals. Depth growing steadily means consumers can&#39;t keep up: autoscale workers on depth, not CPU. If the oldest message is 20 minutes old, parents are getting emails 20 minutes late, which may be fine, while quizzes 20 minutes late are not. Separate queues by urgency so a flood of emails doesn&#39;t delay quizzes.</p>
+  <p><b>Ordering.</b> Standard queues with many workers don&#39;t guarantee order: m2 can finish before m1. Usually that&#39;s fine. When it isn&#39;t (process a student&#39;s events in order), use ordering <i>per key</i>: SQS FIFO message groups or Kafka partitions keyed by <code>studentId</code>. You get order within one student while different students still run in parallel. Global ordering across everything means one worker at a time, which rarely scales.</p>
+  <p><b>Queues vs logs.</b> Kafka (and Kinesis, Pub/Sub in some modes) is a <b>log</b>: messages are kept for days and each consumer group tracks its own position. Many independent consumers can read the same stream, and you can replay history.</p>
+  <table class="tbl">
+    <thead><tr><th></th><th>Job queue (SQS, RabbitMQ, BullMQ)</th><th>Log (Kafka, Kinesis)</th></tr></thead>
+    <tbody>
+      <tr><td>After processing</td><td>Message deleted</td><td>Message kept until retention expires</td></tr>
+      <tr><td>Many consumers of the same event</td><td>Fan out to one queue per consumer</td><td>Built in: each group has its own offset</td></tr>
+      <tr><td>Per-message retry, delay, DLQ</td><td>Built in</td><td>You build it (retry topics)</td></tr>
+      <tr><td>Choose it when</td><td>Background jobs: emails, quiz generation</td><td>Event streams many teams consume; replay; analytics pipelines</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Enqueuing a message <i>before</i> the database transaction commits, or committing and then crashing before enqueuing. In the first case a worker can look for a completion row that doesn&#39;t exist yet (or never will, if the transaction rolls back); in the second the event is lost. This is the dual-write problem. The fix, the transactional outbox, is covered in the Event-driven architecture lesson.</p></div>
+
+  <h2>Quiz</h2>
+  <div data-quiz='[
+    {"q": "Which work should stay inside the HTTP request instead of going to a queue?", "o": ["Emailing the parent after a book is finished", "Generating an AI quiz that takes 8 seconds", "Saving the completion so the app can show the book as finished", "Recomputing the teacher dashboard aggregates"], "a": 2, "why": "The user needs the completion saved before continuing. The other tasks are slow, unreliable or not needed for the response, so they can happen a few seconds later in workers."},
+    {"q": "A worker awards XP, then crashes before acking. The visibility timeout expires. What happens with a standard at-least-once queue?", "o": ["The message is lost", "The message is redelivered and XP may be awarded twice unless the consumer is idempotent", "The queue detects the XP was awarded and skips it", "The message goes straight to the dead-letter queue"], "a": 1, "why": "The queue cannot know the work happened, so it redelivers. Duplicates are expected; idempotent consumers make them harmless."},
+    {"q": "3,000 email sends fail at the same instant. Why add jitter to exponential backoff?", "o": ["So retries spread out instead of hitting the provider in synchronized waves", "To make each retry faster", "Because exponential backoff alone never stops", "To keep messages in order"], "a": 0, "why": "Without jitter, every client waits exactly the same 1 s, 2 s, 4 s and retries together. Random waits spread the load so the provider can recover."},
+    {"q": "Which consumer operation is idempotent?", "o": ["UPDATE students SET xp = xp + 10 WHERE id = 8812", "Send an email to the parent", "Append a row to an activity log with a new random id", "INSERT INTO completions (student_id, book_id) VALUES (8812, 311) ON CONFLICT DO NOTHING"], "a": 3, "why": "With a unique key on (student_id, book_id), running the insert twice leaves exactly one row. Increments, emails and appends with fresh ids all change the result each time."},
+    {"q": "The LLM quiz job usually takes 8 s but sometimes 45 s. The visibility timeout is 30 s. What goes wrong?", "o": ["Nothing, the timeout only matters after a crash", "The message reappears while still being processed and a second worker generates a duplicate quiz", "The message is deleted after 30 s", "The DLQ receives it immediately"], "a": 1, "why": "The timeout is about time since receive, not crashes. A slow job loses its invisibility and another worker picks it up. Set a longer timeout or extend it with heartbeats."},
+    {"q": "Messages keep failing on a bug and are retried forever. What should be in place?", "o": ["A larger visibility timeout", "Global FIFO ordering", "A dead-letter queue with a max receive count, an alert, and redrive after the fix", "At-most-once delivery"], "a": 2, "why": "A DLQ stops poison messages from consuming workers forever, the alert makes someone look, and redrive reprocesses them once the bug is fixed."}
+  ]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Move work to a queue when it is slow, unreliable, bursty, or not needed for the response; respond fast and let workers catch up.</li>
+    <li>Queues are <b>at-least-once</b>: the effect of exactly-once comes from <b>idempotent consumers</b> (natural idempotency or a dedupe key recorded in the same transaction).</li>
+    <li>Messages stay until <b>acked</b>; a <b>visibility timeout</b> brings back messages from crashed workers. Set it above the slowest normal job.</li>
+    <li>Retry transient errors with <b>exponential backoff + full jitter</b> and a cap; never retry permanent errors.</li>
+    <li>After N failures, messages go to a <b>dead-letter queue</b>: alert, fix, redrive.</li>
+    <li>Watch <b>queue depth and oldest-message age</b>; order per key when needed; use a log (Kafka) when many consumers need the same stream.</li>
+  </ul>
+</template>

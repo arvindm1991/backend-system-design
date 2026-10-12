@@ -1,0 +1,44 @@
+{
+  "id": "dsa-container-water",
+  "title": "Container with most water",
+  "minutes": 20,
+  "prompt": "<p>You are given an array <code>heights</code> where <code>heights[i]</code> is the height of a vertical wall at position <code>i</code>. Choose two walls. Together with the ground they hold water up to the <b>shorter</b> wall&#39;s height, across the distance between them: <code>Math.min(heights[left], heights[right]) * (right - left)</code>.</p>\n<p>Write <code>maxWater(heights)</code> that returns the largest amount of water any two walls can hold. With fewer than two walls, return <code>0</code>. Aim for <b>O(n)</b> time; the all-pairs version is O(n²).</p>\n<p>Example: <code>maxWater([1, 8, 6, 2, 5, 4, 8, 3, 7])</code> → <code>49</code> (walls at index 1 and 8: min(8, 7) × 7).</p>\n<p>Constraints: 0 ≤ <code>heights.length</code> ≤ 10<sup>5</sup>, 0 ≤ <code>heights[i]</code> ≤ 10<sup>4</sup>.</p>",
+  "starter": "function maxWater(heights) {\n  // TODO: start with the widest container (both ends). Which wall can you give up on?\n  return 0;\n}",
+  "solution": "function maxWater(heights) {\n  let left = 0;\n  let right = heights.length - 1;\n  let best = 0;\n  while (left < right) {\n    const width = right - left;\n    const level = Math.min(heights[left], heights[right]);\n    best = Math.max(best, level * width);\n    // the shorter wall limits every container it is part of; discard it\n    if (heights[left] < heights[right]) {\n      left++;\n    } else {\n      right--;\n    }\n  }\n  return best;\n}",
+  "tests": [
+    {
+      "name": "classic example",
+      "code": "assertEqual(maxWater([1, 8, 6, 2, 5, 4, 8, 3, 7]), 49);"
+    },
+    {
+      "name": "two walls",
+      "code": "assertEqual(maxWater([1, 1]), 1);\nassertEqual(maxWater([3, 9]), 3);"
+    },
+    {
+      "name": "best pair is the two ends",
+      "code": "assertEqual(maxWater([4, 3, 2, 1, 4]), 16);"
+    },
+    {
+      "name": "best pair is in the middle",
+      "code": "assertEqual(maxWater([1, 2, 1]), 2);\nassertEqual(maxWater([1, 3, 2, 5, 25, 24, 5]), 24);"
+    },
+    {
+      "name": "fewer than two walls holds nothing",
+      "code": "assertEqual(maxWater([]), 0);\nassertEqual(maxWater([5]), 0);"
+    },
+    {
+      "name": "zero-height walls",
+      "code": "assertEqual(maxWater([0, 0, 0]), 0);\nassertEqual(maxWater([0, 6, 0, 6, 0]), 12);"
+    },
+    {
+      "name": "matches the all-pairs answer on many small inputs",
+      "code": "function brute(h) {\n  let best = 0;\n  for (let i = 0; i < h.length; i++) for (let j = i + 1; j < h.length; j++) best = Math.max(best, Math.min(h[i], h[j]) * (j - i));\n  return best;\n}\nlet seed = 7;\nconst rand = () => { seed = (seed * 48271) % 2147483647; return seed % 20; };\nfor (let t = 0; t < 40; t++) {\n  const h = Array.from({ length: 2 + (t % 12) }, rand);\n  assertEqual(maxWater(h), brute(h), 'heights ' + JSON.stringify(h));\n}"
+    }
+  ],
+  "hints": [
+    "<p>All pairs is O(n²). Start with the widest possible container: one pointer at each end. Every later container is narrower, so it only wins if its water level is higher.</p>",
+    "<p>Compare the two walls. The shorter one caps the water level for <i>every</i> container it is part of, and all other containers using it are narrower. So it can never beat what you just measured: move that pointer inward.</p>",
+    "<p>Shape:</p><pre><code>let left = 0, right = heights.length - 1, best = 0;\nwhile (left &lt; right) {\n  best = Math.max(best, Math.min(heights[left], heights[right]) * (right - left));\n  if (heights[left] &lt; heights[right]) left++;\n  else right--;\n}\nreturn best;</code></pre>"
+  ],
+  "explain": "<p><b>Time O(n), space O(1).</b> Each step discards one wall for good, so there are at most n − 1 steps. The all-pairs version does n(n − 1)/2 checks: about 5 billion for 100,000 walls.</p><p>The general lesson: two pointers work whenever you can prove that one end <i>can&#39;t</i> be part of a better answer. That proof is the whole solution; the code is five lines.</p><p><b>In an interview:</b> &quot;I&#39;ll start with the widest container and move inward. The shorter wall limits the water for every container it&#39;s in, and every other one is narrower, so I can discard it. That gives O(n) time and O(1) space instead of checking all pairs.&quot;</p>"
+}

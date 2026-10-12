@@ -1,0 +1,44 @@
+{
+  "id": "dsa-longest-consecutive",
+  "title": "Longest Consecutive Sequence",
+  "minutes": 25,
+  "prompt": "<p>Given an unsorted array of integers <code>nums</code>, return the length of the longest run of consecutive integers (like 1, 2, 3, 4). The numbers can appear in any order in the array, and duplicates count once.</p>\n<p>Write <code>longestConsecutive(nums)</code>.</p>\n<ul>\n<li><code>longestConsecutive([100, 4, 200, 1, 3, 2])</code> → <code>4</code> (1, 2, 3, 4)</li>\n<li><code>longestConsecutive([0, 3, 7, 2, 5, 8, 4, 6, 0, 1])</code> → <code>9</code> (0 through 8)</li>\n<li><code>longestConsecutive([])</code> → <code>0</code></li>\n</ul>\n<p>Constraints: <code>0 &lt;= nums.length &lt;= 10^5</code>, values may be negative. Sorting would be O(n log n); the challenge is to do it in <b>O(n)</b> with a <code>Set</code>.</p>",
+  "starter": "function longestConsecutive(nums) {\n  // Simple idea: sort, then walk counting runs (O(n log n), watch out for duplicates).\n  // Goal: O(n) with a Set. Which numbers are the START of a run?\n  // TODO\n  return 0;\n}",
+  "solution": "function longestConsecutive(nums) {\n  const present = new Set(nums); // also removes duplicates\n  let longest = 0;\n  for (const num of present) {\n    if (present.has(num - 1)) continue; // not the start of a run; its run is counted from the start\n    let length = 1;\n    while (present.has(num + length)) length++;\n    if (length > longest) longest = length;\n  }\n  return longest;\n}",
+  "tests": [
+    {
+      "name": "the classic example",
+      "code": "assertEqual(longestConsecutive([100, 4, 200, 1, 3, 2]), 4);"
+    },
+    {
+      "name": "a long run hidden in shuffled order, with a duplicate",
+      "code": "assertEqual(longestConsecutive([0, 3, 7, 2, 5, 8, 4, 6, 0, 1]), 9);"
+    },
+    {
+      "name": "empty and single-element inputs",
+      "code": "assertEqual(longestConsecutive([]), 0);\nassertEqual(longestConsecutive([42]), 1);"
+    },
+    {
+      "name": "duplicates count once",
+      "code": "assertEqual(longestConsecutive([1, 2, 0, 1]), 3);\nassertEqual(longestConsecutive([5, 5, 5]), 1);"
+    },
+    {
+      "name": "negative numbers",
+      "code": "assertEqual(longestConsecutive([-1, -2, 0, 5, -3, 10]), 4);"
+    },
+    {
+      "name": "no two numbers are consecutive",
+      "code": "assertEqual(longestConsecutive([10, 30, 20]), 1);"
+    },
+    {
+      "name": "two runs, the second is longer",
+      "code": "assertEqual(longestConsecutive([1, 2, 50, 51, 52, 53, 3]), 4);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: &quot;is <code>x + 1</code> in the array?&quot; is a <b>have I seen this?</b> question. Put every number in a <code>Set</code> so that check is O(1).</p>",
+    "<p>Idea: only start counting from a number that <b>begins</b> a run, which you can test with <code>!set.has(num - 1)</code>. From a start, count upward while the next number is in the set. Each number is then walked over at most once in total.</p>",
+    "<p>Code shape: <code>const present = new Set(nums); for (const num of present) { if (present.has(num - 1)) continue; let len = 1; while (present.has(num + len)) len++; longest = Math.max(longest, len); }</code>. Loop over the set, not the array, so duplicates don&#39;t restart the same run.</p>"
+  ],
+  "explain": "<p><b>Time O(n), space O(n).</b> There is a <code>while</code> inside the <code>for</code>, but it only runs from the start of each run, so every number is visited by the <code>while</code> at most once across the whole function: about 2n steps in total. That &quot;count the total work, not the nesting&quot; argument is worth saying out loud; interviewers listen for it.</p>\n<p>Without the start check, a run of length n would be recounted from every member: O(n²) on <code>[1, 2, ..., n]</code>.</p>\n<p><b>How to say it:</b> &quot;Sorting gives O(n log n). For O(n), I put everything in a set, only begin counting at numbers whose predecessor is missing, and extend upward with O(1) lookups. Each number is touched a constant number of times, so it&#39;s O(n) time and O(n) space.&quot;</p>"
+}

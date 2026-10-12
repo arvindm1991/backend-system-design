@@ -1,0 +1,44 @@
+{
+  "id": "dsa-meeting-rooms",
+  "title": "Meeting Rooms II",
+  "minutes": 25,
+  "prompt": "<p>The school runs tutoring sessions, each as <code>[start, end]</code> in minutes. Every session needs its own room while it runs. What is the <b>minimum number of rooms</b> needed so no two sessions share a room at the same time?</p>\n<p>A session ending at 10 and another starting at 10 can use the same room (the first one has left).</p>\n<p>Write <code>minMeetingRooms(intervals)</code>.</p>\n<ul>\n<li><code>minMeetingRooms([[0, 30], [5, 10], [15, 20]])</code> returns <code>2</code></li>\n<li><code>minMeetingRooms([[7, 10], [2, 4]])</code> returns <code>1</code></li>\n<li><code>minMeetingRooms([[1, 5], [5, 10]])</code> returns <code>1</code></li>\n<li><code>minMeetingRooms([])</code> returns <code>0</code></li>\n</ul>\n<p>Constraints: 0 to 10<sup>4</sup> sessions; <code>0 &lt;= start &lt; end</code>. Target: O(n log n).</p>",
+  "starter": "function minMeetingRooms(intervals) {\n  // TODO: how many sessions are running at the busiest moment?\n}",
+  "solution": "function minMeetingRooms(intervals) {\n  // Two sorted lists: when sessions start, and when they end.\n  const starts = intervals.map((interval) => interval[0]).sort((a, b) => a - b);\n  const ends = intervals.map((interval) => interval[1]).sort((a, b) => a - b);\n\n  let roomsInUse = 0;\n  let maxRooms = 0;\n  let endIndex = 0;\n  for (let i = 0; i < starts.length; i++) {\n    // Free every room whose session ended at or before this start.\n    while (endIndex < ends.length && ends[endIndex] <= starts[i]) {\n      roomsInUse--;\n      endIndex++;\n    }\n    roomsInUse++;\n    maxRooms = Math.max(maxRooms, roomsInUse);\n  }\n  return maxRooms;\n}",
+  "tests": [
+    {
+      "name": "classic example needs 2 rooms",
+      "code": "assertEqual(minMeetingRooms([[0, 30], [5, 10], [15, 20]]), 2);"
+    },
+    {
+      "name": "no overlap needs 1 room",
+      "code": "assertEqual(minMeetingRooms([[7, 10], [2, 4]]), 1);"
+    },
+    {
+      "name": "back-to-back sessions share a room",
+      "code": "assertEqual(minMeetingRooms([[1, 5], [5, 10], [10, 15]]), 1, 'a session ending at 5 frees the room for one starting at 5');"
+    },
+    {
+      "name": "all overlapping",
+      "code": "assertEqual(minMeetingRooms([[1, 10], [2, 9], [3, 8], [4, 7]]), 4);"
+    },
+    {
+      "name": "empty and single",
+      "code": "assertEqual(minMeetingRooms([]), 0);\nassertEqual(minMeetingRooms([[3, 4]]), 1);"
+    },
+    {
+      "name": "rooms are reused after the peak",
+      "code": "assertEqual(minMeetingRooms([[1, 4], [2, 5], [6, 8], [7, 9], [7, 10]]), 3);"
+    },
+    {
+      "name": "identical sessions",
+      "code": "assertEqual(minMeetingRooms([[2, 3], [2, 3], [2, 3]]), 3);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: \"minimum number of rooms / platforms / servers\" for intervals = <b>the most intervals running at the same moment</b>. Sort, then sweep through time.</p>",
+    "<p>Pull out the start times and the end times into two separately sorted arrays. Walk the starts in order. Before counting a new start, release every session whose end is <code>&lt;=</code> this start. Track the peak of rooms in use.</p>",
+    "<p>Shape:</p><pre><code>for (let i = 0; i &lt; starts.length; i++) {\n  while (endIndex &lt; ends.length &amp;&amp; ends[endIndex] &lt;= starts[i]) { roomsInUse--; endIndex++; }\n  roomsInUse++;\n  maxRooms = Math.max(maxRooms, roomsInUse);\n}</code></pre><p>(A min-heap of end times works too: you will meet heaps in a later lesson.)</p>"
+  ],
+  "explain": "<p><b>Time O(n log n)</b> for the two sorts; the sweep is O(n) because <code>endIndex</code> only moves forward. <b>Space O(n)</b> for the two arrays. The brute force (for every minute, count the sessions covering it) depends on how long the day is, not on n.</p>\n<p><b>Say it:</b> \"The answer is the maximum overlap. I'll sort starts and ends separately and sweep: each start takes a room, each end at or before that start gives one back, and I track the peak. O(n log n).\" The same sweep answers \"peak concurrent users\" or \"max servers needed\" in real capacity planning.</p>"
+}

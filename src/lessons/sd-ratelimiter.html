@@ -1,0 +1,202 @@
+<template id="tpl-sd-ratelimiter" data-title="Case: Distributed rate limiter" data-part="Part 4 · System design" data-order="180">
+  <h1>Case study: Distributed rate limiter</h1>
+  <p class="lede">A rate limiter is a bouncer: "you've had 100 requests this minute, come back in 12 seconds." On one server it's a counter. Across 50 gateway servers handling a million requests a second, it's a distributed-systems problem: shared state, race conditions, latency budgets, and what to do when the shared state is down. After this lesson you can pick an algorithm, make it atomic, keep its overhead under a millisecond, and defend whether it fails open or closed.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: a public API for an AI tutoring platform. Free-tier developers get 60 requests/minute; paid get 1,000/minute; each school district (a tenant) gets 20,000/minute across all its users. One developer's runaway script must not slow down everyone else.</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>Limit by API key, by user, by tenant, and by IP (for unauthenticated endpoints); several rules can apply to one request.</li>
+    <li>Rules are configurable per plan without a deploy.</li>
+    <li>Rejected requests get <code>429 Too Many Requests</code> with <code>Retry-After</code>; all responses carry remaining-quota headers.</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li>Adds under ~1 ms at p99 to each request.</li>
+    <li>Accurate enough: a little overage (a few %) is fine; 2× is not.</li>
+    <li>Highly available: the limiter failing must not take the API down.</li>
+  </ul>
+  <p><b>Out of scope:</b> DDoS protection at the network layer (that's the CDN/edge's job), billing.</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Traffic.</b> 1 million requests/second at peak across ~50 gateway nodes (20,000 req/s each).</li>
+      <li><b>Checks.</b> ~2 rules per request (key + tenant) → <b>2 million limiter operations/second</b>.</li>
+      <li><b>Keys.</b> 10 million active keys (users, API keys, tenants, IPs) in any minute.</li>
+      <li><b>Memory.</b> A token bucket is two numbers (tokens, last refill time) plus the key name and store overhead: ~100–150 bytes. 10 M × 150 B ≈ <b>1.5 GB</b>. Small.</li>
+      <li><b>Store throughput.</b> A single Redis node does roughly 100,000–200,000 simple operations/second; small Lua scripts somewhat fewer. 2 M ops/s ÷ ~100k ≈ <b>20 shards</b>, or fewer with the local batching trick in deep dive 3.</li>
+      <li><b>Latency budget.</b> A round trip to Redis in the same datacenter is ~0.2–0.5 ms. That fits the 1 ms budget, but only if we make exactly one round trip per request.</li>
+    </ol>
+  </div>
+  <p>Conclusion: memory is trivial; <b>throughput and per-request latency</b> are the constraints.</p>
+
+  <h2>3. API</h2>
+  <p>The limiter is usually a library in the gateway calling a shared store, plus a small rules service. Its internal interface:</p>
+  <pre><code class="lang-js">// called by gateway middleware for each rule that matches the request
+check({ key: "apikey:k_81:minute", capacity: 1000, refillPerSec: 1000 / 60, cost: 1 })
+// =&gt; { allowed: true, remaining: 412, retryAfterMs: 0 }</code></pre>
+  <pre><code class="lang-http">HTTP/1.1 429 Too Many Requests
+Retry-After: 12
+RateLimit-Limit: 1000
+RateLimit-Remaining: 0
+RateLimit-Reset: 12
+{ "error": "rate_limited", "scope": "api_key", "message": "Try again in 12 seconds." }</code></pre>
+  <p>(Many APIs use <code>X-RateLimit-*</code> header names; an IETF draft standardizes <code>RateLimit-*</code>. Either is fine; be consistent and document it.)</p>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">-- rules (in a config DB, cached in every gateway, pushed on change)
+rate_rules (rule_id PK, match_scope, plan, limit_per_window, window_seconds, burst, cost_field)
+-- e.g. ('free-key', 'api_key', 'free', 60, 60, 60, NULL)
+--      ('district', 'tenant',  '*',    20000, 60, 5000, NULL)
+
+-- state (in Redis), one hash per bucket, auto-expires when idle
+rl:{apikey:k_81}:minute  -&gt;  { tokens: 412.7, ts: 1760083262123 }   TTL ~ 2 minutes</code></pre>
+  <p>The <code>{...}</code> in the key is a Redis Cluster hash tag: all keys with the same tag land on the same shard, which matters if one script must touch several keys.</p>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 780 360" width="100%" role="img" aria-label="Distributed rate limiter architecture" xmlns="http://www.w3.org/2000/svg" style="max-width:780px;font-family:inherit">
+
+<rect x="300" y="20" width="210" height="320" rx="10" fill="none" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="6 5"/><text x="310" y="37" font-size="12" fill="var(--muted)">API gateway fleet (~50 nodes)</text>
+<rect x="10" y="150" width="100" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="60.0" y="172.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Clients</text>
+<text x="60.0" y="187.0" text-anchor="middle" font-size="12" fill="var(--muted)">API keys</text>
+<rect x="170" y="150" width="110" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="225.0" y="180.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Load balancer</text>
+<rect x="320" y="70" width="170" height="56" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="405.0" y="95.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Gateway node 1</text>
+<text x="405.0" y="110.0" text-anchor="middle" font-size="12" fill="var(--muted)">limiter + local cache</text>
+<rect x="320" y="240" width="170" height="56" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="405.0" y="265.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Gateway node N</text>
+<text x="405.0" y="280.0" text-anchor="middle" font-size="12" fill="var(--muted)">limiter + local cache</text>
+<rect x="580" y="30" width="180" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="670.0" y="52.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Rules service</text>
+<text x="670.0" y="67.0" text-anchor="middle" font-size="12" fill="var(--muted)">limits per plan / tenant</text>
+<path d="M580,143 a90.0,8 0 0,0 180,0 a90.0,8 0 0,0 -180,0 v64 a90.0,8 0 0,0 180,0 v-64" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="670.0" y="177.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Redis cluster</text>
+<text x="670.0" y="192.0" text-anchor="middle" font-size="12" fill="var(--muted)">buckets, Lua scripts</text>
+<rect x="580" y="270" width="180" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="670.0" y="300.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Backend services</text>
+<path d="M113.0,175.0 L167.0,175.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M167.0,175.0 L158.0,179.5 L158.0,170.5 Z" fill="currentColor"/>
+<path d="M113.0,175.0 L122.0,170.5 L122.0,179.5 Z" fill="currentColor"/>
+<path d="M280.0,151.5 L336.8,127.2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M336.8,127.2 L330.3,134.9 L326.7,126.6 Z" fill="currentColor"/>
+<path d="M273.4,200.0 L348.1,238.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M348.1,238.6 L338.1,238.5 L342.2,230.5 Z" fill="currentColor"/>
+<path d="M580.0,69.6 L493.0,83.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M493.0,83.7 L501.1,77.8 L502.6,86.7 Z" fill="currentColor"/>
+<path d="M490.0,122.7 L577.1,148.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M577.1,148.0 L567.2,149.8 L569.7,141.2 Z" fill="currentColor"/>
+<path d="M484.8,240.0 L577.2,207.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M577.2,207.6 L570.2,214.8 L567.2,206.3 Z" fill="currentColor"/>
+<path d="M490.0,276.7 L577.0,285.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M577.0,285.5 L567.6,289.1 L568.5,280.1 Z" fill="currentColor"/>
+<text x="405" y="190" text-anchor="middle" font-size="16" fill="var(--muted)">...</text>
+<text x="140.0" y="223.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">429 +</text>
+<text x="140.0" y="237.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">Retry-After</text>
+<text x="536.5" y="70.7" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">config (cached)</text>
+<text x="547.6" y="125.4" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">check + consume</text>
+<text x="533.5" y="297.1" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">allowed</text>
+</svg>
+    <figcaption>Every gateway node runs the limiter as middleware. Rules are cached locally and pushed from a rules service. Bucket state lives in a sharded Redis cluster and is updated by one atomic script per check.</figcaption>
+  </figure>
+  <p>Per request: the gateway authenticates, finds matching rules from its in-memory rule cache, makes one Redis call that checks and consumes all matching buckets atomically, then either forwards the request or returns 429. Rules change rarely, so they're pushed to gateways and never fetched per request.</p>
+
+  <h2>6. Deep dive: choosing the algorithm</h2>
+  <p>Start with the naive one and watch it break.</p>
+  <div class="trace">
+    <ol>
+      <li><b>Fixed window.</b> Counter per key per calendar minute: <code>INCR rl:k_81:12:00</code>, reject above 100. A script sends 100 requests at 12:00:59 (allowed, window 12:00) and 100 at 12:01:00 (allowed, new window). <b>200 requests in 2 seconds</b> against a "100 per minute" limit.</li>
+      <li><b>Sliding window log.</b> Store every request timestamp, count the ones in the last 60 s. Exact, but 1,000 timestamps per key for a 1,000/min plan: 10 M keys × 1,000 × 8 B is far too much memory.</li>
+      <li><b>Sliding window counter.</b> Keep this minute's and last minute's counts, and weight the previous one by how much of it still overlaps. At 12:01:15 (25% into the window), previous = 100, current = 20: estimate = 20 + 100 × 0.75 = <b>95</b>, so 5 more are allowed. Two counters per key; error is small in practice.</li>
+      <li><b>Token bucket.</b> The bucket holds up to <i>capacity</i> tokens and refills at <i>rate</i> per second; each request takes one (or <i>cost</i>) tokens. With capacity 100 and rate 100/60 ≈ 1.67/s: a client idle for a minute can burst 100 requests, then is held to ~1.67/s. Two numbers per key, and bursts are an explicit, tunable knob.</li>
+    </ol>
+  </div>
+  <table class="tbl">
+    <thead><tr><th>Algorithm</th><th>Memory per key</th><th>Burst behavior</th><th>Good for</th></tr></thead>
+    <tbody>
+      <tr><td>Fixed window</td><td>1 counter</td><td>Up to 2× at window edges</td><td>Coarse daily quotas</td></tr>
+      <tr><td>Sliding window log</td><td>1 entry per request</td><td>Exact</td><td>Low limits where precision matters (e.g. 5 login attempts / 15 min)</td></tr>
+      <tr><td>Sliding window counter</td><td>2 counters</td><td>Smooth, approximate</td><td>General API limits</td></tr>
+      <tr><td>Token bucket</td><td>2 numbers</td><td>Controlled bursts up to capacity</td><td>APIs where short bursts are normal (most of them)</td></tr>
+    </tbody>
+  </table>
+  <p>My default: <b>token bucket</b>, because real clients are bursty (a page load fires 8 calls at once) and capacity lets you allow that without raising the sustained rate.</p>
+
+  <h2>7. Deep dive: making it correct under concurrency</h2>
+  <p>Two gateway nodes check the same key at the same instant. Both read <code>tokens = 1</code>, both decide "allowed", both write <code>tokens = 0</code>. Two requests got through on one token. This read-modify-write race is the classic bug.</p>
+  <p>Fix: do the whole check inside Redis as one atomic script (Redis runs a Lua script without interleaving other commands). The logic, written here as JavaScript for readability:</p>
+  <pre><code class="lang-js">// Runs atomically inside Redis (as a Lua script). One round trip per check.
+function takeToken(key, capacity, refillPerSec, cost) {
+  const now = redisTimeMs();                 // use the store's clock, not each gateway's
+  const b = hgetall(key) || { tokens: capacity, ts: now };
+  const elapsedSec = Math.max(0, now - b.ts) / 1000;
+  let tokens = Math.min(capacity, b.tokens + elapsedSec * refillPerSec);
+  let allowed = false;
+  if (tokens &gt;= cost) { tokens -= cost; allowed = true; }
+  hset(key, { tokens, ts: now });
+  pexpire(key, Math.ceil(capacity / refillPerSec * 1000) + 1000);  // idle keys vanish
+  const retryAfterMs = allowed ? 0 : Math.ceil((cost - tokens) / refillPerSec * 1000);
+  return { allowed, remaining: Math.floor(tokens), retryAfterMs };
+}</code></pre>
+  <p>Two details worth saying: using the store's clock avoids skew between 50 gateways' clocks; and the TTL means keys for users who stop calling clean themselves up. (This is the mechanism you built in the <code>token-bucket</code> lab, now shared across machines.)</p>
+
+  <h2>8. Deep dive: latency, hot keys, and failure</h2>
+  <ul>
+    <li><b>One round trip.</b> If a request matches 3 rules, check all 3 buckets in one script call (keys hash-tagged to the same shard when possible) or pipeline them.</li>
+    <li><b>Local pre-check for hot keys.</b> A single huge tenant at 20,000 req/s would hammer one Redis shard. Let each gateway lease tokens in batches: take 50 tokens from Redis at once, spend them locally, come back for more. Redis calls drop 50×. The cost: up to (batch × nodes) tokens can be in flight, so overage is bounded but not zero. Use it for big limits, not for "5 login attempts".</li>
+    <li><b>Reject cheaply.</b> Once a key is over its limit, the gateway can cache "blocked until T" locally and reject without calling Redis at all. Abusive clients then cost almost nothing.</li>
+    <li><b>Fail open or closed?</b> If Redis is unreachable (timeout of a few ms), most APIs <b>fail open</b>: allow the request, fall back to a generous per-node local limit, and alert. An outage of the limiter shouldn't become an outage of the product. Exceptions <b>fail closed</b>: login attempts (security) and very expensive operations (an LLM call costing real money) where unlimited traffic is worse than errors.</li>
+    <li><b>Multi-region.</b> Synchronously sharing counters across regions adds ~70+ ms. Instead, split each limit across regions (or let each region enforce the full limit locally and accept up to N× overage briefly), and sync usage asynchronously.</li>
+  </ul>
+
+  <h2>9. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Central Redis, one atomic call</td><td>Accurate global limits</td><td>~0.3–1 ms per request; Redis is a dependency</td><td>Default for API limits</td></tr>
+      <tr><td>Local-only counters per node</td><td>Zero network latency</td><td>Limit is per node; with 50 nodes, the effective limit is fuzzy</td><td>Rough protection, or as the fallback when Redis is down</td></tr>
+      <tr><td>Token leasing (batches)</td><td>50× fewer store calls for hot keys</td><td>Bounded overage</td><td>High limits on hot tenants</td></tr>
+      <tr><td>Fail open</td><td>Limiter outage doesn't break the API</td><td>Abuse goes unchecked during the outage</td><td>Most endpoints</td></tr>
+      <tr><td>Fail closed</td><td>Hard protection</td><td>Limiter outage = feature outage</td><td>Login attempts, costly operations</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Follow-up questions and strong answers</h2>
+  <h3>"Why not limit by IP?"</h3>
+  <p>For logged-in traffic, IP is a poor identity. A whole school's 1,500 Chromebooks share one public IP through the school's network address translation (NAT), so an IP limit sized for one person would lock out the school at 8:05am. Limit authenticated traffic by user, key and tenant; use IP only for unauthenticated endpoints, with high limits and exceptions for known school networks.</p>
+  <h3>"How do clients behave well?"</h3>
+  <p>Return <code>Retry-After</code> and remaining-quota headers on every response; document that clients should back off exponentially with jitter. SDKs you ship should do it automatically. Well-behaved clients turn 429 storms into smooth throughput.</p>
+  <h3>"Rate limiting vs load shedding?"</h3>
+  <p>Rate limiting is fairness per client against a known quota. Load shedding is self-protection: when the service itself is overloaded (queue depth high, CPU at 95%), reject low-priority work for everyone, even clients under their quota. You want both; they're configured differently.</p>
+  <h3>"How do you change a limit for one customer right now?"</h3>
+  <p>Update the rule in the rules service; it pushes to gateways (or they poll every ~10 s). Bucket state doesn't need to change: the next check uses the new capacity and rate.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"I'd use a token bucket per key because real clients are bursty, store the two numbers in a sharded Redis, and do check-and-consume as one atomic script using Redis's clock, so 50 gateways can't race and we pay one ~0.5 ms round trip. Hot tenants lease tokens in batches to cut store load, over-limit keys are rejected locally, and if Redis is down we fail open with a local fallback limit, except for login and expensive LLM endpoints, which fail closed."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Doing <code>GET</code> the counter, compare in the application, then <code>SET</code> it back. With many gateways this lets concurrent requests all see the same count and all get through. Either use an atomic operation (<code>INCR</code> for fixed windows) or run the whole check in one atomic script. If you don't mention atomicity, the interviewer will.</p></div>
+
+  <h2>11. Your turn</h2>
+  <p>Each district gets an LLM budget of <b>1 million tokens per minute</b> for its AI tutor. Problem: you only know how many tokens a request used after the model finishes (output length isn't known in advance).</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Reserve, then reconcile.</b> Before calling the model, estimate the cost: input tokens (you can count these exactly) plus <code>max_tokens</code> for the output. Take that many tokens from the district's bucket atomically. If there aren't enough, return 429 (or queue the request). After the call, you know the real usage: refund the difference (reserved − actual) to the bucket.</p>
+    <p><b>Example:</b> input 2,000 tokens, max output 1,000 → reserve 3,000. Actual output 400 → actual 2,400, refund 600.</p>
+    <p><b>Also limit concurrency:</b> cap in-flight requests per district (e.g. 200) with a counter incremented on start and decremented on finish (with a TTL safety net for crashed workers), because long streaming responses tie up capacity regardless of tokens.</p>
+    <p><b>Per-student fairness inside the district:</b> a smaller per-user bucket so one student can't burn the class's budget.</p>
+    <p><b>Fail closed</b> here: if the limiter store is down, these requests cost real money, so reject or queue rather than allow unlimited calls.</p>
+  </details>
+
+  <div data-quiz='[{"q":"With a fixed window of 100 requests per minute, what is the worst case in a 2-second span?","o":["100 requests","About 200 requests, straddling the window boundary","50 requests","Unlimited"],"a":1,"why":"100 at the end of one window plus 100 at the start of the next."},{"q":"Two gateways read the same bucket at once, both see 1 token, both allow. What is the fix?","o":["Add more gateways","Make check-and-consume atomic, for example one Lua script in Redis","Use a longer window","Cache rules locally"],"a":1,"why":"The race is read-modify-write. Atomic execution in the store removes it."},{"q":"Why can per-IP limits be harmful for a school product?","o":["IPs change every second","Many students share one public IP behind school NAT, so one IP limit can block a whole school","IP addresses cannot be read by the server","IPv6 does not support rate limiting"],"a":1,"why":"Use per-user, per-key and per-tenant limits for authenticated traffic."},{"q":"Redis is unreachable. For a normal read API, what is the usual choice?","o":["Fail closed and return 503 for everyone","Fail open with a local per-node fallback limit, and alert","Block all traffic until Redis recovers","Switch to sliding window log"],"a":1,"why":"A limiter outage should not become a product outage; exceptions are login and expensive operations."},{"q":"What does token leasing (taking tokens in batches) trade?","o":["Accuracy for fewer store round trips on hot keys","Memory for CPU","Security for speed on login","Nothing; it is strictly better"],"a":0,"why":"Each node may hold unused tokens, so overage is bounded by batch size times nodes."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>The constraints are throughput and per-request latency, not memory (about 150 bytes per key).</li>
+    <li>Token bucket by default: two numbers per key, explicit burst capacity.</li>
+    <li>Atomic check-and-consume in the shared store, using the store's clock, one round trip per request.</li>
+    <li>Scale with sharding, token leasing for hot keys, and local rejection of blocked keys.</li>
+    <li>Fail open for normal endpoints, closed for login and costly ones; return 429 with Retry-After.</li>
+  </ul>
+</template>

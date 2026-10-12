@@ -1,0 +1,198 @@
+<template id="tpl-sd-autocomplete" data-title="Case: Search autocomplete" data-part="Part 4 · System design" data-order="190">
+  <h1>Case study: Search autocomplete (typeahead)</h1>
+  <p class="lede">Autocomplete has a brutal latency budget: people type a character every 150–250 ms, so suggestions must come back in well under that or they're already stale. The trick is that almost no work happens at request time. After this lesson you can explain the split between an offline pipeline that precomputes "prefix → top 10" and an online path that's a single memory lookup, plus the client-side tricks (debounce, cancel stale requests, caching) a frontend-savvy candidate should bring up.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: the search box on a large site. Jo types <code>h</code>, <code>ha</code>, <code>har</code>... and by <code>harr</code> sees "harry potter", "harry potter and the cursed child", "harriet tubman".</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>As the user types, return up to 10 suggestions for the current prefix.</li>
+    <li>Ranked mostly by popularity, with recent trends showing up within an hour or so.</li>
+    <li>Filter offensive, unsafe, or legally removed suggestions.</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li>End-to-end under ~100 ms; server time under ~10–20 ms at p99.</li>
+    <li>Highly available; if suggestions fail, search itself must still work (degrade silently).</li>
+    <li>Slightly stale suggestions are fine.</li>
+  </ul>
+  <p><b>Out of scope:</b> the search results page itself, spelling correction (mention as an extension).</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Searches.</b> 100 million searches/day.</li>
+      <li><b>Suggestion requests.</b> A typical query is ~20 characters, but with debouncing (deep dive 3) the client sends maybe 4–6 requests per search: ~500 M/day ≈ <b>5,800 requests/second</b>, peaking ~20,000.</li>
+      <li><b>Candidate queries.</b> Maybe 1 billion distinct queries per month, but most are typed once (the "long tail"). Keep queries seen at least ~5 times: say <b>50 million</b>, ~25 bytes each ≈ 1.25 GB of text.</li>
+      <li><b>Precomputed prefixes.</b> Every prefix of every kept query could have its own top-10 list. Shared prefixes collapse a lot; cap prefix length at ~20 characters. Call it a few hundred million prefix entries × (10 query IDs × 4 bytes + overhead) ≈ <b>tens of GB</b>. Fits in RAM across a few large machines, replicated for throughput.</li>
+      <li><b>Logging input.</b> 100 M submitted searches/day × ~100 bytes ≈ 10 GB/day of query logs feeding the offline pipeline.</li>
+    </ol>
+  </div>
+  <p>The insight to say out loud: "20,000 lookups a second against a read-only, precomputed table is easy. The real work is the offline pipeline that builds the table."</p>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-http">GET /v1/suggest?q=harr&amp;locale=en-US
+Cache-Control: public, max-age=300          (for non-personalized responses)
+200 { "q": "harr",
+      "suggestions": [ "harry potter", "harry potter and the cursed child", "harriet tubman", ... ],
+      "version": "2026-10-10T08:00Z" }</code></pre>
+  <p>A GET with the prefix in the URL is deliberate: it makes responses cacheable by browsers and CDNs.</p>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">-- offline, in the data warehouse
+query_counts (query, day, count)                     -- aggregated from logs
+blocklist    (pattern, reason)                       -- offensive, PII-looking, legal removals
+
+-- online, in memory on suggest servers (built offline, loaded as a snapshot)
+prefix_index : Map&lt;prefix, top10 query ids&gt;   e.g. "harr" -&gt; [812, 9031, 77, ...]
+queries      : Array&lt;string&gt;                  e.g. 812 -&gt; "harry potter"</code></pre>
+  <p>A <b>trie</b> (a tree where each edge is one character, so all queries sharing a prefix share a path) is the classic way to build this. But at serve time we don't need to walk a tree: if every prefix node already stores its top 10, the serving structure is just a key-value map from prefix to list. That makes sharding trivial (by hash of prefix) and lookups O(1).</p>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 800 380" width="100%" role="img" aria-label="Autocomplete online and offline paths" xmlns="http://www.w3.org/2000/svg" style="max-width:800px;font-family:inherit">
+
+<rect x="10" y="205" width="780" height="165" rx="10" fill="none" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="6 5"/><text x="780" y="222" text-anchor="end" font-size="12" fill="var(--muted)">Offline: rebuilt hourly</text>
+<rect x="10" y="10" width="780" height="145" rx="10" fill="none" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="6 5"/><text x="20" y="27" font-size="12" fill="var(--muted)">Online: every keystroke (after debounce)</text>
+<rect x="30" y="60" width="120" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="90.0" y="85.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Browser</text>
+<text x="90.0" y="100.0" text-anchor="middle" font-size="12" fill="var(--muted)">debounce ~100 ms</text>
+<rect x="190" y="60" width="130" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="255.0" y="85.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">CDN / edge</text>
+<text x="255.0" y="100.0" text-anchor="middle" font-size="12" fill="var(--muted)">caches short prefixes</text>
+<rect x="370" y="60" width="170" height="56" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="455.0" y="85.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Suggest service</text>
+<text x="455.0" y="100.0" text-anchor="middle" font-size="12" fill="var(--muted)">prefix -&gt; top 10</text>
+<rect x="600" y="60" width="170" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="685.0" y="85.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Trending layer</text>
+<text x="685.0" y="100.0" text-anchor="middle" font-size="12" fill="var(--muted)">last-hour counts</text>
+<rect x="20" y="270" width="140" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="150" y1="278" x2="150" y2="308" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="143" y1="278" x2="143" y2="308" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="136" y1="278" x2="136" y2="308" stroke="currentColor" stroke-opacity=".45"/>
+<text x="78.0" y="298.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Query log</text>
+<rect x="205" y="265" width="150" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="280.0" y="290.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Batch aggregation</text>
+<text x="280.0" y="305.0" text-anchor="middle" font-size="12" fill="var(--muted)">counts, decay, filters</text>
+<rect x="390" y="265" width="150" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="465.0" y="290.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Index builder</text>
+<text x="465.0" y="305.0" text-anchor="middle" font-size="12" fill="var(--muted)">prefix -&gt; top k</text>
+<path d="M590,263 a85.0,8 0 0,0 170,0 a85.0,8 0 0,0 -170,0 v60 a85.0,8 0 0,0 170,0 v-60" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="675.0" y="295.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Snapshot store</text>
+<text x="675.0" y="310.0" text-anchor="middle" font-size="12" fill="var(--muted)">versioned files</text>
+<path d="M150.0,88.0 L187.0,88.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M187.0,88.0 L178.0,92.5 L178.0,83.5 Z" fill="currentColor"/>
+<path d="M320.0,88.0 L367.0,88.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M367.0,88.0 L358.0,92.5 L358.0,83.5 Z" fill="currentColor"/>
+<path d="M543.0,88.0 L597.0,88.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M597.0,88.0 L588.0,92.5 L588.0,83.5 Z" fill="currentColor"/>
+<path d="M543.0,88.0 L552.0,83.5 L552.0,92.5 Z" fill="currentColor"/>
+<path d="M90.0,116.0 L90.0,267.0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M90.0,267.0 L85.5,258.0 L94.5,258.0 Z" fill="currentColor"/>
+<path d="M160.0,293.0 L202.0,293.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M202.0,293.0 L193.0,297.5 L193.0,288.5 Z" fill="currentColor"/>
+<path d="M355.0,293.0 L387.0,293.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M387.0,293.0 L378.0,297.5 L378.0,288.5 Z" fill="currentColor"/>
+<path d="M540.0,293.0 L587.0,293.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M587.0,293.0 L578.0,297.5 L578.0,288.5 Z" fill="currentColor"/>
+<path d="M634.2,255.0 L487.2,118.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M487.2,118.0 L496.9,120.9 L490.8,127.5 Z" fill="currentColor"/>
+<text x="343.5" y="82.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">miss</text>
+<text x="570.0" y="82.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">merge</text>
+<text x="98.0" y="191.5" text-anchor="start" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">submitted searches</text>
+<text x="520.7" y="186.5" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">load + swap</text>
+</svg>
+    <figcaption>Online: browser → CDN (short prefixes are cache hits) → suggest service, a memory lookup merged with a small trending overlay. Offline: query logs are aggregated, an index builder computes prefix → top-k, and versioned snapshots are loaded by the suggest servers.</figcaption>
+  </figure>
+  <p><b>Online path.</b> Jo types <code>harr</code>. After a ~100 ms pause the browser requests <code>/suggest?q=harr</code>. The CDN probably has it (popular prefix). If not, a suggest server looks up "harr" in memory (microseconds), merges any trending queries for that prefix, and returns. Total server time: a millisecond or two.</p>
+  <p><b>Offline path.</b> Submitted searches stream into a log. Every hour a batch job aggregates counts with time decay, drops blocklisted and rare queries, computes each prefix's top 10, and writes a versioned snapshot file. Suggest servers download the new snapshot, build the map off to the side, and atomically swap a pointer, so there's never a half-loaded index.</p>
+
+  <h2>6. Deep dive: building the index (ranking and filtering)</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Aggregate.</b> From logs: "harry potter" was searched 41,000 times today, "harriet tubman" 3,200, and in February "harriet tubman" spikes for Black History Month.</li>
+      <li><b>Score with decay.</b> score = Σ count<sub>day</sub> × 0.9<sup>age in days</sup>. Yesterday's searches count 0.9, last week's ~0.48, last month's ~0.04. Popular-for-years queries stay up; one-off spikes fade within weeks.</li>
+      <li><b>Filter.</b> Drop queries matching the blocklist (slurs, adult terms), queries that look like personal data (email addresses, phone numbers: people paste odd things into search boxes), and queries seen fewer than N times or from fewer than K distinct users so one person's typing can't become a public suggestion.</li>
+      <li><b>Top-k per prefix.</b> For each kept query, for each of its prefixes (up to 20 chars), offer it to that prefix's top-10 heap. One pass over 50 M queries × ~20 prefixes ≈ 1 billion heap offers: minutes on a distributed batch job (Spark or similar).</li>
+      <li><b>Publish.</b> Write <code>snapshot-2026-10-10T08</code> to object storage with a checksum. Servers load it; keep the last few versions for instant rollback if a bad suggestion ships.</li>
+    </ol>
+  </div>
+  <p><b>Freshness.</b> An hourly batch means a breaking-news query takes up to an hour (plus pipeline time) to appear. If that matters, add a small <b>trending layer</b>: a streaming job counts queries over the last ~15–60 minutes, flags ones growing much faster than their baseline, and pushes a small overlay (thousands of entries, not millions) to suggest servers, which merge it in at request time.</p>
+
+  <h2>7. Deep dive: the client is half the system</h2>
+  <p>Coming from React, this is where you can shine. Bad client behavior multiplies server load and creates visible bugs.</p>
+  <ul>
+    <li><b>Debounce.</b> Wait until the user pauses for ~50–150 ms before requesting. Typing "harry potter" fast becomes 2–4 requests instead of 12.</li>
+    <li><b>Out-of-order responses.</b> Request for "ha" is slow, "har" is fast; "ha" arrives last and overwrites the right suggestions with stale ones. Fix: cancel the in-flight request when a new one starts (<code>AbortController</code>), and ignore any response whose <code>q</code> doesn't match the current input.</li>
+    <li><b>Client cache.</b> Keep a small map of prefix → suggestions for the session. Backspacing from "harr" to "har" costs nothing.</li>
+    <li><b>Degrade silently.</b> If suggest fails or takes over ~300 ms, show nothing; search still works.</li>
+    <li><b>Accessibility.</b> Suggestions are a listbox: arrow keys move, Enter selects, the input announces the count to screen readers.</li>
+  </ul>
+  <pre><code class="lang-js">let controller;
+async function onInput(q) {            // called by a ~100 ms debounce
+  controller?.abort();                  // cancel the stale request
+  controller = new AbortController();
+  if (cache.has(q)) return render(q, cache.get(q));
+  try {
+    const res = await fetch(`/v1/suggest?q=${encodeURIComponent(q)}`, { signal: controller.signal });
+    const data = await res.json();
+    cache.set(q, data.suggestions);
+    if (data.q === input.value) render(q, data.suggestions);   // drop out-of-date answers
+  } catch (e) { /* aborted or failed: show nothing */ }
+}</code></pre>
+
+  <h2>8. Deep dive: caching and serving at scale</h2>
+  <ul>
+    <li><b>CDN.</b> One- and two-character prefixes are a large share of requests and identical for everyone. With <code>max-age=300</code>, the CDN absorbs most of them. Hit rate falls as prefixes get longer, which is fine: those go to servers.</li>
+    <li><b>Replication over sharding.</b> If the index is ~20–40 GB, each server can hold all of it; add replicas for throughput and zone redundancy. Shard (by hash of prefix) only when the index outgrows one machine's RAM, e.g. when adding many languages.</li>
+    <li><b>Per-locale indexes.</b> en-US and es-MX get separate tables; the locale is part of the cache key.</li>
+  </ul>
+
+  <h2>9. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Precomputed prefix → top-k</td><td>O(1) memory lookups, trivial to cache</td><td>Large index; only as fresh as the last build</td><td>Popularity-ranked suggestions (the standard case)</td></tr>
+      <tr><td>Compute at query time (search index prefix query)</td><td>Always fresh, flexible ranking</td><td>Much higher latency and CPU per keystroke</td><td>Small catalogs (e.g. 10,000 product names)</td></tr>
+      <tr><td>Hourly batch + trending overlay</td><td>Fresh enough for news, simple core</td><td>Two pipelines to run</td><td>Trends matter (news, shopping events)</td></tr>
+      <tr><td>CDN caching of suggestions</td><td>Most traffic never reaches servers</td><td>Can't personalize cached responses</td><td>Global (non-personalized) suggestions</td></tr>
+      <tr><td>Minimum count / distinct-user threshold</td><td>Privacy, less junk</td><td>Rare but valid queries never suggested</td><td>Always for public suggestions</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Follow-up questions and strong answers</h2>
+  <h3>"How would you personalize?"</h3>
+  <p>Keep the global response cacheable and merge personal signals on top. The client already knows the user's recent searches (store them locally or fetch once per session) and merges matching ones above global suggestions. Server-side personalization (e.g. by interests) means responses can't be CDN-cached, so limit it to a few slots computed from a small per-user profile.</p>
+  <h3>"A suggestion is offensive and it's on the news. Fix it now."</h3>
+  <p>Add it to the blocklist and push the blocklist to suggest servers as a live filter applied at serve time (cheap: check 10 results). Purge the CDN for affected prefixes. The next index build removes it permanently. Have this runbook ready before you launch.</p>
+  <h3>"How do you handle typos?"</h3>
+  <p>Fuzzy matching at serve time is expensive. Common approach: offline, map frequent misspellings to their corrections ("harey potter" → "harry potter") using query logs (people who typed X then searched Y), and index them as extra prefix entries pointing to the right query.</p>
+  <h3>"What metrics tell you it's working?"</h3>
+  <p>p99 latency, suggestion acceptance rate (how often a suggestion is clicked), keystrokes saved per search, and the share of searches that used a suggestion. Watch acceptance after each index build to catch bad builds.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Almost all the work is offline. An hourly pipeline aggregates query logs with time decay, filters unsafe and rare queries, and precomputes the top 10 for every prefix into a versioned snapshot. Online, each suggest server holds the whole thing in memory, so a request is one map lookup, and short prefixes are served by the CDN. On the client I'd debounce, cancel stale requests and ignore out-of-order responses, because those bugs are what users actually notice."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Running a database <code>LIKE 'harr%'</code> query (or walking a big trie and sorting all matches) on every keystroke. Even with an index, ranking thousands of matches per request at 20,000 requests a second blows the latency budget. Precompute the ranked top-k per prefix so serving involves no sorting at all.</p></div>
+
+  <h2>11. Your turn</h2>
+  <p>Design book-title autocomplete for a <b>K-12 reading app</b>: 3 million students, a 60,000-title catalog, suggestions must be age-appropriate, and student privacy matters.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Scale changes the answer.</b> 60,000 titles is small. Precompute prefix → top 10 per <b>grade band</b> (K-2, 3-5, 6-8, 9-12): four small indexes, maybe tens of MB each, cached in every app server or even shipped to the client.</p>
+    <p><b>Ranking:</b> popularity within the grade band (checkouts, not raw searches) plus the student's reading level, merged on the client from a short "recommended for you" list so the global response stays cacheable.</p>
+    <p><b>Safety:</b> suggestions come from the curated catalog, not from what other students typed. That single decision removes the risk of a child's name or an inappropriate phrase becoming a suggestion.</p>
+    <p><b>Privacy:</b> don't store raw query text tied to a student identity longer than needed; aggregate counts only, with a minimum threshold, to tune ranking.</p>
+    <p><b>Load:</b> 8:15am, 30,000 students search in the same few minutes; with ~4 requests per search that's a few hundred requests/second, trivially served from memory or CDN.</p>
+  </details>
+
+  <div data-quiz='[{"q":"Why is the serving path for autocomplete so cheap?","o":["Because it uses a SQL LIKE query","Because the top suggestions for every prefix are precomputed offline, so serving is a single lookup","Because suggestions are random","Because the CDN generates suggestions"],"a":1,"why":"Precomputation moves the sorting and ranking work out of the request path."},{"q":"The response for ha arrives after the response for har. What should the client do?","o":["Show the ha suggestions","Ignore any response whose prefix no longer matches the input, and abort stale requests","Show both lists merged","Reload the page"],"a":1,"why":"Out-of-order responses are a classic typeahead bug; cancel and check the prefix."},{"q":"Why use a GET with the prefix in the URL and a Cache-Control header?","o":["POST requests cannot carry text","So browsers and CDNs can cache common prefixes, absorbing much of the traffic","It is required for HTTPS","It makes responses personalized"],"a":1,"why":"Short prefixes are identical for everyone and are excellent cache hits."},{"q":"How can breaking news appear in suggestions faster than the hourly rebuild?","o":["Rebuild the full index every second","A streaming trending layer that counts recent queries and merges a small overlay at request time","Disable caching","Ask users to type more slowly"],"a":1,"why":"A small, fast overlay complements the large, slow batch index."},{"q":"Why require a query to be seen from a minimum number of distinct users before suggesting it?","o":["To save disk space only","So one person typing private or odd text cannot make it a public suggestion, and to reduce junk","Because tries cannot store rare words","To improve CDN hit rate"],"a":1,"why":"It is both a privacy safeguard and a quality filter."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Split offline (aggregate, decay, filter, top-k per prefix, snapshot) from online (one memory lookup).</li>
+    <li>Serving structure is a prefix → top-10 map: easy to replicate, shard by hash, and roll back.</li>
+    <li>CDN-cache non-personalized results; short prefixes are most of the traffic.</li>
+    <li>Client: debounce, abort stale requests, ignore out-of-order responses, cache per session, degrade silently.</li>
+    <li>Freshness via a trending overlay; safety via blocklists, thresholds, and a live serve-time filter.</li>
+  </ul>
+</template>

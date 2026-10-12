@@ -1,0 +1,36 @@
+{
+  "id": "dsa-climbing-stairs",
+  "title": "Climbing Stairs",
+  "minutes": 15,
+  "prompt": "<p>A staircase has <code>n</code> steps. Each move you climb either <b>1 step or 2 steps</b>. In how many <b>different ways</b> can you reach the top?</p>\n<p>Write <code>climbStairs(n)</code>.</p>\n<pre><code>climbStairs(2);  // 2   (1+1, 2)\nclimbStairs(3);  // 3   (1+1+1, 1+2, 2+1)\nclimbStairs(5);  // 8</code></pre>\n<p>Constraints: <code>1 &lt;= n &lt;= 70</code>. (The answer for 70 is about 3 &times; 10<sup>14</sup>, which still fits exactly in a JavaScript number.)</p>\n<p><b>Warning:</b> the plain recursive version is correct but makes about 2 &times; 3 &times; 10<sup>14</sup> calls for <code>n = 70</code>, so the last test first times <code>n = 35</code> and stops with a hint if your solution is exponential. Starting with plain recursion is fine: watch that test fail, then add memoization.</p>",
+  "starter": "function climbStairs(n) {\n  // Step 1 (in your head): ways(n) = ways(n - 1) + ways(n - 2).\n  // Step 2: add a memo Map so each n is computed once,\n  //         or build a table from the bottom up.\n  // TODO\n  return 0;\n}",
+  "solution": "function climbStairs(n) {\n  if (n <= 2) return n;                    // 1 step: 1 way; 2 steps: 2 ways\n  let twoBelow = 1;                        // ways(1)\n  let oneBelow = 2;                        // ways(2)\n  for (let step = 3; step <= n; step++) {\n    const current = oneBelow + twoBelow;   // last move was a 1-step or a 2-step\n    twoBelow = oneBelow;\n    oneBelow = current;\n  }\n  return oneBelow;\n}",
+  "tests": [
+    {
+      "name": "small cases from the prompt",
+      "code": "assertEqual(climbStairs(2), 2);\nassertEqual(climbStairs(3), 3);\nassertEqual(climbStairs(5), 8);"
+    },
+    {
+      "name": "one step has exactly one way",
+      "code": "assertEqual(climbStairs(1), 1);"
+    },
+    {
+      "name": "n = 10",
+      "code": "assertEqual(climbStairs(10), 89);"
+    },
+    {
+      "name": "n = 30",
+      "code": "assertEqual(climbStairs(30), 1346269);"
+    },
+    {
+      "name": "n = 70 (needs memoization or a table)",
+      "code": "// Safety check first: time n = 35. Plain recursion makes ~30 million calls here (tens of ms);\n// memoization or a table finishes in well under a millisecond. Only if it's fast do we try n = 70,\n// so an exponential solution fails with a message instead of freezing the page.\nconst t0 = performance.now();\nconst r35 = climbStairs(35);\nconst ms = performance.now() - t0;\nassertEqual(r35, 14930352);\nassert(ms < 15, 'climbStairs(35) took ' + ms.toFixed(1) + ' ms. That looks exponential: add memoization (or build a table) so each n is computed once.');\nassertEqual(climbStairs(70), 308061521170129);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: &quot;how many different ways&quot; plus a choice at each step (1 or 2). Counting ways where the same sub-question repeats is DP.</p>",
+    "<p>Idea: think about the <b>last</b> move. To stand on step n, you came from step n-1 (then took 1) or from step n-2 (then took 2). So <code>ways(n) = ways(n-1) + ways(n-2)</code>, with <code>ways(1) = 1</code> and <code>ways(2) = 2</code>. Plain recursion recomputes the same <code>ways(k)</code> millions of times; a <code>Map</code> memo computes each once.</p>",
+    "<p>Code shape (memo): <code>const memo = new Map(); function ways(k) { if (k &lt;= 2) return k; if (memo.has(k)) return memo.get(k); const r = ways(k - 1) + ways(k - 2); memo.set(k, r); return r; }</code>. Code shape (table): loop from 3 to n keeping only the last two values.</p>"
+  ],
+  "explain": "<p><b>Time O(n)</b>: each step is computed once. <b>Space O(1)</b> for the two-variable table (O(n) with a memo or a full array). Plain recursion was O(2<sup>n</sup>) because the same subproblems were solved again and again.</p><p><b>Say it:</b> &quot;The number of ways to reach step n is the ways to reach n minus 1 plus the ways to reach n minus 2, because the last move is a 1 or a 2. The plain recursion repeats subproblems, so I memoize, then turn it into a bottom-up loop that only keeps the last two values: O(n) time, O(1) space.&quot; Yes, these are the Fibonacci numbers.</p>"
+}

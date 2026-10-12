@@ -1,0 +1,40 @@
+{
+  "id": "dsa-subsets",
+  "title": "Subsets",
+  "minutes": 15,
+  "prompt": "<p>Given an array of <b>distinct</b> numbers, return <b>every subset</b> (also called the power set), including the empty subset and the full array. The order of subsets, and the order inside each subset, does not matter.</p>\n<p>Write <code>subsets(nums)</code>.</p>\n<pre><code>subsets([1, 2, 3]);\n// [[], [1], [1,2], [1,2,3], [1,3], [2], [2,3], [3]]   (8 subsets, any order)</code></pre>\n<p>Constraints: <code>nums.length</code> is 0 to 10 (so at most 2<sup>10</sup> = 1,024 subsets). All numbers are different.</p>",
+  "starter": "function subsets(nums) {\n  const result = [];\n  const current = [];\n\n  function explore(start) {\n    // TODO: record a copy of current, then for each index i from start:\n    // choose nums[i], explore(i + 1), un-choose it.\n  }\n\n  explore(0);\n  return result;\n}",
+  "solution": "function subsets(nums) {\n  const result = [];\n  const current = [];\n\n  function explore(start) {\n    result.push([...current]);             // every node of the tree is a subset: save a COPY\n    for (let i = start; i < nums.length; i++) {\n      current.push(nums[i]);               // choose\n      explore(i + 1);                      // explore (only later numbers, so no duplicates)\n      current.pop();                       // un-choose\n    }\n  }\n\n  explore(0);\n  return result;\n}",
+  "tests": [
+    {
+      "name": "[1,2,3] has 8 subsets",
+      "code": "function norm(lists) { return lists.map((l) => [...l].sort((a, b) => a - b)).map((l) => JSON.stringify(l)).sort(); }\nassertEqual(norm(subsets([1,2,3])), norm([[],[1],[2],[3],[1,2],[1,3],[2,3],[1,2,3]]));"
+    },
+    {
+      "name": "empty input has exactly one subset: the empty one",
+      "code": "assertEqual(subsets([]), [[]]);"
+    },
+    {
+      "name": "single element",
+      "code": "function norm(lists) { return lists.map((l) => [...l].sort((a, b) => a - b)).map((l) => JSON.stringify(l)).sort(); }\nassertEqual(norm(subsets([7])), norm([[],[7]]));"
+    },
+    {
+      "name": "works with negatives and zero",
+      "code": "function norm(lists) { return lists.map((l) => [...l].sort((a, b) => a - b)).map((l) => JSON.stringify(l)).sort(); }\nassertEqual(norm(subsets([-1,0,5])), norm([[],[-1],[0],[5],[-1,0],[-1,5],[0,5],[-1,0,5]]));"
+    },
+    {
+      "name": "10 numbers give 1,024 distinct subsets",
+      "code": "const all = subsets([1,2,3,4,5,6,7,8,9,10]);\nassertEqual(all.length, 1024);\nassertEqual(new Set(all.map((s) => JSON.stringify([...s].sort((a, b) => a - b)))).size, 1024, 'subsets must all be different');"
+    },
+    {
+      "name": "subsets are independent copies (no shared array)",
+      "code": "const all = subsets([1,2]);\nassert(all.every((s) => Array.isArray(s)), 'each subset is an array');\nassertEqual(all.filter((s) => s.length === 0).length, 1, 'exactly one empty subset; did you push current without copying it?');"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: &quot;all subsets&quot;, &quot;all combinations&quot;, &quot;every possible&quot;, with a tiny input size (n &le; 10 to 20). Listing everything means exponential output, so backtracking is the tool.</p>",
+    "<p>Idea: walk a decision tree. <code>current</code> holds the numbers chosen so far. Every node in the tree is a valid subset, so save it on entry. Then try adding each remaining number (only ones to the right of the last choice, so [1,2] and [2,1] are not both produced).</p>",
+    "<p>Code shape: <code>result.push([...current]); for (let i = start; i &lt; nums.length; i++) { current.push(nums[i]); explore(i + 1); current.pop(); }</code>. The copy <code>[...current]</code> matters: pushing <code>current</code> itself stores the same array 8 times, and it ends up empty.</p>"
+  ],
+  "explain": "<p><b>Time O(n × 2<sup>n</sup>)</b>: there are 2<sup>n</sup> subsets and copying each costs up to n. <b>Space O(n)</b> for the recursion and <code>current</code>, not counting the output. You can&#39;t beat 2<sup>n</sup> because the answer itself has 2<sup>n</sup> items.</p><p><b>Say it:</b> &quot;Each number is either in or out, so there are 2 to the n subsets. I&#39;ll backtrack: choose a number, recurse on the numbers after it, then undo the choice. Every node of the decision tree is a subset, so I record a copy on entry.&quot;</p>"
+}

@@ -1,0 +1,202 @@
+<template id="tpl-sd-feed" data-title="Case: News feed" data-part="Part 4 · System design" data-order="165">
+  <h1>Case study: News feed / timeline</h1>
+  <p class="lede">"Design the Twitter home timeline" is really one question in disguise: when someone posts, do you do the work then (push the post into every follower's feed), or later (gather posts when a follower opens the app)? After this lesson you can explain fan-out on write versus fan-out on read with real numbers, why every large network ends up with a hybrid, and how to answer the follow-ups on celebrities, pagination, deletes and ranking.</p>
+
+  <h2>1. Clarify requirements</h2>
+  <p>Running example: a social app like Instagram or X. Maya follows 300 accounts, including two pop stars with 50 million followers each. She opens the app and expects her feed in under a second.</p>
+  <p><b>Functional</b></p>
+  <ul>
+    <li>Post (text plus optional media).</li>
+    <li>Follow and unfollow.</li>
+    <li>Home feed: posts from people you follow, newest first, paginated (infinite scroll).</li>
+  </ul>
+  <p><b>Non-functional</b></p>
+  <ul>
+    <li>Feed loads fast: p99 under ~200 ms at the server.</li>
+    <li>Eventual consistency is fine: a new post can take a few seconds to appear in followers' feeds. (Your own post should appear in your own feed immediately.)</li>
+    <li>Highly available reads; a feed that loads slightly stale beats an error.</li>
+  </ul>
+  <p><b>Out of scope:</b> ranking by engagement (we'll discuss it as a follow-up), ads, comments, search.</p>
+
+  <h2>2. Estimates</h2>
+  <div class="trace">
+    <ol>
+      <li><b>Users.</b> 200 million daily active users (DAU).</li>
+      <li><b>Posts.</b> Assume 100 million posts/day. 100,000,000 / 86,400 ≈ <b>1,200 posts/second</b>, peaking around 3,500.</li>
+      <li><b>Feed reads.</b> Each user opens the feed ~10 times a day: 2 billion feed loads/day ≈ <b>23,000/second</b>, peaking around 70,000.</li>
+      <li><b>Fan-out cost.</b> Average follower count ~200 (the median is much lower; celebrities pull the mean up). If each post is pushed into every follower's feed: 100 M × 200 = <b>20 billion feed inserts/day ≈ 230,000/second</b>.</li>
+      <li><b>One celebrity post.</b> 50 million followers = 50 million inserts. Even at 1 million inserts/second of spare capacity, that's 50 seconds of work, and it competes with everyone else's posts.</li>
+      <li><b>Timeline cache size.</b> Keep the latest ~500 post IDs per user. IDs are 8 bytes: 500 × 8 = 4 KB per user. 200 M × 4 KB = <b>800 GB</b> raw, roughly 1–2 TB with Redis overhead: a cluster of a few dozen memory-heavy nodes.</li>
+      <li><b>Post storage.</b> ~1 KB per post (text, metadata; media lives in object storage). 100 GB/day, ≈36 TB/year.</li>
+    </ol>
+  </div>
+  <p>The two numbers that drive the design: <b>reads (23k/s) are about 20× posts (1.2k/s)</b>, and <b>one celebrity post can cost 50 million writes</b>.</p>
+
+  <h2>3. API</h2>
+  <pre><code class="lang-http">POST /v1/posts
+{ "text": "Finished Wonder today!", "media_ids": ["m_81"] }
+201 { "post_id": "1849203948123456512", "created_at": "..." }
+
+POST   /v1/users/{id}/follow
+DELETE /v1/users/{id}/follow
+
+GET /v1/feed?limit=20&amp;cursor=1849203948123456512
+200 { "posts": [ { "post_id": "...", "author": {...}, "text": "...", "media": [...] } ],
+      "next_cursor": "1849203711000000000" }</code></pre>
+  <p>The cursor is the ID of the last post you saw. The next page means "posts older than this ID". Offset pagination (<code>?page=3</code>) breaks here: if 5 new posts arrive while you scroll, page 3 shifts and you see duplicates.</p>
+
+  <h2>4. Data model</h2>
+  <pre><code class="lang-sql">users   (user_id PK, handle, name, follower_count, is_celebrity)
+follows (follower_id, followee_id, created_at,
+         PRIMARY KEY (follower_id, followee_id))   -- "who do I follow?"
+-- plus an index or a second table keyed by (followee_id, follower_id)  -- "who follows me?"
+posts   (post_id PK, author_id, text, media_keys, created_at, deleted)
+-- per-author index (author_id, post_id DESC) for "recent posts by X"
+
+-- derived, in Redis:
+timeline:{user_id}  -&gt; list of post_ids, newest first, capped at ~500</code></pre>
+  <p><b>Post IDs that sort by time.</b> Use a Snowflake-style 64-bit ID: 41 bits of milliseconds since an epoch, 10 bits of machine ID, 12 bits of per-machine sequence. Every server can mint IDs without coordination, and sorting by ID is sorting by time, which makes merging and cursors trivial.</p>
+
+  <h2>5. High-level design</h2>
+  <figure class="diagram">
+    <svg viewBox="0 0 790 380" width="100%" role="img" aria-label="News feed architecture with fan-out on write" xmlns="http://www.w3.org/2000/svg" style="max-width:790px;font-family:inherit">
+
+<rect x="20" y="170" width="100" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="70.0" y="200.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Client</text>
+<rect x="150" y="170" width="110" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="205.0" y="200.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">API gateway</text>
+<rect x="300" y="40" width="140" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="370.0" y="70.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Post service</text>
+<path d="M300,153 a70.0,8 0 0,0 140,0 a70.0,8 0 0,0 -140,0 v48 a70.0,8 0 0,0 140,0 v-48" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="370.0" y="179.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Posts DB</text>
+<text x="370.0" y="194.0" text-anchor="middle" font-size="12" fill="var(--muted)">+ post cache</text>
+<rect x="300" y="300" width="140" height="50" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+<text x="370.0" y="330.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Feed service</text>
+<rect x="490" y="42" width="130" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<line x1="610" y1="50" x2="610" y2="80" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="603" y1="50" x2="603" y2="80" stroke="currentColor" stroke-opacity=".45"/>
+<line x1="596" y1="50" x2="596" y2="80" stroke="currentColor" stroke-opacity=".45"/>
+<text x="543.0" y="70.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Fan-out queue</text>
+<rect x="655" y="40" width="120" height="50" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="715.0" y="70.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Fan-out workers</text>
+<path d="M490,148 a65.0,8 0 0,0 130,0 a65.0,8 0 0,0 -130,0 v48 a65.0,8 0 0,0 130,0 v-48" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="555.0" y="174.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Social graph</text>
+<text x="555.0" y="189.0" text-anchor="middle" font-size="12" fill="var(--muted)">who follows whom</text>
+<rect x="530" y="300" width="200" height="56" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+<text x="630.0" y="325.0" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Timeline cache</text>
+<text x="630.0" y="340.0" text-anchor="middle" font-size="12" fill="var(--muted)">Redis: ~500 post IDs / user</text>
+<path d="M120.0,195.0 L147.0,195.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M147.0,195.0 L138.0,199.5 L138.0,190.5 Z" fill="currentColor"/>
+<path d="M236.7,170.0 L335.9,91.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M335.9,91.9 L331.6,101.0 L326.1,93.9 Z" fill="currentColor"/>
+<path d="M236.7,220.0 L335.9,298.1" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M335.9,298.1 L326.1,296.1 L331.6,289.0 Z" fill="currentColor"/>
+<path d="M370.0,90.0 L370.0,142.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M370.0,142.0 L365.5,133.0 L374.5,133.0 Z" fill="currentColor"/>
+<path d="M440.0,65.0 L487.0,65.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M487.0,65.0 L478.0,69.5 L478.0,60.5 Z" fill="currentColor"/>
+<path d="M620.0,65.0 L652.0,65.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M652.0,65.0 L643.0,69.5 L643.0,60.5 Z" fill="currentColor"/>
+<path d="M677.6,90.0 L605.3,138.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M605.3,138.3 L610.3,129.6 L615.3,137.1 Z" fill="currentColor"/>
+<path d="M706.9,90.0 L640.0,297.1" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M640.0,297.1 L638.5,287.2 L647.0,290.0 Z" fill="currentColor"/>
+<path d="M440.0,325.8 L527.0,326.8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M527.0,326.8 L517.9,331.2 L518.1,322.2 Z" fill="currentColor"/>
+<path d="M370.0,300.0 L370.0,212.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+<path d="M370.0,212.0 L374.5,221.0 L365.5,221.0 Z" fill="currentColor"/>
+<text x="258.3" y="124.9" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">POST /posts</text>
+<text x="260.3" y="267.1" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">GET /feed</text>
+<text x="400.0" y="120.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">1 insert</text>
+<text x="463.5" y="85.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">2 enqueue</text>
+<text x="605.5" y="108.2" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">3 followers</text>
+<text x="709.4" y="193.6" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">4 push id</text>
+<text x="483.5" y="318.3" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">read IDs</text>
+<text x="420.0" y="252.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">hydrate +</text>
+<text x="420.0" y="266.0" text-anchor="middle" font-size="12" fill="var(--muted)" stroke="var(--surface)" stroke-width="4" paint-order="stroke">celebrity pull</text>
+</svg>
+    <figcaption>Write path (top): store the post, then fan it out asynchronously into followers' timeline caches. Read path (bottom): read post IDs from the timeline cache, merge in celebrity posts, hydrate IDs into full posts.</figcaption>
+  </figure>
+  <p><b>Write path.</b> The post service writes the post to the posts DB and returns success to the author immediately. It enqueues a fan-out job. Workers fetch the author's follower list in pages of a few thousand and push the post ID onto each follower's <code>timeline:{id}</code> list (Redis <code>LPUSH</code> then <code>LTRIM</code> to 500), pipelining hundreds of commands per round trip.</p>
+  <p><b>Read path.</b> The feed service reads the first ~50 IDs from Maya's timeline list, adds recent posts from the celebrities she follows (deep dive 1), sorts by ID, takes 20, and hydrates them: one multi-get to the post cache for the post bodies and author info. Media URLs point at a CDN.</p>
+
+  <h2>6. Deep dive: fan-out on write vs fan-out on read</h2>
+  <p>Trace one post from a normal user, then one from a celebrity, under each strategy.</p>
+  <div class="trace">
+    <ol>
+      <li><b>Push model (fan-out on write).</b> Sam (180 followers) posts. Workers do 180 <code>LPUSH</code>es, a few milliseconds of work. When any follower opens the app, the feed is already assembled: one list read. Cheap reads, cost paid at write time.</li>
+      <li><b>Push model, celebrity.</b> Pop star posts. 50,000,000 <code>LPUSH</code>es. Followers who open the app in the next minute might not see the post yet, and the fan-out queue backs up for everyone else.</li>
+      <li><b>Pull model (fan-out on read).</b> Maya opens the app. The feed service fetches recent posts from each of the 300 accounts she follows and merges them. That's 300 lookups (batched, but still) per feed load × 23,000 loads/second ≈ 7 million lookups/second. Expensive reads, nothing at write time.</li>
+      <li><b>Hybrid.</b> Push for normal accounts. Mark accounts above a threshold (say 100,000 followers) as celebrities and don't fan them out. At read time, Maya's feed = her pushed timeline + recent posts from the ~2–20 celebrities she follows, read from a small per-author "recent posts" cache. The merge is cheap because there are few celebrities per user and their recent posts are hot in cache for everyone.</li>
+    </ol>
+  </div>
+  <p>Two more refinements interviewers like:</p>
+  <ul>
+    <li><b>Skip inactive users.</b> Don't push into timelines of users who haven't logged in for 30 days. When they return, build their timeline on the fly with the pull model once, then resume pushing. This cuts fan-out writes and cache memory a lot.</li>
+    <li><b>Your own posts.</b> Write the author's own post into their own timeline synchronously so they see it instantly (read-your-writes, a consistency guarantee that you always see your own changes), even though followers get it a few seconds later.</li>
+  </ul>
+
+  <h2>7. Deep dive: the timeline cache</h2>
+  <ul>
+    <li><b>Store IDs, not posts.</b> A post can be in 50 million timelines. If you store the full post, an edit or delete means 50 million updates. Storing IDs means one update in the post store; the next hydration sees it.</li>
+    <li><b>Cap the length.</b> 500 IDs covers several days of scrolling for most people. Older pages fall back to the pull model, which is fine because few people scroll that far.</li>
+    <li><b>The cache is derived, not the source of truth.</b> If a Redis node dies, rebuild affected timelines from the follow graph and per-author post indexes. Users see a slightly slower first load, not data loss.</li>
+    <li><b>Sharding.</b> Shard by <code>user_id</code> so one user's timeline lives on one node. A feed read is a single-node operation.</li>
+  </ul>
+
+  <h2>8. Deep dive: deletes, unfollows, and privacy changes</h2>
+  <p>The push model copies post IDs everywhere, so "take it back" is the tricky part.</p>
+  <ul>
+    <li><b>Delete a post:</b> mark <code>deleted = true</code> in the posts store and evict it from the post cache. Hydration drops deleted posts, so it vanishes from every feed on the next load without touching 50 million lists. A background job can clean up the IDs later.</li>
+    <li><b>Unfollow:</b> enqueue a job to remove that author's IDs from your timeline; until it runs (seconds), filter at hydration time against your follow set.</li>
+    <li><b>Account goes private or blocks you:</b> same pattern: authoritative check at hydration, async cleanup of copies. Rule of thumb: <b>copies can be stale, but every read checks permissions against the source of truth.</b></li>
+  </ul>
+
+  <h2>9. Trade-offs a strong candidate names</h2>
+  <table class="tbl">
+    <thead><tr><th>Choice</th><th>Gives you</th><th>At the cost of</th><th>Choose it when</th></tr></thead>
+    <tbody>
+      <tr><td>Fan-out on write</td><td>One cheap read per feed load</td><td>Write amplification (20 B inserts/day); celebrity spikes; cache memory</td><td>Reads dominate and follower counts are modest</td></tr>
+      <tr><td>Fan-out on read</td><td>No write amplification; always fresh</td><td>Hundreds of lookups per feed load; slower, harder to cache</td><td>Few reads per write, or very large follower counts</td></tr>
+      <tr><td>Hybrid</td><td>Fast reads for everyone, bounded write cost</td><td>Two code paths, a threshold to tune, a merge step</td><td>At real social-network scale (this is what large networks converge on)</td></tr>
+      <tr><td>Cache IDs not bodies</td><td>Edits and deletes are one write</td><td>A hydration multi-get per page</td><td>Almost always</td></tr>
+      <tr><td>Cursor pagination</td><td>Stable pages while new posts arrive</td><td>Can't jump to "page 7"</td><td>Infinite scroll feeds (always)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. Follow-up questions and strong answers</h2>
+  <h3>"Now make it ranked, not chronological."</h3>
+  <p>Split into two stages. <b>Candidate generation</b> gathers ~500 posts: the pushed timeline, celebrity posts, maybe "posts your friends liked". <b>Ranking</b> scores each candidate with a model (predicted chance of like, reply, dwell time) and returns the top 20. The fan-out design still produces candidates; ranking just reorders them. Ranking adds latency (model calls on 500 items), so precompute features and keep the model fast, or rank in the background when the user is likely to open the app.</p>
+  <h3>"How do you pick the celebrity threshold?"</h3>
+  <p>By cost: the threshold where fan-out time for one post exceeds your freshness target. If workers sustain 1 million inserts/second and we want posts visible within ~5 seconds, any account with more than a few million followers can't be pushed in time, and anything above ~100,000 is a big share of queue capacity. Start around 100,000 and tune with metrics on fan-out lag.</p>
+  <h3>"What if the fan-out queue backs up?"</h3>
+  <p>Posts appear late in feeds, but nothing is lost because the queue is durable. Alert on queue lag. Prioritize fan-out to recently active users first. Autoscale workers on lag.</p>
+  <h3>"How would you show the new-posts pill ('12 new posts')?"</h3>
+  <p>The client remembers the newest post ID it has. Poll a cheap endpoint every 30–60 seconds that returns the count of IDs in the timeline newer than that, or push a hint over an existing realtime connection. Don't auto-insert posts above where the user is reading.</p>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Feed reads outnumber posts about 20 to 1, so I want reads to be a single cache lookup, which means fan-out on write. But one celebrity post would cost 50 million writes, so accounts above about 100,000 followers are pulled at read time and merged in. The timeline cache stores post IDs, not post bodies, so deletes and edits are one write and every read re-checks permissions."</p></div>
+
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Presenting fan-out on write as the answer and stopping. The interviewer's next question is always "what about someone with 50 million followers?" Bring up the celebrity problem yourself, with the arithmetic, and propose the hybrid before they ask.</p></div>
+
+  <h2>11. Your turn</h2>
+  <p>Design a <b>class activity feed</b> for a K-12 reading app: students see "Ana finished <i>Wonder</i>" and "Mr. Lee assigned Chapter 4" from their classes. 3 million students, classes of ~25, middle schoolers are in up to 6 class sections.</p>
+  <details>
+    <summary>Show a model answer</summary>
+    <p><b>Key insight:</b> the natural unit of fan-out is the <b>class</b>, not the user. Every member of a class sees the same activity, so write each event once to <code>class_feed:{section_id}</code> instead of copying it into 25 student timelines.</p>
+    <p><b>Read path:</b> a student's feed = merge of their sections' feeds. Elementary students have 1 section (one list read); middle schoolers have up to 6 (six list reads, merged by time-sortable ID). That's fan-out on read, but with a tiny N, so it's cheap.</p>
+    <p><b>Numbers:</b> 3 M students, say 2 events per student per day = 6 M events/day ≈ 70/second average, with peaks at class start. Trivial for one Redis node plus a durable events table.</p>
+    <p><b>K-12 specifics:</b> teacher can hide items and turn the feed off; show first name + last initial; no student comments for younger grades; when a student moves sections mid-year, their membership changes and they stop seeing the old class immediately because membership is checked at read time. Events live in the district's tenant and age out after the school year.</p>
+    <p><b>Trade-off:</b> per-class feeds give one write per event and a small merge on read, at the cost of a per-read permission check and not personalizing order; fine because the audience and volume are small.</p>
+  </details>
+
+  <div data-quiz='[{"q":"A user with 200 followers posts. Under fan-out on write, roughly how many timeline inserts happen?","o":["1","200","200 squared","Zero until a follower opens the app"],"a":1,"why":"Fan-out on write pushes the post ID into each follower timeline: one insert per follower."},{"q":"Why do large social networks use a hybrid approach?","o":["Because Redis cannot store lists","Pushing a celebrity post to tens of millions of timelines is too slow and expensive, while pulling for everyone makes reads too expensive","Because SQL databases do not support joins","To make feeds strongly consistent"],"a":1,"why":"Push for normal accounts keeps reads cheap; pull for the few huge accounts bounds write amplification."},{"q":"Why store post IDs rather than full posts in each timeline?","o":["IDs compress better in JSON","A delete or edit then needs one update in the post store instead of millions of timeline updates","Redis cannot store strings longer than 8 bytes","It makes ranking unnecessary"],"a":1,"why":"Timelines hold references. Hydration reads the current version, so edits and deletes show up everywhere."},{"q":"Why is cursor pagination preferred over offset pagination for feeds?","o":["Offsets are not supported by HTTP","New posts arriving while you scroll shift offset pages, causing duplicates or gaps","Cursors are encrypted","Offsets are slower to type"],"a":1,"why":"A cursor anchors on the last seen ID, so new inserts at the top do not change the next page."},{"q":"Fan-out workers fall behind by 2 minutes. What do users experience?","o":["Posts are lost","New posts from people they follow appear late, but nothing is lost because the queue is durable","The app crashes","Every feed becomes empty"],"a":1,"why":"Async fan-out degrades freshness, not correctness. Alert on lag and autoscale workers."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>The core question: do the work at post time (push) or at read time (pull)?</li>
+    <li>Numbers: reads about 20× posts; average fan-out 200; a celebrity post can be 50 million writes.</li>
+    <li>Hybrid: push for normal accounts, pull and merge for celebrities, skip inactive users.</li>
+    <li>Timelines store IDs; hydration and permission checks hit the source of truth on every read.</li>
+    <li>Snowflake-style time-sortable IDs make merging and cursor pagination simple.</li>
+  </ul>
+</template>

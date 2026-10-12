@@ -1,0 +1,202 @@
+<template id="tpl-dsa-recognition" data-title="Pattern recognition drill + playbook" data-part="Part 5 · Coding patterns (DSA)" data-order="420">
+  <h1>Pattern recognition drill and interview playbook</h1>
+  <p class="lede">This is the lesson to come back to the night before an interview. You will drill 37 short problem statements, each asking &quot;which pattern?&quot;, until the trigger words jump out at you. Then you get a one-page cheat sheet of every pattern in this part (trigger, code shape, time and space, classic example) and a playbook for the 45 minutes of a coding interview: what to say, in what order, and what to do when you&#39;re stuck.</p>
+
+  <h2>1. How recognition works</h2>
+  <p>Strong candidates don&#39;t remember 500 solutions. They remember about 14 shapes and they read problem statements looking for <b>clues about the shape</b>. There are only three kinds of clue, and you should check all three every time:</p>
+  <ol>
+    <li><b>The shape of the input.</b> Sorted array? Grid? Tree? Linked list? List of intervals? Pairs of dependencies? The input often names the pattern by itself: sorted almost always means two pointers or binary search; a grid or pairs mean a graph.</li>
+    <li><b>The words of the question.</b> &quot;Contiguous&quot;, &quot;k most&quot;, &quot;number of ways&quot;, &quot;all combinations&quot;, &quot;fewest steps&quot;, &quot;valid parentheses&quot;. These are the trigger words in the table below.</li>
+    <li><b>The size limits.</b> n &le; 20 says &quot;exponential is fine&quot; (backtracking). n up to 10<sup>5</sup> says &quot;O(n) or O(n log n), no nested loops&quot;. &quot;O(1) extra space&quot; rules out a hash map and points to pointers.</li>
+  </ol>
+  <p>And if nothing jumps out, fall back on the method from the first lesson: write the brute force, find the repeated work, and ask which pattern removes <i>that</i> work. Most of the time the answer is &quot;replace the inner loop with a hash map&quot;.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 700 360" width="100%" role="img" aria-label="Decision flow: ask a series of questions about the problem in order; each yes leads to a pattern; if all are no, write the brute force and replace the inner loop with a hash map." style="font-family:inherit">
+      <defs><marker id="rec-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+      <g style="font-size:13px">
+        <rect x="10" y="10" width="330" height="34" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="22" y="32" style="fill:currentColor">Must I output <tspan style="font-weight:700">every</tspan> option? (n small)</text>
+        <rect x="10" y="58" width="330" height="34" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="22" y="80" style="fill:currentColor">Count ways / min / max with choices?</text>
+        <rect x="10" y="106" width="330" height="34" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="22" y="128" style="fill:currentColor">Grid, network, dependencies? Tree?</text>
+        <rect x="10" y="154" width="330" height="34" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="22" y="176" style="fill:currentColor">Contiguous subarray / substring?</text>
+        <rect x="10" y="202" width="330" height="34" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="22" y="224" style="fill:currentColor">Sorted input (or sortable)? Intervals?</text>
+        <rect x="10" y="250" width="330" height="34" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="22" y="272" style="fill:currentColor">Top k / k-th / repeatedly the smallest?</text>
+        <rect x="10" y="298" width="330" height="34" rx="8" style="fill:var(--surface);stroke:var(--line)"/>
+        <text x="22" y="320" style="fill:currentColor">Nesting, matching, next greater?</text>
+      </g>
+      <g style="stroke:var(--muted);stroke-width:1.5">
+        <line x1="340" y1="27" x2="396" y2="27" marker-end="url(#rec-arr)"/>
+        <line x1="340" y1="75" x2="396" y2="75" marker-end="url(#rec-arr)"/>
+        <line x1="340" y1="123" x2="396" y2="123" marker-end="url(#rec-arr)"/>
+        <line x1="340" y1="171" x2="396" y2="171" marker-end="url(#rec-arr)"/>
+        <line x1="340" y1="219" x2="396" y2="219" marker-end="url(#rec-arr)"/>
+        <line x1="340" y1="267" x2="396" y2="267" marker-end="url(#rec-arr)"/>
+        <line x1="340" y1="315" x2="396" y2="315" marker-end="url(#rec-arr)"/>
+        <line x1="175" y1="44" x2="175" y2="56" marker-end="url(#rec-arr)"/>
+        <line x1="175" y1="92" x2="175" y2="104" marker-end="url(#rec-arr)"/>
+        <line x1="175" y1="140" x2="175" y2="152" marker-end="url(#rec-arr)"/>
+        <line x1="175" y1="188" x2="175" y2="200" marker-end="url(#rec-arr)"/>
+        <line x1="175" y1="236" x2="175" y2="248" marker-end="url(#rec-arr)"/>
+        <line x1="175" y1="284" x2="175" y2="296" marker-end="url(#rec-arr)"/>
+        <line x1="175" y1="332" x2="175" y2="350" />
+        <line x1="175" y1="350" x2="396" y2="350" marker-end="url(#rec-arr)"/>
+      </g>
+      <g style="font-size:12px;fill:var(--muted)">
+        <text x="352" y="22">yes</text><text x="352" y="70">yes</text><text x="352" y="118">yes</text><text x="352" y="166">yes</text><text x="352" y="214">yes</text><text x="352" y="262">yes</text><text x="352" y="310">yes</text>
+        <text x="182" y="54">no</text>
+      </g>
+      <g style="font-size:13px">
+        <text x="402" y="32" style="fill:currentColor;font-weight:600">Backtracking</text>
+        <text x="402" y="80" style="fill:currentColor;font-weight:600">Dynamic programming</text>
+        <text x="402" y="128" style="fill:currentColor;font-weight:600">BFS / DFS / topo sort · tree recursion</text>
+        <text x="402" y="176" style="fill:currentColor;font-weight:600">Sliding window · prefix sums</text>
+        <text x="402" y="224" style="fill:currentColor;font-weight:600">Two pointers · binary search · sort + sweep</text>
+        <text x="402" y="272" style="fill:currentColor;font-weight:600">Heap</text>
+        <text x="402" y="320" style="fill:currentColor;font-weight:600">Stack (monotonic stack)</text>
+        <text x="402" y="354" style="fill:var(--accent);font-weight:600">Brute force → hash map / set</text>
+      </g>
+    </svg>
+    <figcaption>A rough order of questions to ask. It is a habit, not a law: many problems combine two patterns (a sliding window with a hash map of counts, BFS with a visited set).</figcaption>
+  </figure>
+
+  <h2>2. The drill</h2>
+  <p>Five rounds. Read each statement, underline the clue in your head, pick the pattern, then read why. Don&#39;t code anything; recognition is the skill being trained. Aim for 30 of 37 before an interview, and redo the ones you missed a day later.</p>
+
+  <h3>Round 1: arrays, hashing and windows</h3>
+  <div data-quiz='[
+    {"q":"Given an unsorted array of numbers and a target, return the indexes of the two numbers that add up to the target. n up to 10,000.","o":["Two pointers from both ends","Hash map: for each number, look up target minus number among the ones seen so far","Sliding window","Binary search for each number"],"a":1,"why":"Trigger: pair that adds up to a target, and the array is unsorted (two pointers needs sorted). The brute force inner loop searches for the complement; a Map of value to index makes that one lookup. O(n) time, O(n) space."},
+    {"q":"Return true if any value appears at least twice in the array.","o":["Sort and binary search","Hash set: add each value; if it is already there, return true","Two nested loops are optimal here","Prefix sums"],"a":1,"why":"Trigger: duplicate or seen before. A Set answers have I seen this in O(1). O(n) time. (Sorting then checking neighbours is O(n log n) with O(1) extra space: a fine follow-up answer.)"},
+    {"q":"Group a list of words so that anagrams (same letters, different order) are together.","o":["Hash map keyed by the sorted letters of each word","Sliding window over each word","A min-heap of words","Backtracking over letter orders"],"a":0,"why":"Trigger: group by a property. Every anagram has the same sorted letters (eat, tea, ate all become aet), so that is the map key. O(n × k log k) for n words of length k."},
+    {"q":"Count how many contiguous subarrays sum to exactly k. The array can contain negative numbers.","o":["Sliding window that shrinks when the sum is too big","Prefix sums plus a hash map of how many times each prefix sum has been seen","Sort, then two pointers","Binary search on the answer"],"a":1,"why":"Trigger: subarray sum equals k. The negatives are the clue that a sliding window will not work (adding an item can make the sum smaller). A subarray i..j sums to k when prefix[j] minus prefix[i] equals k, so count earlier prefixes equal to prefix minus k. O(n)."},
+    {"q":"A reading app gets 50,000 questions like: how many minutes did this class read between day 12 and day 40? The daily totals never change.","o":["Loop from day 12 to 40 for each question","Precompute prefix sums once; each answer is prefix[40] minus prefix[11]","A heap of daily totals","DFS over the days"],"a":1,"why":"Trigger: many range-sum queries on fixed data. One O(n) pass builds the prefix array, then each query is O(1) instead of O(n)."},
+    {"q":"A sorted array and a target: does any pair add up to the target? Use O(1) extra space.","o":["Hash set of seen values","Two pointers: one at each end; move the left one right if the sum is too small, the right one left if too big","Sliding window of size 2","Dynamic programming"],"a":1,"why":"Trigger: sorted plus pair plus O(1) space. Sorted order tells you which pointer to move. O(n) time, O(1) space. Without the space limit a hash set would also work."},
+    {"q":"Find the length of the longest substring with no repeated characters.","o":["Sliding window that grows on the right and shrinks from the left when a repeat appears","Backtracking over all substrings","Binary search on the length","Stack of characters"],"a":0,"why":"Trigger: longest plus substring (contiguous) plus a condition. Expand the right edge, and while the window has a repeat (tracked in a Map or Set), shrink from the left. Each character enters and leaves once: O(n)."}
+  ]'></div>
+
+  <h3>Round 2: windows, pointers, stacks and binary search</h3>
+  <div data-quiz='[
+    {"q":"Given daily reading minutes, find the largest total over any 7 consecutive days.","o":["Fixed-size sliding window: add the new day, subtract the day that falls out","Sort the days and take the top 7","Heap of size 7","Prefix sums plus a hash map"],"a":0,"why":"Trigger: window of size k over contiguous days. Keep a running sum and update it in O(1) per step: O(n) instead of O(n × k). (Prefix sums also work; the window is simpler.)"},
+    {"q":"Is a sentence a palindrome if you ignore spaces, punctuation and case?","o":["Reverse the whole string and compare","Two pointers from both ends moving inward, skipping non-letters","Hash map of letter counts","Stack of all letters"],"a":1,"why":"Trigger: palindrome. Two pointers compare the outside pair and step inward: O(n) time, O(1) space. Reversing also works in O(n) but uses O(n) extra space and needs a cleaned copy first. Letter counts tell you if it could be rearranged into a palindrome, which is a different question."},
+    {"q":"Check whether a string of brackets like {[()]}( is balanced.","o":["Count opening and closing brackets","Stack: push openers; on a closer, the top must be its matching opener","Two pointers from both ends","Sliding window"],"a":1,"why":"Trigger: matching and nesting. The most recent unclosed opener must close first, which is last in, first out. Counting fails on ([)]."},
+    {"q":"For each day, how many days until a warmer temperature?","o":["For each day, scan forward until warmer","Monotonic stack of days still waiting for a warmer day","Binary search","Heap of temperatures"],"a":1,"why":"Trigger: next greater element. Keep a stack of indexes with falling temperatures; a warmer day pops and answers everyone colder on the stack. Each index is pushed and popped once: O(n) instead of O(n²)."},
+    {"q":"A sorted array of 1,000,000 student IDs, possibly with repeats. Return the first index where a given ID appears.","o":["Linear scan","Binary search, and when you find the ID keep searching to the left","Hash set","Two pointers"],"a":1,"why":"Trigger: sorted plus find plus first position. Binary search is about 20 steps for a million items. The first-position twist: on a match, record it and keep going left."},
+    {"q":"Packages with given weights must ship in order within D days. Find the smallest truck capacity that makes it.","o":["Dynamic programming over days","Binary search on the capacity: for a guess, simulate to check if D days is enough","Greedy: capacity equals the heaviest package","Sort the packages"],"a":1,"why":"Trigger: minimum X such that a condition holds, where bigger X always works if smaller X does. Binary search on the answer between max weight and total weight, with an O(n) check per guess: O(n log total)."},
+    {"q":"Vertical lines of different heights stand along an axis. Pick two that hold the most water between them.","o":["Two pointers from both ends; always move the shorter line inward","Check every pair","Monotonic stack","Sort by height"],"a":0,"why":"Trigger: pair from both ends, area limited by the shorter side. Moving the taller line can never help, so move the shorter one. O(n) instead of O(n²)."}
+  ]'></div>
+
+  <h3>Round 3: intervals, greedy, linked lists and heaps</h3>
+  <div data-quiz='[
+    {"q":"Given a list of tutoring sessions as [start, end], merge all overlapping sessions.","o":["Sort by start time, then sweep: extend the last merged session or start a new one","Hash map of start times","Binary search for each session","Backtracking"],"a":0,"why":"Trigger: intervals plus overlapping. After sorting by start, only neighbours can overlap, so one pass merges. O(n log n) for the sort."},
+    {"q":"What is the minimum number of classrooms needed so no two overlapping classes share a room?","o":["Sort by start; keep a min-heap of end times of rooms in use","Count all classes","Two pointers on unsorted input","DFS"],"a":0,"why":"Trigger: meeting rooms. Process classes by start time; if the earliest-ending room is free (heap top end is at or before the start), reuse it, otherwise open a room. The heap size peak is the answer. O(n log n). Sorting starts and ends separately also works."},
+    {"q":"Pick the maximum number of club events a student can attend fully, with no overlaps.","o":["Greedy: sort by end time, take every event that starts after the last one taken ends","Dynamic programming over all subsets","Sort by start time and take the earliest","Heap of durations"],"a":0,"why":"Trigger: maximum number of non-overlapping intervals. Taking the event that ends earliest always leaves the most room for the rest, so greedy by end time is provably optimal. O(n log n)."},
+    {"q":"Does a linked list contain a cycle? Use O(1) extra space.","o":["Store visited nodes in a Set","Fast and slow pointers: if they ever meet, there is a cycle","Reverse the list","Sort the nodes"],"a":1,"why":"Trigger: linked list plus cycle plus O(1) space. The fast pointer moves 2, the slow one 1; in a cycle the fast one catches up. A Set works too but uses O(n) space."},
+    {"q":"Return the middle node of a linked list in one pass.","o":["Count the length, then walk half way (two passes)","Fast and slow pointers: when fast reaches the end, slow is in the middle","Recursion","Hash map of index to node"],"a":1,"why":"Trigger: middle node. Slow moves 1 while fast moves 2, so slow is at half the distance. O(n), O(1)."},
+    {"q":"Reverse a singly linked list.","o":["Iterate with prev, current and next pointers, flipping each arrow","Copy values into an array and sort it","Fast and slow pointers","BFS"],"a":0,"why":"Trigger: reverse plus linked list. Save next, point current back to prev, step forward. O(n) time, O(1) space. The classic bug is losing the rest of the list by not saving next first."},
+    {"q":"From a log of 2 million words, return the 10 most frequent.","o":["Count with a hash map, then keep a min-heap of size 10 over the counts","Sort the raw words alphabetically","Sliding window","Binary search on the counts"],"a":0,"why":"Trigger: k most frequent. Count in a Map (O(n)), then a size-k heap over the m distinct words: O(m log k). Sorting all m counts, O(m log m), is fine to mention when m is small."},
+    {"q":"Scores stream in one at a time. After each, report the 3rd highest score so far.","o":["Re-sort all scores after each arrival","Min-heap holding the top 3; its top is the 3rd highest","Stack","Prefix max"],"a":1,"why":"Trigger: k-th largest in a stream. Keep only the best k in a min-heap; a new score bigger than the heap top replaces it. O(log k) per score."}
+  ]'></div>
+
+  <h3>Round 4: trees and graphs</h3>
+  <div data-quiz='[
+    {"q":"Return the maximum depth of a binary tree.","o":["DFS recursion: depth(node) = 1 + max(depth(left), depth(right)), with 0 for an empty node","Sort the nodes","Sliding window","Binary search"],"a":0,"why":"Trigger: tree plus depth. Trust the function on each child, then combine. O(n) nodes visited once."},
+    {"q":"Return the average value of the nodes on each level of a binary tree.","o":["BFS with a queue, processing one level (the current queue length) at a time","Inorder DFS","Monotonic stack","Two pointers"],"a":0,"why":"Trigger: level by level. BFS naturally visits nodes in level order; snapshot the queue size to know where each level ends. O(n)."},
+    {"q":"Is a binary tree a valid binary search tree?","o":["Check that each node is bigger than its left child and smaller than its right child","DFS passing down the allowed (min, max) range for each node","BFS and compare neighbours","Heap"],"a":1,"why":"Trigger: validate BST. Comparing only to direct children misses a deep node that breaks an ancestor&#39;s rule. Passing bounds down (or checking an inorder traversal is increasing) catches it. O(n)."},
+    {"q":"A map of land and water cells. Count the islands.","o":["Scan; at each unvisited land cell, count one and flood-fill it with DFS or BFS","Prefix sums over rows","Sort the cells","Dynamic programming"],"a":0,"why":"Trigger: grid plus connected groups. Connected components with a visited set. O(rows × cols)."},
+    {"q":"In a grid of oranges, every minute each rotten orange rots its fresh neighbours. How many minutes until none are fresh?","o":["DFS from one rotten orange","Multi-source BFS: start the queue with all rotten oranges at once and count the waves","Binary search on minutes","Backtracking"],"a":1,"why":"Trigger: spreading in waves, minimum time. BFS from all sources together; each BFS level is one minute. O(rows × cols)."},
+    {"q":"Given courses and prerequisite pairs, can every course be completed?","o":["Topological sort: in-degree counts and a queue; if any course is never freed, there is a cycle","Sort courses by number","Two pointers","Heap"],"a":0,"why":"Trigger: prerequisites or dependencies. Kahn&#39;s algorithm. O(V + E)."},
+    {"q":"Find the fewest one-letter changes to transform the word HIT into COG, using only words from a list.","o":["DFS through the word list","BFS where each word is a node and words one letter apart are neighbours","Dynamic programming on letters","Sliding window"],"a":1,"why":"Trigger: fewest steps, each step costs the same. BFS on an implicit graph. DFS would find a path, not necessarily the shortest."}
+  ]'></div>
+
+  <h3>Round 5: backtracking, DP, and mixed</h3>
+  <div data-quiz='[
+    {"q":"Return all letter combinations a phone number like 23 could spell (2 = abc, 3 = def).","o":["Backtracking: choose a letter for each digit, recurse, undo","Dynamic programming","Hash map of counts","Sliding window"],"a":0,"why":"Trigger: return all combinations. Output size is up to 4 to the n, and n is small. Backtracking over digits."},
+    {"q":"Place n queens on an n by n board (n up to 9) so none attack each other; return all boards.","o":["Greedy placement","Backtracking row by row, pruning any column or diagonal already under attack","BFS","Binary search"],"a":1,"why":"Trigger: all arrangements under constraints, tiny n. Pruning with sets of used columns and diagonals cuts the tree massively."},
+    {"q":"Each stair has a cost; you may climb 1 or 2 stairs at a time. Find the minimum total cost to reach the top.","o":["Greedy: always step onto the cheaper next stair","Dynamic programming: cost(i) = stair[i] + min(cost(i-1), cost(i-2))","BFS","Backtracking all paths"],"a":1,"why":"Trigger: minimum cost with a choice at each step. Greedy can walk into an expensive stair later. DP: O(n), O(1) space."},
+    {"q":"Find the length of the longest strictly increasing subsequence (not necessarily contiguous) of an array of up to 2,500 numbers.","o":["Sliding window","Dynamic programming: best[i] = 1 + max best[j] over earlier j with a smaller value","Two pointers","Hash set"],"a":1,"why":"Trigger: longest subsequence (not contiguous, so not a window). O(n²) DP is fine for n = 2,500; there is an O(n log n) version with binary search as a follow-up."},
+    {"q":"Can the string readingapp be split into words from a given dictionary?","o":["Greedy: take the longest dictionary word at each step","Dynamic programming: ok[i] is true if some dictionary word ends at i and ok at its start is true","Two pointers","Heap"],"a":1,"why":"Trigger: can it be split, with a choice of where to cut. Greedy longest-match can paint itself into a corner. Boolean DP over positions: about O(n²) checks."},
+    {"q":"Given an unsorted array, find the length of the longest run of consecutive integers (like 4,5,6,7), in O(n).","o":["Sort and scan","Hash set: only start counting from numbers whose value minus 1 is not in the set","Sliding window","Heap"],"a":1,"why":"Trigger: the O(n) requirement rules out sorting. Put everything in a Set; each run is counted once from its smallest number. O(n)."},
+    {"q":"Merge k sorted lists of reading events into one sorted list.","o":["Concatenate and sort everything","Min-heap holding the current head of each list; repeatedly pop the smallest and push its successor","Two pointers on all lists at once","Backtracking"],"a":1,"why":"Trigger: merge k sorted. The heap always holds k candidates, so each of the N events costs O(log k): O(N log k), better than O(N log N) for small k."},
+    {"q":"A sequence of browser back and forward actions: support visit, back(steps) and forward(steps).","o":["Two stacks (or an array with a current index)","A heap","A hash map of counts","BFS"],"a":0,"why":"Trigger: undo or redo, most recent first. Back pops from one stack onto the other; visiting a new page clears the forward stack. O(1) per step."}
+  ]'></div>
+
+  <h2>3. The cheat sheet</h2>
+  <p>One row per pattern. The &quot;shape&quot; column is the skeleton you should be able to write from memory; the lessons have the full templates.</p>
+  <table class="tbl">
+    <thead><tr><th>Pattern</th><th>Trigger words / input shape</th><th>Template shape</th><th>Time · space</th><th>Classic example</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#dsa-hashing">Hash map / set</a></td><td>count, frequency, duplicate, seen before, anagram, pair summing to target (unsorted), group by</td><td><code>const seen = new Map(); for (x of arr) { if (seen.has(need)) ...; seen.set(x, ...) }</code></td><td>O(n) · O(n)</td><td>Two Sum, Group Anagrams</td></tr>
+      <tr><td><a href="#dsa-prefix">Prefix sums</a></td><td>sum between i and j, many range queries, subarray sum equals k (with negatives), running total</td><td><code>prefix[i + 1] = prefix[i] + arr[i]</code>; range = <code>prefix[j + 1] - prefix[i]</code>; plus a Map of prefix counts</td><td>O(n) build, O(1) query · O(n)</td><td>Range Sum Query, Subarray Sum Equals K</td></tr>
+      <tr><td><a href="#dsa-two-pointers">Two pointers</a></td><td>sorted + pair/triplet, palindrome, in place, remove duplicates, merge two sorted, both ends</td><td><code>let left = 0, right = n - 1; while (left &lt; right) { move one side based on a comparison }</code></td><td>O(n) · O(1)</td><td>Two Sum II, Valid Palindrome, Container With Most Water</td></tr>
+      <tr><td><a href="#dsa-sliding-window">Sliding window</a></td><td>contiguous subarray/substring, longest/shortest such that, window of size k, at most k distinct</td><td><code>for (right...) { add arr[right]; while (invalid) { remove arr[left]; left++ } update best }</code></td><td>O(n) · O(k) for counts</td><td>Longest Substring Without Repeats, Minimum Size Subarray Sum</td></tr>
+      <tr><td><a href="#dsa-stack">Stack / monotonic stack</a></td><td>matching brackets, nested, undo, most recent, next greater/smaller, days until warmer</td><td><code>for (i...) { while (stack.length &amp;&amp; arr[i] &gt; arr[top]) answer[stack.pop()] = ...; stack.push(i) }</code></td><td>O(n) · O(n)</td><td>Valid Parentheses, Daily Temperatures</td></tr>
+      <tr><td><a href="#dsa-binary-search">Binary search</a></td><td>sorted + find, first/last position, O(log n), minimum X such that (monotonic yes/no)</td><td><code>while (lo &lt; hi) { mid = Math.floor((lo + hi) / 2); if (ok(mid)) hi = mid; else lo = mid + 1 }</code></td><td>O(log n), or O(n log range) on the answer · O(1)</td><td>Search Insert Position, Ship Within D Days</td></tr>
+      <tr><td><a href="#dsa-sorting-intervals">Sort + sweep / greedy</a></td><td>intervals, overlapping, meetings, schedule, max non-overlapping, sort first makes neighbours meaningful</td><td><code>arr.sort((a, b) =&gt; a[0] - b[0]); for (cur of arr) { overlaps last ? extend : push }</code></td><td>O(n log n) · O(n)</td><td>Merge Intervals, Non-overlapping Intervals</td></tr>
+      <tr><td><a href="#dsa-linked-lists">Linked lists</a></td><td>linked list, cycle, middle, k-th from end, reverse, merge</td><td><code>slow = slow.next; fast = fast.next.next</code>; reverse: <code>next = cur.next; cur.next = prev; prev = cur; cur = next</code>; dummy head</td><td>O(n) · O(1)</td><td>Reverse Linked List, Linked List Cycle, Merge Two Lists</td></tr>
+      <tr><td><a href="#dsa-trees">Trees (DFS / BFS)</a></td><td>tree, depth, path from root, level by level, BST, subtree</td><td><code>function dfs(node) { if (!node) return base; const l = dfs(node.left), r = dfs(node.right); return combine(l, r) }</code>; BFS: queue, one level at a time</td><td>O(n) · O(height) or O(width)</td><td>Max Depth, Level Order, Validate BST</td></tr>
+      <tr><td><a href="#dsa-heaps">Heap / top-K</a></td><td>k largest/smallest, top k, k most frequent, k-th, merge k sorted, repeatedly take the min</td><td><code>for (x of items) { heap.push(x); if (heap.size() &gt; k) heap.pop() }</code> (min-heap keeps the k largest)</td><td>O(n log k) · O(k)</td><td>Kth Largest, Top K Frequent, Merge K Sorted Lists</td></tr>
+      <tr><td><a href="#dsa-graphs">Graphs (BFS / DFS / topo)</a></td><td>grid, islands, connected, network, fewest steps, prerequisites, dependencies, cycle</td><td>adjacency <code>Map</code>; <code>visited</code> set; BFS queue with a head index; Kahn: in-degree counts + queue</td><td>O(V + E) · O(V + E)</td><td>Number of Islands, Shortest Path in a Grid, Course Schedule</td></tr>
+      <tr><td><a href="#dsa-backtracking">Backtracking</a></td><td>all subsets/permutations/combinations, generate every, n &le; 20, place pieces under constraints</td><td><code>explore(start) { if (done) save copy; for (option) { choose; explore(...); un-choose } }</code></td><td>O(2<sup>n</sup>) or O(n!) · O(n)</td><td>Subsets, Permutations, Combination Sum, N-Queens</td></tr>
+      <tr><td><a href="#dsa-dp">Dynamic programming</a></td><td>number of ways, min/max cost, fewest, longest, can you reach / split, two strings compared in order</td><td>state + recurrence from the last choice; memo <code>Map</code> or <code>table[i] = combine(table[i - 1], table[i - 2] ...)</code></td><td>states × work per state (O(n), O(n × m))</td><td>Climbing Stairs, House Robber, Coin Change, LCS</td></tr>
+    </tbody>
+  </table>
+  <p>And the speed table to sanity-check your target, from the <a href="#dsa-approach">approach lesson</a> (rough, assuming about 10<sup>8</sup> simple steps per second):</p>
+  <table class="tbl">
+    <thead><tr><th>Constraint on n</th><th>Target</th><th>Usually means</th></tr></thead>
+    <tbody>
+      <tr><td>n &le; 10–12</td><td>O(n!)</td><td>Permutations, backtracking</td></tr>
+      <tr><td>n &le; 20</td><td>O(2<sup>n</sup>)</td><td>Subsets, backtracking</td></tr>
+      <tr><td>n &le; 1,000–5,000</td><td>O(n²)</td><td>Nested loops OK, 2D DP</td></tr>
+      <tr><td>n &le; 10<sup>5</sup>–10<sup>6</sup></td><td>O(n log n) or O(n)</td><td>Sort, heap, binary search, hash map, window, two pointers</td></tr>
+      <tr><td>n up to 10<sup>9</sup>, or &quot;in O(log n)&quot;</td><td>O(log n)</td><td>Binary search (on the array or the answer), math</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. The interview playbook</h2>
+  <p>A typical coding round is 45 minutes with about 35 for the problem. Interviewers score four things: <b>communication</b> (can I follow your thinking?), <b>problem solving</b> (did you find a good approach, and could you take hints?), <b>code</b> (correct, readable), and <b>testing</b> (did you check your own work?). A silent candidate who writes the optimal answer often scores lower than one who talks through a brute force, finds the bottleneck, and gets to the optimal answer with a hint.</p>
+  <table class="tbl">
+    <thead><tr><th>Minutes</th><th>Do</th><th>Say (examples)</th></tr></thead>
+    <tbody>
+      <tr><td>0–5</td><td><b>Clarify.</b> Restate, run one example, ask about edge cases and size.</td><td>&quot;So I return the indexes, not the values? Can the array be empty? Can numbers be negative? Roughly how big is n?&quot;</td></tr>
+      <tr><td>5–10</td><td><b>Brute force out loud</b>, with its Big-O. Don&#39;t code it.</td><td>&quot;The simplest thing is to check every pair, which is O(n squared). That works but it&#39;s slow for n = 100,000.&quot;</td></tr>
+      <tr><td>10–15</td><td><b>Find the bottleneck, name the pattern</b>, state the new Big-O. Get a nod before coding.</td><td>&quot;The inner loop is just searching for target minus x. A hash map makes that a single lookup, so O(n) time and O(n) space. Shall I code that?&quot;</td></tr>
+      <tr><td>15–30</td><td><b>Code</b> with clear names, narrating. Write helpers you can explain.</td><td>&quot;I&#39;ll store each value&#39;s index as I go, and check for the complement before inserting, so I don&#39;t pair a number with itself.&quot;</td></tr>
+      <tr><td>30–38</td><td><b>Test</b>: trace your example line by line, then edge cases.</td><td>&quot;Let me run [2, 7, 11, 15] with target 9... i = 0, map is empty, store 2 → 0. i = 1, need 2, found at 0, return [0, 1]. Now empty input, a single element, duplicates like [3, 3].&quot;</td></tr>
+      <tr><td>38–45</td><td><b>Complexity and follow-ups.</b></td><td>&quot;Final: O(n) time, O(n) space. If the input were sorted I could use two pointers for O(1) space.&quot;</td></tr>
+    </tbody>
+  </table>
+  <div class="trace">
+    <p><b>Trace: talking through &quot;top 2 most frequent books borrowed&quot; in the first 12 minutes</b></p>
+    <ol>
+      <li><b>Clarify.</b> Input: <code>[&quot;Holes&quot;, &quot;Wonder&quot;, &quot;Holes&quot;, &quot;Dog Man&quot;, &quot;Wonder&quot;, &quot;Holes&quot;]</code>, k = 2. Expected: [&quot;Holes&quot; (3), &quot;Wonder&quot; (2)]. Ask: ties? (any order is fine). n? (up to 10<sup>5</sup> borrow records).</li>
+      <li><b>Brute force.</b> For each distinct title, count it by scanning the whole list: O(n × m) for m distinct titles. Then sort. &quot;That re-scans the list for every title.&quot;</li>
+      <li><b>Bottleneck.</b> &quot;The repeated work is counting. One pass with a Map gives every count: {Holes: 3, Wonder: 2, Dog Man: 1}.&quot; Now O(n).</li>
+      <li><b>Pattern for top-k.</b> &quot;Words: k most frequent. Sorting the m counts is O(m log m); a min-heap of size 2 is O(m log k). With m small, sorting is fine and simpler; I&#39;ll mention the heap as the follow-up.&quot;</li>
+      <li><b>State the plan and complexity before coding.</b> &quot;Count with a Map, sort entries by count descending, take the first k. O(n + m log m) time, O(m) space.&quot; The interviewer nods; you start coding at minute 12 with a clear plan.</li>
+    </ol>
+  </div>
+  <h3>When you&#39;re stuck</h3>
+  <ul>
+    <li><b>Do a tiny example by hand</b> and watch what you do in your head. You will often notice yourself &quot;remembering&quot; something (that&#39;s a hash map) or &quot;looking at the last two&quot; (that&#39;s DP).</li>
+    <li><b>Ask the bottleneck question out loud</b>: &quot;What is my inner loop recomputing or searching for?&quot;</li>
+    <li><b>Go down the cheat sheet</b>: Would sorting help? Is it contiguous? Is it really a graph? Is there a choice at each step?</li>
+    <li><b>Take hints gracefully.</b> A hint is not a failure; ignoring one is. Repeat it back: &quot;So if I keep the counts in a map, then...&quot;</li>
+    <li><b>Ship the brute force</b> if time is running out, clearly labelled, and explain how you would optimise it. Working code beats a half-written optimal answer.</li>
+  </ul>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Pattern-matching on one word and diving in. &quot;Subarray&quot; does not always mean sliding window: if the numbers can be negative, a window can&#39;t tell when to shrink, and you need prefix sums with a hash map. &quot;Sorted&quot; does not always mean binary search: a pair sum on sorted data is two pointers. Before coding, say your pattern <i>and why the input allows it</i> (&quot;all values are positive, so growing the window only increases the sum&quot;). The second classic: coding for 20 minutes without stating the complexity, then discovering it&#39;s O(n²) when n is 10<sup>5</sup>.</p></div>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>The sentence pattern that works for every problem: &quot;The brute force is <i>X</i>, which is <i>O(...)</i> because it repeats <i>Y</i>. The clue here is <i>[trigger: sorted / contiguous / k most / number of ways]</i>, which suggests <i>[pattern]</i>; that removes <i>Y</i> and gets us to <i>O(...)</i> time and <i>O(...)</i> space. Let me walk an example through it before I code.&quot;</p></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Recognition uses three clues: the shape of the input, the trigger words in the question, and the size limits.</li>
+    <li>If nothing jumps out: brute force, name the repeated work, pick the pattern that removes it. The default fix is a hash map.</li>
+    <li>Watch for the twists that flip a pattern: negatives break sliding windows, unsorted input breaks two pointers, &quot;list all&quot; versus &quot;count&quot; separates backtracking from DP.</li>
+    <li>The cheat sheet is 13 patterns: hash map, prefix sums, two pointers, sliding window, stack, binary search, sort + greedy, linked lists, trees, heaps, graphs, backtracking, DP.</li>
+    <li>In the interview: clarify (5 min) → brute force out loud → bottleneck and pattern, with Big-O, before coding → code while narrating → trace an example and edge cases → final complexity and follow-ups.</li>
+    <li>Redo the drill rounds you scored lowest on a day later; recognition is a speed skill and improves with spaced repetition.</li>
+  </ul>
+</template>

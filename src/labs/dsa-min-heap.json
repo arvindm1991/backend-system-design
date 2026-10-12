@@ -1,0 +1,48 @@
+{
+  "id": "dsa-min-heap",
+  "title": "Build a Min-Heap",
+  "minutes": 30,
+  "prompt": "<p>JavaScript has no built-in priority queue, so build the one you'll reuse. A <b>min-heap</b> stores items in an array laid out as a tree (children of index <code>i</code> are at <code>2i + 1</code> and <code>2i + 2</code>; the parent is at <code>Math.floor((i - 1) / 2)</code>). The smallest item is always at index 0.</p>\n<p>API:</p>\n<ul>\n<li><code>new MinHeap(compare)</code>: <code>compare(a, b)</code> returns a negative number when <code>a</code> should come out first. Default <code>(a, b) =&gt; a - b</code>.</li>\n<li><code>push(value)</code>: add, then <b>bubble up</b> while smaller than the parent. O(log n).</li>\n<li><code>pop()</code>: remove and return the smallest (<code>undefined</code> if empty). Move the last item to the top, then <b>sink down</b> while larger than the smaller child. O(log n).</li>\n<li><code>peek()</code>: the smallest without removing it (<code>undefined</code> if empty). O(1).</li>\n<li><code>size()</code>: number of items.</li>\n</ul>\n<p>Example: push 5, 1, 3; pop returns 1, then 3, then 5.</p>",
+  "starter": "class MinHeap {\n  constructor(compare = (a, b) => a - b) {\n    this.items = [];\n    this.compare = compare;\n  }\n\n  size() {\n    return this.items.length;\n  }\n\n  peek() {\n    return this.items[0];\n  }\n\n  push(value) {\n    this.items.push(value);\n    // TODO: bubble the new item up while it is smaller than its parent.\n  }\n\n  pop() {\n    // TODO: take items[0], move the last item to the top, sink it down.\n    return this.items.shift();\n  }\n}",
+  "solution": "// compare(a, b) < 0 means a should come out first. Default: smallest number first.\n// For a max-heap pass (a, b) => b - a. For pairs pass e.g. (a, b) => a[0] - b[0].\nclass MinHeap {\n  constructor(compare = (a, b) => a - b) {\n    this.items = [];\n    this.compare = compare;\n  }\n\n  size() {\n    return this.items.length;\n  }\n\n  peek() {\n    return this.items[0];\n  }\n\n  push(value) {\n    this.items.push(value);\n    let index = this.items.length - 1;\n    while (index > 0) {\n      const parent = Math.floor((index - 1) / 2);\n      if (this.compare(this.items[index], this.items[parent]) >= 0) break;\n      [this.items[index], this.items[parent]] = [this.items[parent], this.items[index]];\n      index = parent;\n    }\n  }\n\n  pop() {\n    if (this.items.length === 0) return undefined;\n    const top = this.items[0];\n    const last = this.items.pop();\n    if (this.items.length > 0) {\n      this.items[0] = last;\n      let index = 0;\n      const n = this.items.length;\n      while (true) {\n        const left = 2 * index + 1;\n        const right = 2 * index + 2;\n        let smallest = index;\n        if (left < n && this.compare(this.items[left], this.items[smallest]) < 0) smallest = left;\n        if (right < n && this.compare(this.items[right], this.items[smallest]) < 0) smallest = right;\n        if (smallest === index) break;\n        [this.items[index], this.items[smallest]] = [this.items[smallest], this.items[index]];\n        index = smallest;\n      }\n    }\n    return top;\n  }\n}",
+  "tests": [
+    {
+      "name": "pops in ascending order",
+      "code": "const heap = new MinHeap();\n[5, 1, 3].forEach((x) => heap.push(x));\nassertEqual([heap.pop(), heap.pop(), heap.pop()], [1, 3, 5]);"
+    },
+    {
+      "name": "peek shows the smallest without removing it",
+      "code": "const heap = new MinHeap();\nheap.push(4); heap.push(2); heap.push(9);\nassertEqual(heap.peek(), 2);\nassertEqual(heap.size(), 3);\nheap.push(1);\nassertEqual(heap.peek(), 1, 'a newly pushed smallest item must bubble up to the top');"
+    },
+    {
+      "name": "empty heap",
+      "code": "const heap = new MinHeap();\nassertEqual(heap.size(), 0);\nassertEqual(heap.peek(), undefined);\nassertEqual(heap.pop(), undefined);\nheap.push(7);\nassertEqual(heap.pop(), 7);\nassertEqual(heap.pop(), undefined);\nassertEqual(heap.size(), 0);"
+    },
+    {
+      "name": "sorts a scrambled array (heap sort) with duplicates and negatives",
+      "code": "const input = [9, -2, 7, 7, 0, 15, -8, 3, 3, 11, -2, 4];\nconst heap = new MinHeap();\nfor (const x of input) heap.push(x);\nconst out = [];\nwhile (heap.size() > 0) out.push(heap.pop());\nassertEqual(out, [-8, -2, -2, 0, 3, 3, 4, 7, 7, 9, 11, 15]);"
+    },
+    {
+      "name": "interleaved pushes and pops",
+      "code": "const heap = new MinHeap();\nheap.push(10); heap.push(4); heap.push(8);\nassertEqual(heap.pop(), 4);\nheap.push(1); heap.push(12); heap.push(6);\nassertEqual(heap.pop(), 1);\nassertEqual(heap.pop(), 6);\nassertEqual(heap.pop(), 8);\nassertEqual(heap.size(), 2);"
+    },
+    {
+      "name": "custom comparator: max-heap",
+      "code": "const heap = new MinHeap((a, b) => b - a);\n[3, 10, 1, 7].forEach((x) => heap.push(x));\nassertEqual([heap.pop(), heap.pop(), heap.pop(), heap.pop()], [10, 7, 3, 1]);"
+    },
+    {
+      "name": "custom comparator: [priority, name] pairs",
+      "code": "const heap = new MinHeap((a, b) => a[0] - b[0]);\nheap.push([3, 'grade essays']); heap.push([1, 'fix login']); heap.push([2, 'email parents']);\nassertEqual(heap.pop(), [1, 'fix login']);\nassertEqual(heap.peek(), [2, 'email parents']);"
+    },
+    {
+      "name": "keeps the array a valid heap (no full re-sort)",
+      "code": "const heap = new MinHeap();\n[8, 6, 7, 5, 3, 0, 9].forEach((x) => heap.push(x));\nheap.pop();\nconst a = heap.items;\nfor (let i = 1; i < a.length; i++) {\n  assert(a[Math.floor((i - 1) / 2)] <= a[i], 'parent at ' + Math.floor((i - 1) / 2) + ' is bigger than child at ' + i + ': ' + JSON.stringify(a));\n}\nassertEqual(a.length, 6);"
+    }
+  ],
+  "hints": [
+    "<p>The heap rule is only \"every parent is <code>&lt;=</code> its children\". Siblings can be in any order. After a push or pop, only <b>one path</b> from top to bottom can be broken, so you only fix that path: O(log n).</p>",
+    "<p><b>push</b>: start at the last index; while it has a parent and <code>compare(item, parent) &lt; 0</code>, swap them and move up. <b>pop</b>: save <code>items[0]</code>; pop the last item; if anything is left, put it at index 0 and sink: swap with the smaller child while that child is smaller.</p>",
+    "<p>Sink-down shape:</p><pre><code>while (true) {\n  const left = 2 * index + 1, right = 2 * index + 2;\n  let smallest = index;\n  if (left &lt; n &amp;&amp; this.compare(this.items[left], this.items[smallest]) &lt; 0) smallest = left;\n  if (right &lt; n &amp;&amp; this.compare(this.items[right], this.items[smallest]) &lt; 0) smallest = right;\n  if (smallest === index) break;\n  [this.items[index], this.items[smallest]] = [this.items[smallest], this.items[index]];\n  index = smallest;\n}</code></pre>"
+  ],
+  "explain": "<p><b>push and pop are O(log n)</b> because a heap of n items is a complete tree about log₂ n levels tall, and each operation walks one path. <b>peek is O(1)</b>. <b>Space O(n)</b>. You now own the class the next two labs (and Dijkstra, schedulers and \"merge k sorted lists\") build on.</p>\n<p><b>Say it:</b> \"JavaScript has no heap, so I'll use a small array-backed binary heap: push bubbles up, pop moves the last item to the root and sinks it. Both O(log n).\" In an interview it's usually fine to say \"assume a MinHeap class with push, pop, peek\" and write it only if asked.</p>"
+}

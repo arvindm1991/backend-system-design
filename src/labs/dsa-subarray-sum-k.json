@@ -1,0 +1,44 @@
+{
+  "id": "dsa-subarray-sum-k",
+  "title": "Subarray Sum Equals K",
+  "minutes": 25,
+  "prompt": "<p>Given an array of integers <code>nums</code> and an integer <code>k</code>, return how many <b>contiguous</b> subarrays (non-empty stretches of consecutive elements) add up to exactly <code>k</code>.</p>\n<p>Write <code>subarraySum(nums, k)</code>.</p>\n<ul>\n<li><code>subarraySum([20, 35, 0, 15, 40], 55)</code> → <code>4</code> ([20,35], [20,35,0], [0,15,40], [15,40])</li>\n<li><code>subarraySum([1, 1, 1], 2)</code> → <code>2</code></li>\n<li><code>subarraySum([1, -1, 0], 0)</code> → <code>3</code> ([1,-1], [1,-1,0], [0])</li>\n</ul>\n<p>Constraints: <code>0 &lt;= nums.length &lt;= 2 * 10^4</code>, values may be <b>negative</b>, so a sliding window will not work. The O(n²) &quot;every start, every end&quot; loop is too slow; aim for <b>O(n)</b>.</p>",
+  "starter": "function subarraySum(nums, k) {\n  // Brute force: for every start, extend the end and keep a running sum. O(n^2).\n  // Goal: one pass. A subarray sum is (running total now) - (running total earlier).\n  // How many earlier running totals equal (total now - k)?\n  // TODO\n  return 0;\n}",
+  "solution": "function subarraySum(nums, k) {\n  const seenTotals = new Map([[0, 1]]); // running total -> times seen; 0 = the empty prefix\n  let runningTotal = 0;\n  let count = 0;\n  for (const value of nums) {\n    runningTotal += value;\n    const needed = runningTotal - k; // an earlier total that would leave exactly k\n    count += seenTotals.get(needed) || 0;\n    seenTotals.set(runningTotal, (seenTotals.get(runningTotal) || 0) + 1);\n  }\n  return count;\n}",
+  "tests": [
+    {
+      "name": "the reading-minutes example",
+      "code": "assertEqual(subarraySum([20, 35, 0, 15, 40], 55), 4);"
+    },
+    {
+      "name": "overlapping subarrays",
+      "code": "assertEqual(subarraySum([1, 1, 1], 2), 2);\nassertEqual(subarraySum([1, 2, 3], 3), 2);"
+    },
+    {
+      "name": "negative numbers and zero (a sliding window would fail here)",
+      "code": "assertEqual(subarraySum([1, -1, 0], 0), 3);\nassertEqual(subarraySum([3, 4, -7, 1, 3, 3, 1, -4], 7), 4);"
+    },
+    {
+      "name": "subarrays starting at index 0 are counted",
+      "code": "assertEqual(subarraySum([5, 2], 5), 1);\nassertEqual(subarraySum([5, 2], 7), 1);"
+    },
+    {
+      "name": "empty input and a single element",
+      "code": "assertEqual(subarraySum([], 0), 0, 'no non-empty subarrays');\nassertEqual(subarraySum([4], 4), 1);\nassertEqual(subarraySum([4], 3), 0);"
+    },
+    {
+      "name": "all zeros with k = 0 counts every subarray",
+      "code": "assertEqual(subarraySum([0, 0, 0], 0), 6);"
+    },
+    {
+      "name": "agrees with brute force on a mixed array",
+      "code": "const nums = [];\nfor (let i = 0; i < 120; i++) nums.push(((i * 13) % 9) - 4);\nlet expected = 0;\nfor (let s = 0; s < nums.length; s++) { let sum = 0; for (let e = s; e < nums.length; e++) { sum += nums[e]; if (sum === 3) expected++; } }\nassertEqual(subarraySum(nums, 3), expected);"
+    }
+  ],
+  "hints": [
+    "<p>Trigger: <b>count contiguous subarrays with sum k</b>, and the numbers can be <b>negative</b>. That points to prefix sums plus a hash map, not a sliding window.</p>",
+    "<p>Idea: sum(start..end) = total after end − total before start. You want that to equal k, so at each position count how many earlier running totals equal <code>runningTotal - k</code>. Store counts of running totals in a <code>Map</code>, starting with <code>{0: 1}</code> for the empty prefix.</p>",
+    "<p>Code shape: <code>const seen = new Map([[0, 1]]); let total = 0, count = 0; for (const x of nums) { total += x; count += seen.get(total - k) || 0; seen.set(total, (seen.get(total) || 0) + 1); }</code>. Look up <i>before</i> you record the current total.</p>"
+  ],
+  "explain": "<p><b>Time O(n), space O(n).</b> One pass; each step does one map lookup and one map update. The brute force was O(n²) because, for every end position, it effectively re-scanned every start; the map remembers every earlier running total so that scan becomes one lookup.</p>\n<p>This is Two Sum played on running totals: &quot;find an earlier value equal to current − k&quot;. The same shape solves &quot;subarray sum divisible by k&quot; (store totals mod k) and &quot;longest subarray with sum k&quot; (store the first index of each total instead of a count).</p>\n<p><b>How to say it:</b> &quot;A subarray sum is a difference of two prefix sums. I scan once, and for each running total I add how many times total − k appeared before, using a hash map seeded with {0: 1}. O(n) time and space, and it handles negatives, which a sliding window can&#39;t.&quot;</p>"
+}
