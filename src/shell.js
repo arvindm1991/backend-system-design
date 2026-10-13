@@ -999,6 +999,25 @@ const App = (() => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
 
+  function goTo(id) {
+    if (!byId[id]) return;
+    if (id === current) { window.scrollTo(0, 0); return; }
+    // Record history first, so show()'s replaceState doesn't create a duplicate entry.
+    try { history.pushState(null, '', '#' + id); } catch (err) { /* sandboxed: navigation still works */ }
+    show(id);
+  }
+  // Turn every in-page link to a lesson into a tappable element without an href.
+  function rewireLinks(root) {
+    root.querySelectorAll('a[href^="#"]').forEach((a) => {
+      const id = decodeURIComponent(a.getAttribute('href').slice(1));
+      if (!byId[id]) return;
+      a.dataset.go = id;
+      a.removeAttribute('href');
+      a.setAttribute('role', 'link');
+      a.setAttribute('tabindex', '0');
+    });
+  }
+
   function init() {
     document.addEventListener('click', (e) => {
       if (e.target.closest('.side-link')) closeSide();
@@ -1022,18 +1041,13 @@ const App = (() => {
         if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
       }
-      // Route lesson links directly. Don't depend on the browser firing "hashchange": some mobile
-      // webviews and sandboxed frames (e.g. in-app artifact viewers) never fire it, so links did nothing.
-      const a = e.target.closest('a[href^="#"]');
-      if (a && !e.defaultPrevented && !e.metaKey && !e.ctrlKey) {
-        const id = decodeURIComponent(a.getAttribute('href').slice(1));
-        if (byId[id]) {
-          e.preventDefault();
-          // Record history first, so show()'s replaceState doesn't create a duplicate entry.
-          if (id !== current) { try { history.pushState(null, '', '#' + id); } catch (err) { /* sandboxed: navigation still works */ } }
-          if (id !== current) show(id);
-          else window.scrollTo(0, 0);
-        }
+      // Lesson navigation uses [data-go] elements with no href (see rewireLinks). Some in-app viewers
+      // (e.g. the Claude mobile app's artifact frame) swallow taps on <a href="#...">, so real links never fired.
+      const go = e.target.closest('[data-go]');
+      if (go && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        goTo(go.dataset.go);
+        return;
       }
       if (e.target.closest('#resetAll')) {
         if (e.target.dataset.armed) {
@@ -1046,6 +1060,14 @@ const App = (() => {
         }
       }
     });
+    document.addEventListener('keydown', (e) => {
+      const go = e.target.closest && e.target.closest('[data-go]');
+      if (go && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); goTo(go.dataset.go); }
+    });
+    rewireLinks(document);
+    new MutationObserver((muts) => {
+      muts.forEach((m) => { m.addedNodes.forEach((n) => { if (n.nodeType === 1) rewireLinks(n.parentNode || n); }); });
+    }).observe(document.body, { childList: true, subtree: true });
     window.addEventListener('popstate', () => {
       const id = decodeURIComponent(location.hash.slice(1));
       if (byId[id] && id !== current) show(id);
