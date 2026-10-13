@@ -1022,6 +1022,19 @@ const App = (() => {
         if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
       }
+      // Route lesson links directly. Don't depend on the browser firing "hashchange": some mobile
+      // webviews and sandboxed frames (e.g. in-app artifact viewers) never fire it, so links did nothing.
+      const a = e.target.closest('a[href^="#"]');
+      if (a && !e.defaultPrevented && !e.metaKey && !e.ctrlKey) {
+        const id = decodeURIComponent(a.getAttribute('href').slice(1));
+        if (byId[id]) {
+          e.preventDefault();
+          // Record history first, so show()'s replaceState doesn't create a duplicate entry.
+          if (id !== current) { try { history.pushState(null, '', '#' + id); } catch (err) { /* sandboxed: navigation still works */ } }
+          if (id !== current) show(id);
+          else window.scrollTo(0, 0);
+        }
+      }
       if (e.target.closest('#resetAll')) {
         if (e.target.dataset.armed) {
           Store.clearAll();
@@ -1032,6 +1045,10 @@ const App = (() => {
           e.target.textContent = 'Click again to erase all progress';
         }
       }
+    });
+    window.addEventListener('popstate', () => {
+      const id = decodeURIComponent(location.hash.slice(1));
+      if (byId[id] && id !== current) show(id);
     });
     window.addEventListener('hashchange', () => {
       const id = decodeURIComponent(location.hash.slice(1));
