@@ -1,0 +1,376 @@
+{
+  "web": [
+    {
+      "id": "AlkDbnbv7dk",
+      "title": "What happens when you type a URL into your browser?",
+      "channel": "ByteByteGo",
+      "why": "Follows one request from typed URL through DNS, TCP, TLS and HTTP in about five minutes."
+    },
+    {
+      "id": "UVR9lhUGAyU",
+      "title": "DNS Explained in 100 Seconds",
+      "channel": "Fireship",
+      "why": "Shows how a domain name gets turned into a server's IP address, step by step."
+    },
+    {
+      "id": "j9QmMEWmcfo",
+      "title": "SSL, TLS, HTTPS Explained",
+      "channel": "ByteByteGo",
+      "why": "Explains the TLS handshake that sets up the encrypted channel before any HTTP is sent."
+    }
+  ],
+  "api": [
+    {
+      "id": "_gQaygjm_hg",
+      "title": "Good APIs Vs Bad APIs: 7 Tips for API Design",
+      "channel": "ByteByteGo",
+      "why": "Covers resource naming, pagination, versioning and idempotency, the core API design habits."
+    },
+    {
+      "id": "4vLxWqE94l4",
+      "title": "Top 6 Most Popular API Architecture Styles",
+      "channel": "ByteByteGo",
+      "why": "Compares REST, GraphQL, gRPC, webhooks and more so you know where REST fits."
+    }
+  ],
+  "sql": [
+    {
+      "id": "-qNSXK7s7_w",
+      "title": "Database Indexing Explained (with PostgreSQL)",
+      "channel": "Hussein Nasser",
+      "why": "Shows with real queries why an index turns a full table scan into a fast lookup."
+    },
+    {
+      "id": "pomxJOFVcQs",
+      "title": "Relational Database ACID Transactions (Explained by Example)",
+      "channel": "Hussein Nasser",
+      "why": "Walks through atomicity, isolation and durability with concrete transaction examples (long)."
+    }
+  ],
+  "auth": [
+    {
+      "id": "fyTxwIa-1U0",
+      "title": "Session Vs JWT: The Differences You May Not Know!",
+      "channel": "ByteByteGo",
+      "why": "Contrasts server-side sessions with stateless JWTs and the trade-offs of each."
+    },
+    {
+      "id": "ZV5yTm4pT8g",
+      "title": "OAuth 2 Explained In Simple Terms",
+      "channel": "ByteByteGo",
+      "why": "Explains the OAuth flow behind \"Sign in with Google\" in plain diagrams."
+    },
+    {
+      "id": "8ZtInClXe1Q",
+      "title": "How NOT to Store Passwords!",
+      "channel": "Computerphile",
+      "why": "Shows why plain or simply hashed passwords leak, and why salted slow hashes are the fix."
+    }
+  ],
+  "scaling": [
+    {
+      "id": "xpDnVSmNFX0",
+      "title": "System Design BASICS: Horizontal vs. Vertical Scaling",
+      "channel": "Gaurav Sen",
+      "why": "Explains scaling up versus scaling out, and why most systems end up going out."
+    },
+    {
+      "id": "K0Ta65OqQkY",
+      "title": "What is LOAD BALANCING?",
+      "channel": "Gaurav Sen",
+      "why": "Shows how a load balancer spreads requests across stateless app servers."
+    }
+  ],
+  "caching": [
+    {
+      "id": "dGAgxozNWFE",
+      "title": "Cache Systems Every Developer Should Know",
+      "channel": "ByteByteGo",
+      "why": "Tours where caches live, from the browser and CDN down to the database."
+    },
+    {
+      "id": "G1rOthIU-uo",
+      "title": "Redis in 100 Seconds",
+      "channel": "Fireship",
+      "why": "Introduces Redis, the in-memory store most app-level caches are built on."
+    }
+  ],
+  "queues": [
+    {
+      "id": "oUJbuFMyBDk",
+      "title": "What is a MESSAGE QUEUE and Where is it used?",
+      "channel": "Gaurav Sen",
+      "why": "Explains why you hand slow work to a queue and let background workers process it."
+    },
+    {
+      "id": "uvb00oaa3k8",
+      "title": "Kafka in 100 Seconds",
+      "channel": "Fireship",
+      "why": "Shows Kafka's log-based model: producers, topics, partitions and consumers."
+    }
+  ],
+  "ratelimit": [
+    {
+      "id": "mhUQe4BKZXs",
+      "title": "Rate Limiting system design | TOKEN BUCKET, Leaky Bucket, Sliding Logs",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Walks through fixed window, sliding log and token bucket algorithms with diagrams."
+    }
+  ],
+  "realtime": [
+    {
+      "id": "1BfCnjr_Vjg",
+      "title": "WebSockets in 100 Seconds & Beyond with Socket.io",
+      "channel": "Fireship",
+      "why": "Shows how a WebSocket keeps a two-way connection open instead of request and response."
+    },
+    {
+      "id": "4HlNv1qpZFY",
+      "title": "Server-Sent Events Crash Course",
+      "channel": "Hussein Nasser",
+      "why": "Explains Server-Sent Events, the simple one-way stream used for LLM token streaming."
+    }
+  ],
+  "storage": [
+    {
+      "id": "hdxdhCpgYo8",
+      "title": "What is Database Sharding?",
+      "channel": "Be A Better Dev",
+      "why": "Explains what sharding is, how a shard key splits data, and the pain it brings."
+    },
+    {
+      "id": "UF9Iqmg94tk",
+      "title": "Consistent Hashing | Algorithms You Should Know #1",
+      "channel": "ByteByteGo",
+      "why": "Shows how consistent hashing moves only a few keys when servers are added or removed."
+    },
+    {
+      "id": "d1fXBLqnFvc",
+      "title": "Database Sharding Crash Course (with Postgres examples)",
+      "channel": "Hussein Nasser",
+      "why": "Optional deep dive: sharding a real Postgres database end to end (about an hour)."
+    }
+  ],
+  "distributed": [
+    {
+      "id": "BHqjEjzAicA",
+      "title": "CAP Theorem Simplified",
+      "channel": "ByteByteGo",
+      "why": "Explains what CAP actually says: during a partition, choose consistency or availability."
+    },
+    {
+      "id": "UEAMfLPZZhE",
+      "title": "Distributed Systems 1.1: Introduction",
+      "channel": "Martin Kleppmann",
+      "why": "Kleppmann's lecture on what makes a system distributed and why that is hard."
+    }
+  ],
+  "consensus": [
+    {
+      "id": "OKHIdpOAxto",
+      "title": "Distributed Systems 3.3: Causality and happens-before",
+      "channel": "Martin Kleppmann",
+      "why": "Shows why wall clocks can't order events and how happens-before and logical clocks do."
+    },
+    {
+      "id": "uXEYuDwm7e4",
+      "title": "Distributed Systems 6.2: Raft",
+      "channel": "Martin Kleppmann",
+      "why": "Walks through Raft: leader election, terms and log replication."
+    },
+    {
+      "id": "uNxl3BFcKSA",
+      "title": "Distributed Systems 5.2: Quorums",
+      "channel": "Martin Kleppmann",
+      "why": "Explains quorums and why R + W > N guarantees reads see the latest write."
+    }
+  ],
+  "reliability": [
+    {
+      "id": "ADHcBxEXvFA",
+      "title": "Circuit Breaker Pattern - Fault Tolerant Microservices",
+      "channel": "Defog Tech",
+      "why": "Shows how a circuit breaker stops calls to a failing dependency and recovers later."
+    },
+    {
+      "id": "nH4qjmP2KEE",
+      "title": "Top 7 Most-Used Distributed System Patterns",
+      "channel": "ByteByteGo",
+      "why": "Quick tour of common resilience patterns, including retries and circuit breakers."
+    }
+  ],
+  "events": [
+    {
+      "id": "gOuAqRaDdHA",
+      "title": "Event-Driven Architecture: Explained in 7 Minutes!",
+      "channel": "Alex Hyett",
+      "why": "Explains events versus commands and how services react to events, in seven minutes."
+    },
+    {
+      "id": "0HgHnaMfl-I",
+      "title": "Transactional Outbox Pattern",
+      "channel": "CockroachDB",
+      "why": "Shows the dual-write problem and how the transactional outbox fixes it."
+    }
+  ],
+  "ai-backend": [
+    {
+      "id": "4HlNv1qpZFY",
+      "title": "Server-Sent Events Crash Course",
+      "channel": "Hussein Nasser",
+      "why": "Explains Server-Sent Events, the mechanism used to stream model tokens to the browser."
+    },
+    {
+      "id": "oUJbuFMyBDk",
+      "title": "What is a MESSAGE QUEUE and Where is it used?",
+      "channel": "Gaurav Sen",
+      "why": "Shows why long-running work belongs on a queue rather than inside the request."
+    }
+  ],
+  "sd-framework": [
+    {
+      "id": "i7twT3x5yv8",
+      "title": "System Design Interview: A Step-By-Step Guide",
+      "channel": "ByteByteGo",
+      "why": "Lays out the step-by-step structure of a system design interview."
+    },
+    {
+      "id": "Ru54dxzCyD0",
+      "title": "How to Prepare for System Design Interviews w/ Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "Hello Interview on what interviewers look for and how to prepare."
+    }
+  ],
+  "sd-shortener": [
+    {
+      "id": "qSJAvd5Mgio",
+      "title": "Design a URL Shortener (Bitly) - System Design Interview",
+      "channel": "NeetCodeIO",
+      "why": "Full URL shortener walkthrough: short code generation, redirects and caching."
+    }
+  ],
+  "sd-feed": [
+    {
+      "id": "Qj4-GruzyDU",
+      "title": "Design FB News Feed System Design Interview w/ ex: Meta Senior Manager",
+      "channel": "Hello Interview",
+      "why": "Full news feed walkthrough, including fan-out on write versus read and the feed cache."
+    }
+  ],
+  "sd-chat": [
+    {
+      "id": "vvhC64hQZMk",
+      "title": "WHATSAPP System Design: Chat Messaging Systems for Interviews",
+      "channel": "Gaurav Sen",
+      "why": "Explains chat delivery, connections, and message ordering for a WhatsApp-style app."
+    },
+    {
+      "id": "cr6p0n0N-VA",
+      "title": "Design Whatsapp: System Design Interview w/ a Ex-Meta Senior Manager",
+      "channel": "Hello Interview",
+      "why": "Full mock interview for WhatsApp covering offline delivery, multi-device and presence."
+    }
+  ],
+  "sd-notifications": [
+    {
+      "id": "CUwt9_l0DOg",
+      "title": "Notification Service System Design Interview Question to handle Billions of users & Notifications",
+      "channel": "codeKarle",
+      "why": "Walks through a notification service: queues per channel, preferences, retries."
+    }
+  ],
+  "sd-ratelimiter": [
+    {
+      "id": "mhUQe4BKZXs",
+      "title": "Rate Limiting system design | TOKEN BUCKET, Leaky Bucket, Sliding Logs",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Compares the rate limiting algorithms you will choose between in the design."
+    },
+    {
+      "id": "MIJFyUPG4Z4",
+      "title": "Design a Distributed Rate Limiter w/ a Ex-Meta Staff Engineer: System Design Breakdown",
+      "channel": "Hello Interview",
+      "why": "Full distributed rate limiter walkthrough: Redis counters, concurrency and failure."
+    }
+  ],
+  "sd-upload": [
+    {
+      "id": "_UZ1ngy-kOI",
+      "title": "Design Dropbox or Google Drive w/ a Ex-Meta Staff Engineer System Design Interview",
+      "channel": "Hello Interview",
+      "why": "Full walkthrough of Dropbox/Drive: presigned URLs, chunked uploads and sync."
+    }
+  ],
+  "sd-autocomplete": [
+    {
+      "id": "xrYTjaK5QVM",
+      "title": "Amazon interview question: System design / Architecture for auto suggestions | type ahead",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Explains the trie-based design behind type-ahead suggestions and how it is served."
+    },
+    {
+      "id": "1moO3rn42uk",
+      "title": "Typeahead Suggestion Design Deep Dive with Google SWE! | Systems Design Interview Question 6",
+      "channel": "Jordan has no life",
+      "why": "Deeper dive into typeahead: building the index, ranking and caching at scale."
+    }
+  ],
+  "sd-llm-chat": [
+    {
+      "id": "4HlNv1qpZFY",
+      "title": "Server-Sent Events Crash Course",
+      "channel": "Hussein Nasser",
+      "why": "Explains Server-Sent Events, the streaming channel a chat UI uses for tokens."
+    },
+    {
+      "id": "I9-PUPYZyiw",
+      "title": "Design ChatGPT - System Design Mock Interview (with eBay EM)",
+      "channel": "Aced (formerly Exponent)",
+      "why": "Mock interview designing ChatGPT: streaming, conversation storage and GPU capacity."
+    }
+  ],
+  "sd-booking": [
+    {
+      "id": "fhdPyoO6aXI",
+      "title": "System Design Interview: Design Ticketmaster w/ a Ex-Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "Full Ticketmaster walkthrough: seat holds, never double-selling, and on-sale spikes."
+    }
+  ],
+  "sd-classroom": [
+    {
+      "id": "ZV5yTm4pT8g",
+      "title": "OAuth 2 Explained In Simple Terms",
+      "channel": "ByteByteGo",
+      "why": "Explains the OAuth flow behind Google and Clever sign-in that schools rely on."
+    }
+  ],
+  "sd-collab": [
+    {
+      "id": "2auwirNBvGg",
+      "title": "Google Docs System design | Part 1| Operational transformation | differentail synchronisation",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Explains operational transformation, the technique Google Docs uses to merge edits."
+    },
+    {
+      "id": "x7drE24geUw",
+      "title": "CRDTs: The Hard Parts",
+      "channel": "Martin Kleppmann",
+      "why": "Kleppmann's talk on CRDTs, the alternative to OT, and where they get hard (long)."
+    }
+  ],
+  "sd-cheatsheet": [
+    {
+      "id": "4JSN0VpEv2I",
+      "title": "Latency Numbers Every Programmer Should Know - 1000x slow-down",
+      "channel": "Gaurav Sen",
+      "why": "Puts latency numbers on a human scale so memory, disk and network costs stick."
+    },
+    {
+      "id": "nH4qjmP2KEE",
+      "title": "Top 7 Most-Used Distributed System Patterns",
+      "channel": "ByteByteGo",
+      "why": "Quick tour of the building-block patterns the cheatsheet refers to."
+    }
+  ]
+}

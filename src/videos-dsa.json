@@ -1,0 +1,98 @@
+{
+  "dsa-approach": [
+    { "id": "g2o22C3CRfU", "title": "Big-O Notation in 100 Seconds", "channel": "Fireship",
+      "why": "The whole idea of Big-O, and why constants drop out, in under two minutes." },
+    { "id": "__vX2sjlpXU", "title": "Big-O notation in 5 minutes", "channel": "Michael Sambol",
+      "why": "Walks through O(1), O(n), O(n²) and O(log n) with tiny code examples." },
+    { "id": "BgLTDT03QtU", "title": "Big-O Notation - For Coding Interviews", "channel": "NeetCode",
+      "why": "Shows how to read time and space complexity off real interview code, with the common speeds side by side." }
+  ],
+  "dsa-hashing": [
+    { "id": "shs0KM3wKv8", "title": "Data Structures: Hash Tables", "channel": "HackerRank",
+      "why": "Explains what a hash map does under the hood: hashing a key to a bucket and handling collisions." },
+    { "id": "KLlXCFG5TnA", "title": "Two Sum - Leetcode 1 - HashMap - Python", "channel": "NeetCode",
+      "why": "The complement-lookup shape in action: one pass, storing what you've seen in a map." },
+    { "id": "vzdNOK2oB2E", "title": "Group Anagrams - Categorize Strings by Count - Leetcode 49", "channel": "NeetCode",
+      "why": "Shows the group-by-a-key shape: build a count signature per word and bucket words by it." }
+  ],
+  "dsa-prefix": [
+    { "id": "PhgtNY_-CiY", "title": "Prefix Sums - Problems, Code in C++ & Python", "channel": "Errichto Algorithms",
+      "why": "Builds the running-total array and shows how it turns any range sum into one subtraction." }
+  ],
+  "dsa-two-pointers": [
+    { "id": "rQhNcycbf8w", "title": "Two Pointers Was Hard Until I Learned These Patterns", "channel": "AlgoMonster",
+      "why": "Lays out the main two-pointer shapes (opposite ends, same direction) and when each one applies." }
+  ],
+  "dsa-sliding-window": [
+    { "id": "1pkOgXD63yU", "title": "Sliding Window: Best Time to Buy and Sell Stock - Leetcode 121 - Python", "channel": "NeetCode",
+      "why": "The simplest window: a left and right pointer moving forward through prices in one pass." },
+    { "id": "wiGpQwVHdE0", "title": "Longest Substring Without Repeating Characters - Leetcode 3 - Python", "channel": "NeetCode",
+      "why": "The expand-then-shrink window with a set, drawn step by step on the lab's exact problem." }
+  ],
+  "dsa-stack": [
+    { "id": "KcT3aVgrrpU", "title": "Stacks in 3 minutes", "channel": "Michael Sambol",
+      "why": "Push, pop and peek, last-in-first-out, animated in three minutes." },
+    { "id": "cTBiBSnjO3c", "title": "Daily Temperatures - Monotonic Stack - Leetcode 739 - Python", "channel": "NeetCode",
+      "why": "Shows the monotonic stack: keep waiting days on the stack and pop them when a warmer day arrives." }
+  ],
+  "dsa-binary-search": [
+    { "id": "MFhxShGxHWc", "title": "Binary Search Algorithm in 100 Seconds", "channel": "Fireship",
+      "why": "Why halving a sorted list each step gets you to O(log n), in under two minutes." },
+    { "id": "s4DPM8ct1pI", "title": "Binary Search - Leetcode 704 - Python", "channel": "NeetCode",
+      "why": "The basic left/right/mid loop traced on an array, including when to stop." },
+    { "id": "ER_oLmdc-nw", "title": "Capacity to Ship Packages - Leetcode 1011 - Python", "channel": "NeetCodeIO",
+      "why": "Search on the answer: binary search over possible capacities instead of over the array." }
+  ],
+  "dsa-sorting-intervals": [
+    { "id": "44H3cEC2fFM", "title": "Merge Intervals - Sorting - Leetcode 56", "channel": "NeetCode",
+      "why": "Sort by start, then merge each interval into the last one if they overlap; drawn on a number line." },
+    { "id": "FdzJmTCVyJU", "title": "Meeting Rooms II - Leetcode 253 - Python", "channel": "NeetCode",
+      "why": "Counts rooms by sorting starts and ends separately and sweeping through time." }
+  ],
+  "dsa-linked-lists": [
+    { "id": "WwfhLC16bis", "title": "Introduction to Linked Lists (Data Structures & Algorithms #5)", "channel": "CS Dojo",
+      "why": "What a node and a next pointer are, and how a linked list differs from an array." },
+    { "id": "XIdigk956u0", "title": "Merge Two Sorted Lists - Leetcode 21 - Python", "channel": "NeetCode",
+      "why": "The dummy-head trick, used to splice two sorted lists together without edge cases." },
+    { "id": "KRxeMng7fBU", "title": "Reverse Linked List - Leetcode 206 - Linked Lists (Python)", "channel": "Greg Hogg",
+      "why": "The three-pointer reversal (prev, curr, next) traced node by node." }
+  ],
+  "dsa-trees": [
+    { "id": "ngCos392W4w", "title": "5 Simple Steps for Solving Any Recursive Problem", "channel": "Reducible",
+      "why": "Explains the 'trust the function' leap that every tree recursion depends on." },
+    { "id": "6ZnyEApgFYg", "title": "Binary Tree Level Order Traversal - BFS - Leetcode 102", "channel": "NeetCode",
+      "why": "Breadth-first search with a queue, processing a tree one level at a time." }
+  ],
+  "dsa-heaps": [
+    { "id": "0wPlzMU-k00", "title": "Heaps in 3 minutes — Intro", "channel": "Michael Sambol",
+      "why": "What the heap property guarantees and how a tree fits in an array, in three minutes." },
+    { "id": "t0Cq6tVNRBA", "title": "Data Structures: Heaps", "channel": "HackerRank",
+      "why": "Traces push (bubble up) and pop (bubble down) on the array, then shows the code." }
+  ],
+  "dsa-graphs": [
+    { "id": "7fujbpJ0LB4", "title": "Depth First Search Algorithm | Graph Theory", "channel": "WilliamFiset",
+      "why": "DFS on an adjacency list, including how it counts connected components (friend groups)." },
+    { "id": "oDqjPvD54Ss", "title": "Breadth First Search Algorithm | Shortest Path | Graph Theory", "channel": "WilliamFiset",
+      "why": "BFS with a queue and why it finds the fewest steps in an unweighted graph." },
+    { "id": "eL-KzMXSXXI", "title": "Topological Sort Algorithm | Graph Theory", "channel": "WilliamFiset",
+      "why": "Ordering tasks that depend on each other, the idea behind Course Schedule." }
+  ],
+  "dsa-backtracking": [
+    { "id": "REOH22Xwdkk", "title": "Subsets - Backtracking - Leetcode 78", "channel": "NeetCode",
+      "why": "Draws the include/exclude decision tree and turns it into choose, explore, un-choose code." },
+    { "id": "GBKI9VSKdGg", "title": "Combination Sum - Backtracking - Leetcode 39 - Python", "channel": "NeetCode",
+      "why": "Shows how to avoid duplicate combinations and prune branches that overshoot the target." }
+  ],
+  "dsa-dp": [
+    { "id": "aPQY__2H3tE", "title": "5 Simple Steps for Solving Dynamic Programming Problems", "channel": "Reducible",
+      "why": "A step-by-step recipe for DP: define the subproblem, find the relation, then build the table." },
+    { "id": "H9bfqozjoqs", "title": "Coin Change - Dynamic Programming Bottom Up - Leetcode 322", "channel": "NeetCode",
+      "why": "Goes from the brute-force tree to a bottom-up table for the fewest-coins problem." }
+  ],
+  "dsa-recognition": [
+    { "id": "OTNe0eV8418", "title": "How to Solve ANY LeetCode Problem (Step-by-Step)", "channel": "Codebagel",
+      "why": "A repeatable process: simplify the problem, recognize the pattern, plan, then code and debug." },
+    { "id": "aHZW7TuY_yo", "title": "How I would learn Leetcode if I could start over", "channel": "NeetCodeIO",
+      "why": "Why to study patterns rather than individual problems, and how to move past the basics." }
+  ]
+}

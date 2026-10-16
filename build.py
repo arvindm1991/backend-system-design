@@ -177,6 +177,16 @@ def build():
     for lab_id in labs:
         if lab_id not in used:
             warn(f'labs/{lab_id}.json is not referenced by any lesson')
+    def load_videos():
+        # "Watch first" videos per lesson, from src/videos-*.json. Bad files are skipped with a warning.
+        vids = {}
+        for vp in sorted(SRC.glob('videos-*.json')):
+            try:
+                vids.update(json.loads(vp.read_text()))
+            except Exception as e:  # noqa: BLE001
+                print('WARN: skipping', vp.name, e)
+        return vids
+
     page = '\n'.join([
         (SRC / 'head.html').read_text(),
         (SRC / 'body.html').read_text(),
@@ -184,6 +194,7 @@ def build():
         '<script>',
         'const LESSONS = ' + js_json(lessons) + ';',
         'const LABS = ' + js_json(labs) + ';',
+        'const VIDEOS = ' + js_json(load_videos()) + ';',
         'const PY_HARNESS = ' + js_json((SRC / 'py_harness.py').read_text()) + ';',
         (SRC / 'shell.js').read_text(),
         '</script>',

@@ -932,6 +932,19 @@ const App = (() => {
         labs.map((x) => `<a class="chip ${passed()[x] ? 'is-ok' : ''}" href="#${l.id}" data-jump="lab-${x}" style="text-decoration:none">${passed()[x] ? '✓ ' : ''}Lab: ${esc(LABS[x].title)}</a>`).join('');
       lede.after(chips);
     }
+    // "Watch first": short videos that explain the idea visually before the dense reading.
+    const vids = (typeof VIDEOS !== 'undefined' && VIDEOS[l.id]) || [];
+    if (vids.length) {
+      const box = document.createElement('aside');
+      box.className = 'watch';
+      box.innerHTML = `<div class="watch-head"><span class="watch-label">Watch first</span><span class="watch-sub">${vids.length === 1 ? 'A short video that makes' : vids.length + ' short videos that make'} this lesson easier to read</span></div>` +
+        vids.map((v) => `<a class="watch-item" href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}" target="_blank" rel="noopener">
+          <span class="watch-play" aria-hidden="true">▶</span>
+          <span class="watch-text"><span class="watch-title">${esc(v.title)}</span><span class="watch-meta">${esc(v.channel)}</span>${v.why ? `<span class="watch-why">${esc(v.why)}</span>` : ''}</span>
+        </a>`).join('');
+      const anchor = $('.meta-row', art) || lede || $('h1', art);
+      if (anchor) anchor.after(box);
+    }
 
     enhanceCode(art);
     enhanceTables(art);
