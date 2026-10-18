@@ -1,0 +1,342 @@
+{
+  "arch-shortener": [
+    {
+      "id": "qSJAvd5Mgio",
+      "title": "Design a URL Shortener (Bitly) - System Design Interview",
+      "channel": "NeetCodeIO",
+      "why": "Short, clear URL shortener walkthrough: short-code generation, redirects and caching."
+    },
+    {
+      "id": "iUU4O1sWtJA",
+      "title": "Beginner System Design Interview: Design Bitly w/ a Ex-Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "Full interview-style Bitly design, from requirements to unique codes and scaling reads (about an hour)."
+    }
+  ],
+  "arch-feed": [
+    {
+      "id": "QmX2NPkJTKg",
+      "title": "Designing INSTAGRAM: System Design of News Feed",
+      "channel": "Gaurav Sen",
+      "why": "Explains how a news feed is assembled and the push-versus-pull trade-off, in diagrams."
+    },
+    {
+      "id": "Qj4-GruzyDU",
+      "title": "Design FB News Feed System Design Interview w/ ex: Meta Senior Manager",
+      "channel": "Hello Interview",
+      "why": "Full feed walkthrough: fan-out on write versus read, celebrity accounts and the feed cache."
+    },
+    {
+      "id": "l55jFAGsgbs",
+      "title": "QCon NYC 2012: Real Time Architectures at Twitter",
+      "channel": "Raffi Krikorian",
+      "why": "Twitter's own engineer on how they fanned tweets out into precomputed timelines (long talk)."
+    }
+  ],
+  "arch-chat": [
+    {
+      "id": "vvhC64hQZMk",
+      "title": "WHATSAPP System Design: Chat Messaging Systems for Interviews",
+      "channel": "Gaurav Sen",
+      "why": "Explains chat delivery, persistent connections, sent/delivered/read receipts and ordering."
+    },
+    {
+      "id": "cr6p0n0N-VA",
+      "title": "Design Whatsapp: System Design Interview w/ a Ex-Meta Senior Manager",
+      "channel": "Hello Interview",
+      "why": "Full mock interview: offline delivery, multiple devices, presence and connection routing."
+    },
+    {
+      "id": "lLrzoyU4BPc",
+      "title": "How Discord Stores TRILLIONS of Messages",
+      "channel": "Coding with Lewis",
+      "why": "Tells how Discord's message storage evolved from MongoDB to Cassandra to ScyllaDB."
+    }
+  ],
+  "arch-notifications": [
+    {
+      "id": "CUwt9_l0DOg",
+      "title": "Notification Service System Design Interview Question to handle Billions of users & Notifications",
+      "channel": "codeKarle",
+      "why": "Walks through a notification service: per-channel queues, user preferences, rate limits and retries."
+    },
+    {
+      "id": "IScGMqojqKE",
+      "title": "Design a Notification Service (OneSignal) | Systems Design Questions 3.0 With Ex-Google SWE",
+      "channel": "Jordan has no life",
+      "why": "Deeper dive on fan-out to many devices, delivery guarantees and deduplication."
+    }
+  ],
+  "arch-ratelimiter": [
+    {
+      "id": "mhUQe4BKZXs",
+      "title": "Rate Limiting system design | TOKEN BUCKET, Leaky Bucket, Sliding Logs",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Compares fixed window, sliding log and token bucket algorithms with diagrams."
+    },
+    {
+      "id": "MIJFyUPG4Z4",
+      "title": "Design a Distributed Rate Limiter w/ a Ex-Meta Staff Engineer: System Design Breakdown",
+      "channel": "Hello Interview",
+      "why": "Full distributed design: where the limiter sits, Redis counters, races and failure modes."
+    }
+  ],
+  "arch-upload": [
+    {
+      "id": "_UZ1ngy-kOI",
+      "title": "Design Dropbox or Google Drive w/ a Ex-Meta Staff Engineer System Design Interview",
+      "channel": "Hello Interview",
+      "why": "Full walkthrough: presigned URLs, chunked resumable uploads and syncing changes across devices."
+    },
+    {
+      "id": "PE4gwstWhmc",
+      "title": "How We've Scaled Dropbox",
+      "channel": "Stanford",
+      "why": "A Dropbox engineer on the real problems they hit scaling storage and sync (lecture-length)."
+    }
+  ],
+  "arch-autocomplete": [
+    {
+      "id": "xrYTjaK5QVM",
+      "title": "Amazon interview question: System design / Architecture for auto suggestions | type ahead",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Explains the trie with cached top suggestions per prefix, and how it is built and served."
+    },
+    {
+      "id": "1moO3rn42uk",
+      "title": "Typeahead Suggestion Design Deep Dive with Google SWE! | Systems Design Interview Question 6",
+      "channel": "Jordan has no life",
+      "why": "Deeper dive: building the index offline, ranking, sharding by prefix and caching."
+    }
+  ],
+  "arch-llm-chat": [
+    {
+      "id": "4HlNv1qpZFY",
+      "title": "Server-Sent Events Crash Course",
+      "channel": "Hussein Nasser",
+      "why": "Explains Server-Sent Events, the one-way stream a chat UI uses to show tokens as they arrive."
+    },
+    {
+      "id": "I9-PUPYZyiw",
+      "title": "Design ChatGPT - System Design Mock Interview (with eBay EM)",
+      "channel": "Aced (formerly Exponent)",
+      "why": "Mock interview designing ChatGPT: streaming replies, storing conversations and GPU capacity."
+    }
+  ],
+  "arch-booking": [
+    {
+      "id": "fhdPyoO6aXI",
+      "title": "System Design Interview: Design Ticketmaster w/ a Ex-Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "Full Ticketmaster walkthrough: seat holds with expiry, no double-selling, virtual queue for spikes."
+    },
+    {
+      "id": "A-GcQwo434w",
+      "title": "TicketMaster Design Deep Dive with Google SWE! | Systems Design Interview Question 12",
+      "channel": "Jordan has no life",
+      "why": "Deeper dive on locking seats, contention on hot events and keeping bookings consistent."
+    },
+    {
+      "id": "kO0EQNfE2x4",
+      "title": "Design a Hotel Booking Service - System Design Mock Interview (with eBay EM)",
+      "channel": "Aced (formerly Exponent)",
+      "why": "Same booking ideas applied to hotels: inventory per night, reservations and overbooking."
+    }
+  ],
+  "arch-collab": [
+    {
+      "id": "2auwirNBvGg",
+      "title": "Google Docs System design | Part 1| Operational transformation | differentail synchronisation",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Explains operational transformation, the technique Google Docs uses to merge concurrent edits."
+    },
+    {
+      "id": "WXxExjI9FnM",
+      "title": "Google Docs Design Deep Dive with Google SWE! | Systems Design Interview Question 13",
+      "channel": "Jordan has no life",
+      "why": "Full design: OT versus CRDTs, the document server, and fanning edits out to other editors."
+    },
+    {
+      "id": "x7drE24geUw",
+      "title": "CRDTs: The Hard Parts",
+      "channel": "Martin Kleppmann",
+      "why": "Kleppmann's talk on CRDTs, the alternative to OT, and where they get hard (long)."
+    }
+  ],
+  "arch-location": [
+    {
+      "id": "OcUKFIjhKu0",
+      "title": "Designing a location database: QuadTrees and Hilbert Curves",
+      "channel": "Gaurav Sen",
+      "why": "Shows how quadtrees and space-filling curves turn \"what is near me\" into a fast lookup."
+    },
+    {
+      "id": "lsKU38RKQSo",
+      "title": "Design Uber w/ a Ex-Meta Staff Engineer: System Design Interview breakdown",
+      "channel": "Hello Interview",
+      "why": "Full Uber walkthrough: frequent driver location updates, geospatial index and matching."
+    },
+    {
+      "id": "umWABit-wbk",
+      "title": "UBER System design | OLA system design | uber architecture | amazon interview question",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Walks through Uber's actual architecture: dispatch, geo-sharding with S2 cells and ringpop."
+    }
+  ],
+  "arch-video": [
+    {
+      "id": "IUrQ5_g3XKs",
+      "title": "System Design Interview: Design YouTube",
+      "channel": "Hello Interview",
+      "why": "Full walkthrough: chunked upload, transcoding to many bitrates, adaptive streaming and CDNs."
+    },
+    {
+      "id": "lYoSd2WCJTo",
+      "title": "Netflix System Design | YouTube System Design | System Design Interview Question",
+      "channel": "codeKarle",
+      "why": "Netflix-style design covering the transcoding pipeline, Open Connect CDN and recommendations."
+    }
+  ],
+  "arch-counting": [
+    {
+      "id": "y-tA2NW4LNY",
+      "title": "Top-K System Design Interview Breakdown w/ Ex-Meta Senior Manager",
+      "channel": "Hello Interview",
+      "why": "Counting views at scale and keeping a top-K list fresh across time windows."
+    },
+    {
+      "id": "Zcv_899yqhI",
+      "title": "Design an Ad Click Aggregator w/ a Ex-Meta Staff Engineer System Design Interview",
+      "channel": "Hello Interview",
+      "why": "Stream aggregation with Kafka and Flink, plus batch reconciliation so counts end up exact."
+    },
+    {
+      "id": "XbkjEX-jgj0",
+      "title": "Top K Leaderboard Design Deep Dive with Google SWE! | Systems Design Interview Question 19",
+      "channel": "Jordan has no life",
+      "why": "Leaderboard deep dive: sorted sets, sharding scores and approximate counting."
+    }
+  ],
+  "arch-payments": [
+    {
+      "id": "J2IcD9FZvZU",
+      "title": "Designing Idempotent API Endpoints for Payments at Stripe",
+      "channel": "Arpit Bhayani",
+      "why": "Explains how Stripe's idempotency keys make retried payment calls safe from double charges."
+    },
+    {
+      "id": "MJABqwzBkHs",
+      "title": "[Payments Platform] To the Nines:  Building Uber's Payments Processing System -- Paul Sorenson",
+      "channel": "Uber Engineering",
+      "why": "Uber's engineer on building a payments system that stays correct through failures and retries."
+    }
+  ],
+  "arch-crawler": [
+    {
+      "id": "krsuaUp__pM",
+      "title": "Design a Web Crawler System Design Interview w/ a Ex-Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "Full crawler walkthrough: URL frontier, politeness per domain, dedup and fault tolerance."
+    },
+    {
+      "id": "BKZxZwUgL3Y",
+      "title": "System Design distributed web crawler to crawl Billions of web pages | web crawler system design",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Covers the crawler pipeline: frontier queues, DNS caching, content dedup and robots.txt."
+    }
+  ],
+  "arch-scheduler": [
+    {
+      "id": "WTxG5880EH8",
+      "title": "Distributed Job Scheduler Design Deep Dive with Google SWE! | Systems Design Interview Question 25",
+      "channel": "Jordan has no life",
+      "why": "Deep dive: storing scheduled jobs, claiming them without double runs, and retries."
+    },
+    {
+      "id": "Bt6mVg5ivyQ",
+      "title": "Job Scheduler: System Design Interview with a senior FAANG Engineer",
+      "channel": "interviewing.io",
+      "why": "A real mock interview on a job scheduler, showing how the design unfolds under questions."
+    }
+  ],
+  "arch-metrics": [
+    {
+      "id": "h4Sl21AKiDg",
+      "title": "How Prometheus Monitoring works | Prometheus Architecture explained",
+      "channel": "TechWorld with Nana",
+      "why": "Explains Prometheus's pull-based scraping, time-series storage and alerting in plain diagrams."
+    },
+    {
+      "id": "_KoiMoZZ3C8",
+      "title": "Distributed Metrics/Logging Design Deep Dive with Google SWE! | Systems Design Interview Question 14",
+      "channel": "Jordan has no life",
+      "why": "Interview-style design of a metrics and logging pipeline: ingestion, time-series storage, rollups."
+    },
+    {
+      "id": "4DzoajMs4DM",
+      "title": "PromCon 2016: Prometheus Design and Philosophy - Why It Is the Way It Is - Julius Volz",
+      "channel": "Prometheus Monitoring",
+      "why": "A Prometheus co-founder explains why it was built the way it was (conference talk)."
+    }
+  ],
+  "arch-sandbox": [
+    {
+      "id": "1xHADtekTNg",
+      "title": "System Design Interview: Design LeetCode (Online Judge) w/ a Ex-Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "Full walkthrough: queueing submissions, isolated containers for running code, and contest leaderboards."
+    },
+    {
+      "id": "SD4KgwdjmdI",
+      "title": "How I Built The Internet's Best Performing Code Execution Engine",
+      "channel": "Engineer Man",
+      "why": "The author of the Piston engine shows how he runs untrusted code safely and fast."
+    },
+    {
+      "id": "PAEMGa-i2lU",
+      "title": "Firecracker: A Secure and Fast microVM for Serverless Computing",
+      "channel": "Amazon Web Services",
+      "why": "AWS on Firecracker, the lightweight VM it uses to isolate untrusted code in Lambda."
+    }
+  ],
+  "arch-kv-store": [
+    {
+      "id": "zaRkONvyGr8",
+      "title": "What is CONSISTENT HASHING and Where is it used?",
+      "channel": "Gaurav Sen",
+      "why": "Shows how consistent hashing spreads keys over nodes and moves few keys when nodes change."
+    },
+    {
+      "id": "uNxl3BFcKSA",
+      "title": "Distributed Systems 5.2: Quorums",
+      "channel": "Martin Kleppmann",
+      "why": "Explains replication quorums and why R + W > N lets reads see the latest write."
+    },
+    {
+      "id": "LnqKfLcszEg",
+      "title": "Amazon DynamoDB - Paper Explained",
+      "channel": "Arpit Bhayani",
+      "why": "Walks through Amazon's DynamoDB paper: partitioning, replication and how it stays predictable."
+    }
+  ],
+  "arch-search": [
+    {
+      "id": "CeGtqouT8eA",
+      "title": "How Google searches one document among Billions of documents quickly?",
+      "channel": "Tech Dummies - Narendra Lakshmana Gowda",
+      "why": "Explains the inverted index: how words map to documents so search avoids scanning everything."
+    },
+    {
+      "id": "l38XL9914fs",
+      "title": "Design FB Post Search: System Design Interview breakdown w/ ex Meta Interviewer",
+      "channel": "Hello Interview",
+      "why": "Full post search design: building and sharding an inverted index, ranking and fresh updates."
+    },
+    {
+      "id": "DTUSFVfjRQA",
+      "title": "Google SWE teaches systems design | EP27: Search Indexes",
+      "channel": "Jordan has no life",
+      "why": "Concept video on search indexes, tokenizing and how Elasticsearch/Lucene store them."
+    }
+  ]
+}

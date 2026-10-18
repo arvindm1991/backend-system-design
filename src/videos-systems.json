@@ -1,36 +1,36 @@
 {
   "web": [
     {
-      "id": "AlkDbnbv7dk",
-      "title": "What happens when you type a URL into your browser?",
-      "channel": "ByteByteGo",
-      "why": "Follows one request from typed URL through DNS, TCP, TLS and HTTP in about five minutes."
-    },
-    {
       "id": "UVR9lhUGAyU",
       "title": "DNS Explained in 100 Seconds",
       "channel": "Fireship",
       "why": "Shows how a domain name gets turned into a server's IP address, step by step."
     },
     {
-      "id": "j9QmMEWmcfo",
-      "title": "SSL, TLS, HTTPS Explained",
-      "channel": "ByteByteGo",
+      "id": "ZkL10eoG1PY",
+      "title": "TLS Handshake - EVERYTHING that happens when you visit an HTTPS website",
+      "channel": "Practical Networking",
       "why": "Explains the TLS handshake that sets up the encrypted channel before any HTTP is sent."
+    },
+    {
+      "id": "SHkbPm1Wrno",
+      "title": "Networking Essentials for System Design Interviews w/ Ex Meta Senior Manager",
+      "channel": "Hello Interview",
+      "why": "Longer tour of the layers a request crosses: IP, TCP vs UDP, HTTP and load balancers."
     }
   ],
   "api": [
     {
-      "id": "_gQaygjm_hg",
-      "title": "Good APIs Vs Bad APIs: 7 Tips for API Design",
-      "channel": "ByteByteGo",
-      "why": "Covers resource naming, pagination, versioning and idempotency, the core API design habits."
+      "id": "-MTSQjw5DrM",
+      "title": "RESTful APIs in 100 Seconds // Build an API from Scratch with Node.js Express",
+      "channel": "Fireship",
+      "why": "Shows what makes an API RESTful (resources, verbs, status codes), then builds a tiny one."
     },
     {
-      "id": "4vLxWqE94l4",
-      "title": "Top 6 Most Popular API Architecture Styles",
-      "channel": "ByteByteGo",
-      "why": "Compares REST, GraphQL, gRPC, webhooks and more so you know where REST fits."
+      "id": "DQ57zYedMdQ",
+      "title": "API Design in System Design Interviews w/ Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "Covers REST resource design, when to pick GraphQL or RPC, pagination and API security."
     }
   ],
   "sql": [
@@ -49,16 +49,16 @@
   ],
   "auth": [
     {
-      "id": "fyTxwIa-1U0",
-      "title": "Session Vs JWT: The Differences You May Not Know!",
-      "channel": "ByteByteGo",
-      "why": "Contrasts server-side sessions with stateless JWTs and the trade-offs of each."
+      "id": "UBUNrFtufWo",
+      "title": "Session vs Token Authentication in 100 Seconds",
+      "channel": "Fireship",
+      "why": "Contrasts server-side sessions with stateless tokens like JWTs, and the trade-offs of each."
     },
     {
-      "id": "ZV5yTm4pT8g",
-      "title": "OAuth 2 Explained In Simple Terms",
-      "channel": "ByteByteGo",
-      "why": "Explains the OAuth flow behind \"Sign in with Google\" in plain diagrams."
+      "id": "996OiexHze0",
+      "title": "OAuth 2.0 and OpenID Connect (in plain English)",
+      "channel": "OktaDev",
+      "why": "Explains the OAuth flow behind \"Sign in with Google\" and what OpenID Connect adds."
     },
     {
       "id": "8ZtInClXe1Q",
@@ -83,16 +83,16 @@
   ],
   "caching": [
     {
-      "id": "dGAgxozNWFE",
-      "title": "Cache Systems Every Developer Should Know",
-      "channel": "ByteByteGo",
-      "why": "Tours where caches live, from the browser and CDN down to the database."
-    },
-    {
       "id": "G1rOthIU-uo",
       "title": "Redis in 100 Seconds",
       "channel": "Fireship",
       "why": "Introduces Redis, the in-memory store most app-level caches are built on."
+    },
+    {
+      "id": "fmT5nlEkl3U",
+      "title": "Redis Deep Dive w/ a Ex-Meta Senior Manager",
+      "channel": "Hello Interview",
+      "why": "How Redis is used as a cache and more in real designs, including eviction and hot keys."
     }
   ],
   "queues": [
@@ -115,6 +115,12 @@
       "title": "Rate Limiting system design | TOKEN BUCKET, Leaky Bucket, Sliding Logs",
       "channel": "Tech Dummies - Narendra Lakshmana Gowda",
       "why": "Walks through fixed window, sliding log and token bucket algorithms with diagrams."
+    },
+    {
+      "id": "MIJFyUPG4Z4",
+      "title": "Design a Distributed Rate Limiter w/ a Ex-Meta Staff Engineer: System Design Breakdown",
+      "channel": "Hello Interview",
+      "why": "Full distributed design: where the limiter sits, Redis counters, races and failure modes."
     }
   ],
   "realtime": [
@@ -139,9 +145,9 @@
       "why": "Explains what sharding is, how a shard key splits data, and the pain it brings."
     },
     {
-      "id": "UF9Iqmg94tk",
-      "title": "Consistent Hashing | Algorithms You Should Know #1",
-      "channel": "ByteByteGo",
+      "id": "zaRkONvyGr8",
+      "title": "What is CONSISTENT HASHING and Where is it used?",
+      "channel": "Gaurav Sen",
       "why": "Shows how consistent hashing moves only a few keys when servers are added or removed."
     },
     {
@@ -153,10 +159,10 @@
   ],
   "distributed": [
     {
-      "id": "BHqjEjzAicA",
-      "title": "CAP Theorem Simplified",
-      "channel": "ByteByteGo",
-      "why": "Explains what CAP actually says: during a partition, choose consistency or availability."
+      "id": "VdrEq0cODu4",
+      "title": "CAP Theorem in System Design Interviews",
+      "channel": "Hello Interview",
+      "why": "Explains what CAP actually says and how to choose consistency or availability per feature."
     },
     {
       "id": "UEAMfLPZZhE",
@@ -191,12 +197,6 @@
       "title": "Circuit Breaker Pattern - Fault Tolerant Microservices",
       "channel": "Defog Tech",
       "why": "Shows how a circuit breaker stops calls to a failing dependency and recovers later."
-    },
-    {
-      "id": "nH4qjmP2KEE",
-      "title": "Top 7 Most-Used Distributed System Patterns",
-      "channel": "ByteByteGo",
-      "why": "Quick tour of common resilience patterns, including retries and circuit breakers."
     }
   ],
   "events": [
@@ -229,12 +229,6 @@
   ],
   "sd-framework": [
     {
-      "id": "i7twT3x5yv8",
-      "title": "System Design Interview: A Step-By-Step Guide",
-      "channel": "ByteByteGo",
-      "why": "Lays out the step-by-step structure of a system design interview."
-    },
-    {
       "id": "Ru54dxzCyD0",
       "title": "How to Prepare for System Design Interviews w/ Meta Staff Engineer",
       "channel": "Hello Interview",
@@ -247,6 +241,12 @@
       "title": "Design a URL Shortener (Bitly) - System Design Interview",
       "channel": "NeetCodeIO",
       "why": "Full URL shortener walkthrough: short code generation, redirects and caching."
+    },
+    {
+      "id": "iUU4O1sWtJA",
+      "title": "Beginner System Design Interview: Design Bitly w/ a Ex-Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "Full interview-style Bitly design, from requirements to unique codes and scaling reads (about an hour)."
     }
   ],
   "sd-feed": [
@@ -255,6 +255,18 @@
       "title": "Design FB News Feed System Design Interview w/ ex: Meta Senior Manager",
       "channel": "Hello Interview",
       "why": "Full news feed walkthrough, including fan-out on write versus read and the feed cache."
+    },
+    {
+      "id": "QmX2NPkJTKg",
+      "title": "Designing INSTAGRAM: System Design of News Feed",
+      "channel": "Gaurav Sen",
+      "why": "Explains how a news feed is assembled and the push-versus-pull trade-off, in diagrams."
+    },
+    {
+      "id": "l55jFAGsgbs",
+      "title": "QCon NYC 2012: Real Time Architectures at Twitter",
+      "channel": "Raffi Krikorian",
+      "why": "Twitter's own engineer on how they fanned tweets out into precomputed timelines (long talk)."
     }
   ],
   "sd-chat": [
@@ -269,6 +281,12 @@
       "title": "Design Whatsapp: System Design Interview w/ a Ex-Meta Senior Manager",
       "channel": "Hello Interview",
       "why": "Full mock interview for WhatsApp covering offline delivery, multi-device and presence."
+    },
+    {
+      "id": "lLrzoyU4BPc",
+      "title": "How Discord Stores TRILLIONS of Messages",
+      "channel": "Coding with Lewis",
+      "why": "Tells how Discord's message storage evolved from MongoDB to Cassandra to ScyllaDB."
     }
   ],
   "sd-notifications": [
@@ -277,6 +295,12 @@
       "title": "Notification Service System Design Interview Question to handle Billions of users & Notifications",
       "channel": "codeKarle",
       "why": "Walks through a notification service: queues per channel, preferences, retries."
+    },
+    {
+      "id": "IScGMqojqKE",
+      "title": "Design a Notification Service (OneSignal) | Systems Design Questions 3.0 With Ex-Google SWE",
+      "channel": "Jordan has no life",
+      "why": "Deeper dive on fan-out to many devices, delivery guarantees and deduplication."
     }
   ],
   "sd-ratelimiter": [
@@ -299,6 +323,12 @@
       "title": "Design Dropbox or Google Drive w/ a Ex-Meta Staff Engineer System Design Interview",
       "channel": "Hello Interview",
       "why": "Full walkthrough of Dropbox/Drive: presigned URLs, chunked uploads and sync."
+    },
+    {
+      "id": "PE4gwstWhmc",
+      "title": "How We've Scaled Dropbox",
+      "channel": "Stanford",
+      "why": "A Dropbox engineer on the real problems they hit scaling storage and sync (lecture-length)."
     }
   ],
   "sd-autocomplete": [
@@ -335,14 +365,26 @@
       "title": "System Design Interview: Design Ticketmaster w/ a Ex-Meta Staff Engineer",
       "channel": "Hello Interview",
       "why": "Full Ticketmaster walkthrough: seat holds, never double-selling, and on-sale spikes."
+    },
+    {
+      "id": "A-GcQwo434w",
+      "title": "TicketMaster Design Deep Dive with Google SWE! | Systems Design Interview Question 12",
+      "channel": "Jordan has no life",
+      "why": "Deeper dive on locking seats, contention on hot events and keeping bookings consistent."
+    },
+    {
+      "id": "kO0EQNfE2x4",
+      "title": "Design a Hotel Booking Service - System Design Mock Interview (with eBay EM)",
+      "channel": "Aced (formerly Exponent)",
+      "why": "Same booking ideas applied to hotels: inventory per night, reservations and overbooking."
     }
   ],
   "sd-classroom": [
     {
-      "id": "ZV5yTm4pT8g",
-      "title": "OAuth 2 Explained In Simple Terms",
-      "channel": "ByteByteGo",
-      "why": "Explains the OAuth flow behind Google and Clever sign-in that schools rely on."
+      "id": "996OiexHze0",
+      "title": "OAuth 2.0 and OpenID Connect (in plain English)",
+      "channel": "OktaDev",
+      "why": "Explains the OAuth and OpenID Connect flow behind Google and Clever sign-in that schools use."
     }
   ],
   "sd-collab": [
@@ -357,6 +399,12 @@
       "title": "CRDTs: The Hard Parts",
       "channel": "Martin Kleppmann",
       "why": "Kleppmann's talk on CRDTs, the alternative to OT, and where they get hard (long)."
+    },
+    {
+      "id": "WXxExjI9FnM",
+      "title": "Google Docs Design Deep Dive with Google SWE! | Systems Design Interview Question 13",
+      "channel": "Jordan has no life",
+      "why": "Full design: OT versus CRDTs, the document server, and fanning edits out to other editors."
     }
   ],
   "sd-cheatsheet": [
@@ -365,12 +413,6 @@
       "title": "Latency Numbers Every Programmer Should Know - 1000x slow-down",
       "channel": "Gaurav Sen",
       "why": "Puts latency numbers on a human scale so memory, disk and network costs stick."
-    },
-    {
-      "id": "nH4qjmP2KEE",
-      "title": "Top 7 Most-Used Distributed System Patterns",
-      "channel": "ByteByteGo",
-      "why": "Quick tour of the building-block patterns the cheatsheet refers to."
     }
   ]
 }

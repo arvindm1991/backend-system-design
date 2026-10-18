@@ -1,0 +1,1090 @@
+<template id="tpl-sd-archetypes" data-title="The 20 system design archetypes" data-part="Part 4 · System design" data-order="215">
+  <h1>The 20 system design archetypes</h1>
+  <p class="lede">"Design Uber." "Design a web crawler." "Design Stripe." There seem to be hundreds of system design questions, but most of them are about twenty problems in different costumes. Each problem has one or two nuances that make it hard, and that nuance is the deep dive the interviewer is waiting for. After this lesson you can hear a prompt, name its archetype within two minutes, and steer straight to the part that matters: the celebrity fan-out in a feed, the double-entry ledger in a wallet, the politeness queue in a crawler, the microVM in a code runner.</p>
+
+  <h2>1. Same twenty problems, different costumes</h2>
+  <p>You asked whether the ten case studies are the only systems with nuances, or whether the rest follow similar patterns. The honest answer: almost every system has nuances, but they repeat. "Design Instagram", "design Twitter" and "design LinkedIn's feed" are the same problem: lots of people post, each reader sees a merged list of the people they follow, and one account with 50 million followers breaks the naive design. Change the nouns and the hard part stays.</p>
+  <p>An <b>archetype</b> here means a family of systems that share the same hard part. The boring 70% of every design is identical: stateless app servers behind a load balancer, a database, a cache, a queue for slow work, a CDN for static bytes. You already know that part from Part 2. What separates a strong answer is the remaining 30%, and that 30% is decided by the archetype.</p>
+  <p>Two warnings before the catalogue:</p>
+  <ul>
+    <li><b>The archetype is a hypothesis, not an answer.</b> You still clarify requirements first (step 1 of <a href="#sd-framework">the framework</a>). "Design Yelp" is a location archetype if they care about "restaurants near me", and a search archetype if they care about "vegan ramen open late". Ask.</li>
+    <li><b>Real prompts mix two or three archetypes.</b> "Design DoorDash" is location + a booking-style state machine + notifications + payments. Section 15 shows how to decompose ten famous prompts.</li>
+  </ul>
+
+  <h2>2. Recognize the archetype in the first two minutes</h2>
+  <p>While you clarify requirements, you're quietly asking yourself seven questions. Each one points at an archetype. You don't need to say them as a checklist; weave them into your clarifying questions.</p>
+  <div class="cards">
+    <div class="card"><span class="card-k">Read or write heavy?</span><h3>What's the ratio?</h3><p>100 reads per write points to caching and precomputation (shortener, feed, autocomplete). Writes far above reads points to ingestion pipelines (metrics, counting, location pings).</p></div>
+    <div class="card"><span class="card-k">Realtime?</span><h3>Does the server push?</h3><p>If users must see changes within a second without refreshing: persistent connections (chat, collab, live location, streaming LLM replies).</p></div>
+    <div class="card"><span class="card-k">Money or scarcity?</span><h3>Is a mistake unforgivable?</h3><p>Money, seats or inventory mean strong consistency, idempotency and an audit trail (booking, payments). Everything else can usually be eventually consistent.</p></div>
+    <div class="card"><span class="card-k">Fan-out?</span><h3>Does one action touch millions?</h3><p>One post to 50 M followers, one campaign to 20 M inboxes: the fan-out cost and the skew (celebrities, hot keys) is the deep dive.</p></div>
+    <div class="card"><span class="card-k">Geospatial?</span><h3>"Near me"?</h3><p>Anything with a map and "nearby" needs a spatial index; if the things move, the write rate of location updates is the hard part.</p></div>
+    <div class="card"><span class="card-k">Untrusted input?</span><h3>Do users send code, files or URLs?</h3><p>Uploaded files, user code, crawled pages: isolation, scanning, limits and abuse become first-class design concerns.</p></div>
+    <div class="card"><span class="card-k">Bursty or scheduled?</span><h3>Does traffic arrive all at once?</h3><p>On-sales, 9:00am cron jobs, back-to-school: admission control, queues, jitter. Time itself (schedules, windows, time zones) may be the problem.</p></div>
+  </div>
+  <p>Then match the prompt. This table is the whole lesson in one screen; the rest of the page explains each row.</p>
+  <table class="tbl">
+    <thead><tr><th>If they ask…</th><th>Archetype</th><th>The nuance they're testing</th></tr></thead>
+    <tbody>
+      <tr><td>bit.ly, Pastebin, invite links, unique ID generator</td><td>A1 · Key lookup (shortener)</td><td>Collision-free code generation; a cached, always-up redirect path</td></tr>
+      <tr><td>Twitter/X timeline, Instagram, LinkedIn feed</td><td>A2 · Feed</td><td>Fan-out on write vs read; the celebrity problem</td></tr>
+      <tr><td>WhatsApp, Slack, Discord, live comments</td><td>A3 · Chat</td><td>Per-conversation ordering, durable before ack, offline sync, presence cost</td></tr>
+      <tr><td>Email/SMS/push platform, webhook delivery</td><td>A4 · Notifications</td><td>Priority isolation, retries to third parties, dedupe, preferences</td></tr>
+      <tr><td>API throttling, API gateway, login protection</td><td>A5 · Rate limiter</td><td>Atomic check-and-consume across many servers; fail open or closed</td></tr>
+      <tr><td>Dropbox, Google Drive, image hosting, attachments</td><td>A6 · Blob upload</td><td>Bytes bypass app servers (presigned, resumable); untrusted files</td></tr>
+      <tr><td>Search-as-you-type, @mention picker</td><td>A7 · Typeahead</td><td>Precompute top-k per prefix offline; serve from memory</td></tr>
+      <tr><td>ChatGPT, Claude.ai, an AI tutor</td><td>A8 · LLM chat</td><td>Long streaming replies, GPU capacity, token cost grows with history</td></tr>
+      <tr><td>Ticketmaster, Airbnb, appointments, flash sale</td><td>A9 · Contended inventory</td><td>No double booking (atomic conditional write), holds, payment saga</td></tr>
+      <tr><td>Google Docs, Figma, Notion, a shared code pad</td><td>A10 · Collaborative state</td><td>Merging concurrent edits (OT vs CRDT), one owner per document</td></tr>
+      <tr><td>Uber, Lyft, DoorDash, Yelp "near me", Find My</td><td>B1 · Location</td><td>Spatial index (geohash, quadtree, H3); 250 K location writes/s</td></tr>
+      <tr><td>YouTube, Netflix, TikTok, Twitch (live)</td><td>B2 · Video</td><td>Transcode DAG, adaptive bitrate segments, CDN is the system</td></tr>
+      <tr><td>View counts, likes, trending, leaderboards, ad clicks</td><td>B3 · Counting</td><td>Hot counters, windowed streams, approximate counts, exact billing</td></tr>
+      <tr><td>Stripe, Venmo, a wallet, PayPal, in-app credits</td><td>B4 · Payments</td><td>Double-entry ledger, idempotency, unknown PSP outcomes, reconciliation</td></tr>
+      <tr><td>Web crawler, link checker, price scraper</td><td>B5 · Crawler</td><td>Politeness per host, URL and content dedupe, traps, re-crawl</td></tr>
+      <tr><td>Cron service, reminders, "run this in 3 days"</td><td>B6 · Scheduler</td><td>Leases, at-least-once + idempotent jobs, missed runs, time zones</td></tr>
+      <tr><td>Datadog, Prometheus, logging, monitoring</td><td>B7 · Metrics</td><td>Huge ingest, time-series compression, rollups, cardinality</td></tr>
+      <tr><td>LeetCode, CodeSignal, Replit, online judge</td><td>B8 · Sandbox</td><td>Isolating untrusted code (microVMs), resource limits, abuse</td></tr>
+      <tr><td>"Design a key-value store", Dynamo, a distributed cache</td><td>B9 · KV store</td><td>Consistent hashing, replication, quorums, conflicts, hinted handoff</td></tr>
+      <tr><td>Product search, Twitter search, docs search</td><td>B10 · Search</td><td>Inverted index, ranking (BM25), indexing freshness, sharding</td></tr>
+    </tbody>
+  </table>
+  <div class="callout key"><span class="callout-label">How to use the first two minutes</span><p>Clarify, then say the archetype out loud as a hypothesis: "So this is mostly a contended-inventory problem, like ticket booking: the thing we can never get wrong is selling the same room twice. I'll keep the rest standard and spend the deep dive there. Sound right?" The interviewer either confirms (you've shown judgment) or redirects you (you've saved 20 minutes).</p></div>
+
+  <h2>3. Part A: the ten you have already designed</h2>
+  <p>Each of these has a full case study in this course. Here is the compressed version: what it really is, where it shows up in disguise, the one or two nuances that make it hard, what transfers to its cousins, and the deep-dive question you'll almost certainly get.</p>
+
+  <h3>A1. Key lookup: the URL shortener</h3>
+  <p><b>Essence.</b> Create a short key for a value once; read it back millions of times, fast, forever.</p>
+  <p><b>In costume.</b> bit.ly, TinyURL, Pastebin (the value is a blob in object storage), share/invite links, QR-code menus, "design a unique ID generator" (Twitter's Snowflake).</p>
+  <p><b>What makes it hard.</b> (1) Generating short codes that never collide, without every write coordinating with every other server. (2) The redirect path is 100× hotter than creation and must stay up even when the database is down, so it is a caching and availability problem, not a storage problem (the whole dataset fits in a few TB).</p>
+  <p><b>Transfers to cousins.</b> Any read-mostly lookup by ID: cache the hot path, push slow side effects (click analytics) onto a queue so they can never slow the read. Unique ID generation (counter blocks, Snowflake-style time + machine + sequence) reappears in chat message IDs and payments.</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"How do two servers never hand out the same code?"</b> Each app server leases a block of 1,000 numbers from a central counter, so a write is one insert with no collision check; numbers are base62-encoded and scrambled so codes aren't guessable. Seven base62 characters give 62<sup>7</sup> ≈ 3.5 trillion codes, which is plenty.</p></div>
+  <p><a href="#sd-shortener">Full case study →</a></p>
+  <div data-videos="arch-shortener"></div>
+
+  <h3>A2. Feed: many writers, merged reads</h3>
+  <p><b>Essence.</b> Each user sees a merged, ordered list of what the people they follow posted.</p>
+  <p><b>In costume.</b> Twitter/X home timeline, Instagram, LinkedIn, Facebook News Feed, Reddit's home page, Strava or GitHub activity feeds, a teacher's class stream.</p>
+  <p><b>What makes it hard.</b> (1) Where to do the merge: at write time (push the post ID into every follower's timeline, cheap reads) or at read time (pull from everyone you follow, cheap writes). (2) Skew: one account with 50 million followers turns one post into 50 million timeline writes.</p>
+  <p><b>Transfers to cousins.</b> The <b>hybrid</b> (push for normal accounts, pull for celebrities at read time) is the general answer to any fan-out with heavy skew: group notifications, Slack channels with 100,000 members, follower counts. "Store IDs, hydrate on read" transfers to any cached list.</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"What about someone with 50 million followers?"</b> Accounts above a threshold (say 100,000 followers) are not fanned out; their recent posts are fetched at read time and merged into the precomputed timeline. That turns a 50-million-write post into one write plus a cheap merge for each reader who follows a few celebrities.</p></div>
+  <p><a href="#sd-feed">Full case study →</a></p>
+  <div data-videos="arch-feed"></div>
+
+  <h3>A3. Chat: ordered, durable, realtime messaging</h3>
+  <p><b>Essence.</b> Deliver messages in real time over persistent connections, in the same order for everyone, without losing or duplicating any, even across offline devices.</p>
+  <p><b>In costume.</b> WhatsApp, Slack, Messenger, Discord, in-app support chat, live comments on a stream, multiplayer game lobbies.</p>
+  <p><b>What makes it hard.</b> (1) "Sent" must mean durable: assign a per-conversation sequence number and persist before acking; dedupe client retries by client message ID. (2) Devices go offline, so delivery is really sync by cursor ("give me everything after seq 1047"); the push is only a wake-up hint. Presence is a hidden scale trap (500,000 heartbeats/s).</p>
+  <p><b>Transfers to cousins.</b> Gateways that only hold connections plus a session registry ("user → gateway") is the shape of every push-based realtime system: live sports scores, ride status updates, collaborative cursors, streaming results from a code runner.</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"A gateway with 80,000 connections crashes. What happens?"</b> Nothing is lost, because messages were stored before the ack. Clients reconnect (with jittered backoff so they don't stampede) to other gateways, re-register, and sync from their last cursor; anything unacked is resent with the same client ID and deduped.</p></div>
+  <p><a href="#sd-chat">Full case study →</a></p>
+  <div data-videos="arch-chat"></div>
+
+  <h3>A4. Notifications: reliable delivery through third parties</h3>
+  <p><b>Essence.</b> Turn product events into the right messages on the right channels, delivered through providers you don't control.</p>
+  <p><b>In costume.</b> Email/SMS/push platforms, one-time-code senders, marketing campaigns, reminder services, and (less obviously) <b>webhook delivery</b> like Stripe's, where the "provider" is a customer's HTTP endpoint.</p>
+  <p><b>What makes it hard.</b> (1) Priority isolation: a 20-million-email campaign must never delay a login code, so separate queues and worker pools. (2) Exactly-once delivery to a third party is impossible over a network; you choose, per category, whether a duplicate or a miss is worse, and dedupe at intake and in the worker.</p>
+  <p><b>Transfers to cousins.</b> Webhook delivery is the same design with per-endpoint backoff and a circuit breaker per customer, so one dead endpoint can't clog the queue. Preferences, quiet hours and unsubscribe show up in any user-facing messaging.</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"Can you guarantee exactly once?"</b> Not to an external provider: if the provider times out, you can't know whether it sent. So the producer's idempotency key dedupes intake, the worker checks status before sending, and the retry rule depends on the category: a login code is retried (a duplicate is harmless), a "your payment failed" email is not retried blindly.</p></div>
+  <p><a href="#sd-notifications">Full case study →</a></p>
+  <div data-videos="arch-notifications"></div>
+
+  <h3>A5. Rate limiter: shared counters on the hot path</h3>
+  <p><b>Essence.</b> Decide in under a millisecond, across dozens of servers, whether this request is within its budget.</p>
+  <p><b>In costume.</b> API throttling, an API gateway, login brute-force protection, LLM token quotas per tenant, anti-spam ("max 20 invites per hour"), and admission control like a waiting room.</p>
+  <p><b>What makes it hard.</b> (1) Atomicity: read-compare-write from 50 gateways lets concurrent requests all slip through; the check-and-consume must be one atomic operation (Redis script or INCR). (2) The limiter sits on every request, so its failure mode is a product decision: fail open (keep serving) for most endpoints, fail closed for login and expensive LLM calls.</p>
+  <p><b>Transfers to cousins.</b> The token bucket ("refill rate + burst size") is the vocabulary for any quota. Atomic counters in a shared store reappear in counting and booking. Batching tokens locally for hot tenants is the same trick as batching counter increments.</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"Which algorithm, and why?"</b> A token bucket per key: real clients are bursty, and the bucket allows a short burst up to its size while enforcing an average rate. It's two numbers per key (tokens, last refill time), updated in one atomic script using the store's clock so gateway clock skew doesn't matter.</p></div>
+  <p><a href="#sd-ratelimiter">Full case study →</a></p>
+  <div data-videos="arch-ratelimiter"></div>
+
+  <h3>A6. Blob upload and storage</h3>
+  <p><b>Essence.</b> Get big, untrusted files from flaky clients into durable storage, process them, and serve them cheaply.</p>
+  <p><b>In costume.</b> Dropbox, Google Drive, Box, image hosting, profile photos, attachments in Slack or email, the upload half of YouTube.</p>
+  <p><b>What makes it hard.</b> (1) App servers shouldn't move bytes: hand out presigned URLs so clients upload directly to object storage, in parts, resumable. (2) Every file is hostile until proven otherwise: server-generated keys, type checks by content, scanning before anyone else can download it.</p>
+  <p><b>Transfers to cousins.</b> Dropbox adds a sync twist: split files into chunks (a few MB), address each chunk by its content hash, and upload only chunks the server hasn't seen. Editing one paragraph of a 100 MB file re-uploads one chunk, and identical files across users are stored once (dedupe). The "event on object created → idempotent pipeline" shape is reused by video transcoding.</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"A 5 GB upload on hotel Wi-Fi fails at 80%. Then what?"</b> It was a multipart upload of, say, 8 MB parts, each with its own presigned URL. The client asks which parts the store already has and re-sends only the missing ones; nothing restarts from zero. Unfinished uploads are cleaned up by a lifecycle rule after a day or so.</p></div>
+  <p><a href="#sd-upload">Full case study →</a></p>
+  <div data-videos="arch-upload"></div>
+
+  <h3>A7. Typeahead: precompute because the budget is tiny</h3>
+  <p><b>Essence.</b> Return the best 10 completions for a prefix within roughly 50–100 ms, on every keystroke.</p>
+  <p><b>In costume.</b> The Google search box, Amazon's search suggestions, @mention and hashtag pickers, address autocomplete, command palettes.</p>
+  <p><b>What makes it hard.</b> (1) You can't rank thousands of matches per keystroke at 20,000 requests/s, so the ranked top-k for every prefix is precomputed offline from query logs and served from memory. (2) The client is half the system: debounce, cancel stale requests, ignore out-of-order responses.</p>
+  <p><b>Transfers to cousins.</b> "Move the work offline and serve a precomputed answer" is the move for recommendations ("people you may know"), trending lists and leaderboards. The offline index plus a small realtime layer merged at read time reappears in search (B10).</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"Breaking news: a new query is trending. Your index is hourly."</b> Add a small realtime layer: a stream job counts queries in the last few minutes and keeps a short list of fast-rising ones per prefix; the suggest server merges it with the hourly snapshot. The snapshot stays the stable base, the realtime layer handles freshness.</p></div>
+  <p><a href="#sd-autocomplete">Full case study →</a></p>
+  <div data-videos="arch-autocomplete"></div>
+
+  <h3>A8. LLM chat: long, expensive, streamed responses</h3>
+  <p><b>Essence.</b> Each request takes 10–30 seconds, is streamed token by token, runs on scarce GPU capacity, and costs more the longer the conversation gets.</p>
+  <p><b>In costume.</b> ChatGPT, Claude.ai, coding assistants, an AI tutor in a reading app, support bots, "add an AI assistant to our product".</p>
+  <p><b>What makes it hard.</b> (1) Streaming that survives disconnects: decouple generation from the connection by buffering tokens with event IDs, so a dropped tab resumes instead of losing a paid-for reply. (2) Capacity and cost: GPUs can't autoscale in seconds, so you need admission control and per-tenant token budgets, and because history is resent every turn, input tokens dominate cost (prompt caching, trimming, summarizing).</p>
+  <p><b>Transfers to cousins.</b> Any long-running job with progressive output (code execution results, video processing progress, AI agents) uses the same "job runs independently, client subscribes to its event stream by ID" shape.</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"The user closes the tab halfway through a reply."</b> Generation keeps running into a per-reply buffer (or is cancelled after a grace period to save cost, a product choice). When the tab comes back, the client reconnects with Last-Event-ID and the server replays from there; the finished reply is saved to the conversation either way.</p></div>
+  <p><a href="#sd-llm-chat">Full case study →</a></p>
+  <div data-videos="arch-llm-chat"></div>
+
+  <h3>A9. Contended inventory: booking</h3>
+  <p><b>Essence.</b> Many people compete for a finite set of specific things, and selling one twice is unforgivable.</p>
+  <p><b>In costume.</b> Ticketmaster, Airbnb and hotels, flights, doctor appointments, restaurant reservations, flash sales and sneaker drops, limited class sign-ups, a coupon with 1,000 redemptions.</p>
+  <p><b>What makes it hard.</b> (1) Never double-sell: the check and the claim must be one atomic conditional write on the source of truth (<code>UPDATE … WHERE status = 'available'</code>), with holds that expire. (2) Surges: 2 million people for 50,000 seats, so a waiting room admits people at a rate the system can serve, and the seat map is a cached, slightly stale hint.</p>
+  <p><b>Transfers to cousins.</b> A driver can't be dispatched to two riders (location, B1), a balance can't be spent twice (payments, B4), a job can't be run by two workers (scheduler, B6): all are the same atomic "claim if still available" move. Holds with expiry are leases.</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"Why not a distributed lock per seat?"</b> A lock is a second system that can disagree with the database (a lock expires while the holder is paused, and two writers proceed). A conditional update on the row that is the truth needs no extra moving part and is correct by construction; the database is already the lock.</p></div>
+  <p><a href="#sd-booking">Full case study →</a></p>
+  <div data-videos="arch-booking"></div>
+
+  <h3>A10. Collaborative state: many editors, one document</h3>
+  <p><b>Essence.</b> Several people change the same structure at the same time, and everyone must converge on the same result without losing anyone's work.</p>
+  <p><b>In costume.</b> Google Docs, Figma, Notion, Miro whiteboards, a shared code pad in a pairing interview, a live kanban board.</p>
+  <p><b>What makes it hard.</b> (1) Merging concurrent edits: send operations, not whole documents, and either transform them against each other (OT, with a central server ordering ops) or use data structures that merge automatically (CRDTs, better for offline and peer-to-peer). (2) One owner node per document orders operations; failover must not lose or reorder acked ops.</p>
+  <p><b>Transfers to cousins.</b> Figma-style apps often use simpler rules per property (last writer wins on "this shape's color") because objects are independent; text needs the heavier machinery. "One owner per hot object" also shows up in chat (per conversation) and game servers (per match).</p>
+  <div class="callout key"><span class="callout-label">Deep dive you'll get</span><p><b>"Alice edits offline for 20 minutes. What happens on reconnect?"</b> Her client sends its queued operations tagged with the last server version it saw; the server transforms them against everything committed since (OT) or merges them (CRDT). Both sides converge. For long offline periods CRDTs are the safer choice, which is why offline-first apps favor them.</p></div>
+  <p><a href="#sd-collab">Full case study →</a></p>
+  <div data-videos="arch-collab"></div>
+
+  <p>One more case study in the course, the <a href="#sd-classroom">K-12 learning platform</a>, isn't an archetype of its own. It's a mix: multi-tenant auth, rostering pipelines, a scheduled-traffic spike and reporting (counting). That's typical of "design our product" questions.</p>
+
+  <h2>4. Part B: how to read the next ten sections</h2>
+  <p>These ten archetypes don't have their own case study yet, so each gets more depth here, always in the same order: <b>essence</b>, <b>requirements that matter</b>, <b>numbers</b> worked step by step, <b>core components</b> (usually with a diagram), the <b>nuances</b> that make it hard, <b>trade-offs</b>, the <b>deep-dive questions</b> with strong answers, and two callouts. The numbers are rough on purpose: the point is the order of magnitude and what it forces you to do.</p>
+
+  <h2>5. B1 · Location: nearby drivers and places</h2>
+  <p><b>Essence.</b> Answer "what's near this point?" fast. In the hard version (Uber, Lyft, DoorDash couriers) the things being searched move every few seconds, so the index is rewritten constantly. In the easy version (Yelp, "stores near me") the places rarely move and it's a read-heavy search problem.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Riders see nearby cars on a map and request a ride; the system offers the ride to a good driver within a few seconds.</li>
+    <li>Drivers send their location every ~4 seconds while online. Positions may be a few seconds stale; that's fine.</li>
+    <li>A driver must never be dispatched to two riders at once.</li>
+    <li>Ask: static places or moving entities? One city or global? Is "near" straight-line distance or driving time?</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Location writes.</b> Say 1 million drivers online at peak worldwide, each pinging every 4 s: 1,000,000 / 4 = <b>250,000 writes/second</b>. This is the number that shapes the design.</li>
+      <li><b>Size of the live index.</b> Each driver's current position is ~100 bytes (driver ID, lat, lng, cell, timestamp, status). 1 M × 100 B = <b>100 MB</b>. The whole live index fits in the memory of one machine. Size is not the problem; churn is.</li>
+      <li><b>Searches.</b> 20 million rides/day is ~230 ride requests/s on average, maybe 1,000/s at peak. But riders opening the app and watching cars on the map are more like 10–20× that: <b>~10,000–20,000 nearby queries/s</b>.</li>
+      <li><b>History.</b> If you keep every ping for trip receipts and ETA models: 250,000 × 100 B = 25 MB/s ≈ <b>2 TB/day</b>. That goes to a log and cheap storage, never into the live index.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <p>The core trick is to turn 2D "near" into 1D "same bucket". A <b>geohash</b> encodes a latitude/longitude as a short string by repeatedly halving the world: each extra character splits a cell into 32 smaller ones, and points that share a prefix are in the same cell. So "drivers near me" becomes "drivers whose geohash starts with 9q9hv", which any key-value store or sorted set can answer.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 560 290" width="100%" role="img" aria-label="Geohash grid: a rider, a 3 km search circle, and the 3 by 3 block of cells searched" xmlns="http://www.w3.org/2000/svg" style="max-width:560px;font-family:inherit">
+    <rect x="70" y="70" width="150" height="150" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+    <line x1="20" y1="20" x2="20" y2="270" stroke="var(--line)" stroke-width="1"/>
+    <line x1="20" y1="20" x2="270" y2="20" stroke="var(--line)" stroke-width="1"/>
+    <line x1="70" y1="20" x2="70" y2="270" stroke="var(--line)" stroke-width="1"/>
+    <line x1="20" y1="70" x2="270" y2="70" stroke="var(--line)" stroke-width="1"/>
+    <line x1="120" y1="20" x2="120" y2="270" stroke="var(--line)" stroke-width="1"/>
+    <line x1="20" y1="120" x2="270" y2="120" stroke="var(--line)" stroke-width="1"/>
+    <line x1="170" y1="20" x2="170" y2="270" stroke="var(--line)" stroke-width="1"/>
+    <line x1="20" y1="170" x2="270" y2="170" stroke="var(--line)" stroke-width="1"/>
+    <line x1="220" y1="20" x2="220" y2="270" stroke="var(--line)" stroke-width="1"/>
+    <line x1="20" y1="220" x2="270" y2="220" stroke="var(--line)" stroke-width="1"/>
+    <line x1="270" y1="20" x2="270" y2="270" stroke="var(--line)" stroke-width="1"/>
+    <line x1="20" y1="270" x2="270" y2="270" stroke="var(--line)" stroke-width="1"/>
+    <rect x="120" y="120" width="50" height="50" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="145" y="135" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor" class="mono">9q9hv</text>
+    <circle cx="158" cy="150" r="34" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <circle cx="158" cy="150" r="5" fill="var(--accent)"/>
+    <rect x="177" y="149" width="10" height="10" rx="2" fill="currentColor"/>
+    <text x="194" y="158" text-anchor="start" font-size="12" font-weight="600" fill="currentColor" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">B</text>
+    <rect x="123" y="157" width="10" height="10" rx="2" fill="currentColor"/>
+    <text x="140" y="166" text-anchor="start" font-size="12" font-weight="600" fill="currentColor" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">A</text>
+    <rect x="245" y="235" width="10" height="10" rx="2" fill="currentColor"/>
+    <text x="262" y="244" text-anchor="start" font-size="12" font-weight="600" fill="currentColor" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">C</text>
+    <text x="158" y="202" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">rider</text>
+    <text x="300" y="40" text-anchor="start" font-size="12" fill="currentColor">Each cell = one 5-char geohash,</text>
+    <text x="300" y="64" text-anchor="start" font-size="12" fill="currentColor">about 4.9 km wide.</text>
+    <text x="300" y="88" text-anchor="start" font-size="12" fill="currentColor">Driver B is closest to the rider,</text>
+    <text x="300" y="112" text-anchor="start" font-size="12" fill="currentColor">but in the next cell: searching</text>
+    <text x="300" y="136" text-anchor="start" font-size="12" fill="currentColor">only 9q9hv would miss B.</text>
+    <text x="300" y="160" text-anchor="start" font-size="13" font-weight="600" fill="var(--accent)">Fix: search the cell + its</text>
+    <text x="300" y="184" text-anchor="start" font-size="13" font-weight="600" fill="var(--accent)">8 neighbours (shaded), then</text>
+    <text x="300" y="208" text-anchor="start" font-size="13" font-weight="600" fill="var(--accent)">filter by real distance.</text>
+    <text x="300" y="246" text-anchor="start" font-size="12" font-weight="600" fill="currentColor">Longer prefix = smaller cell:</text>
+    <text x="300" y="266" text-anchor="start" font-size="12" fill="var(--muted)">9q9 ~156 km, 9q9h ~39 km</text>
+    </svg>
+    <figcaption>Geohash cells: a nearby driver can sit just across a cell boundary, so always search the cell plus its 8 neighbours, then filter by real distance.</figcaption>
+  </figure>
+  <p>The live system is small: a stateless <b>location service</b> receives pings and updates an <b>in-memory geo index</b> (cell → set of driver IDs, plus driver → last position), sharded by city or region. Every ping also goes onto a <b>log</b> (Kafka) for history and analytics. The <b>matcher</b> asks the index for candidates and claims one driver with an atomic state change.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 560 300" width="100%" role="img" aria-label="Location architecture: driver pings feed an in-memory geo index that the matcher queries" xmlns="http://www.w3.org/2000/svg" style="max-width:560px;font-family:inherit">
+    <rect x="20" y="20" width="130" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="85" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Driver apps</text>
+    <text x="85" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">1M online</text>
+    <rect x="210" y="20" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="285" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Location service</text>
+    <text x="285" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">stateless</text>
+    <rect x="420" y="20" width="120" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <line x1="530" y1="28" x2="530" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="523" y1="28" x2="523" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="516" y1="28" x2="516" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <text x="468" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Location log</text>
+    <text x="468" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">Kafka</text>
+    <rect x="210" y="125" width="150" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="285" y="150.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Geo index</text>
+    <text x="285" y="166.5" text-anchor="middle" font-size="12" fill="var(--muted)">in memory, by city</text>
+    <rect x="20" y="228" width="130" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="85" y="259.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Rider app</text>
+    <rect x="210" y="228" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="285" y="251.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Matcher</text>
+    <text x="285" y="267.5" text-anchor="middle" font-size="12" fill="var(--muted)">rank by ETA</text>
+    <path d="M420,232 a60,7 0 0,0 120,0 a60,7 0 0,0 -120,0 v46 a60,7 0 0,0 120,0 v-46" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="480" y="256" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Driver state</text>
+    <text x="480" y="272" text-anchor="middle" font-size="12" fill="var(--muted)">CAS on status</text>
+    <path d="M153.0,47.0 L207.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M207.0,47.0 L198.0,42.5 L198.0,51.5 Z" fill="currentColor"/>
+    <text x="180" y="42" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">ping / 4 s</text>
+    <path d="M363.0,47.0 L417.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M417.0,47.0 L408.0,42.5 L408.0,51.5 Z" fill="currentColor"/>
+    <path d="M285.0,77.0 L285.0,122.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M285.0,122.0 L289.5,113.0 L280.5,113.0 Z" fill="currentColor"/>
+    <text x="285" y="94.5" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">move cell</text>
+    <path d="M153.0,255.0 L207.0,255.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M207.0,255.0 L198.0,250.5 L198.0,259.5 Z" fill="currentColor"/>
+    <text x="180" y="250" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">request</text>
+    <path d="M285.0,225.0 L285.0,186.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M285.0,186.0 L280.5,195.0 L289.5,195.0 Z" fill="currentColor"/>
+    <text x="285" y="200.5" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">nearby?</text>
+    <path d="M363.0,255.0 L417.0,255.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M417.0,255.0 L408.0,250.5 L408.0,259.5 Z" fill="currentColor"/>
+    <text x="390" y="250" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">claim</text>
+    <path d="M209.0,233.2 L151.0,76.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <path d="M151.0,76.8 L149.9,86.8 L158.4,83.7 Z" fill="currentColor"/>
+    <text x="128" y="160" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">offer, 15 s</text>
+    <text x="480" y="108" text-anchor="middle" font-size="12" fill="var(--muted)">trip history,</text>
+    <text x="480" y="124" text-anchor="middle" font-size="12" fill="var(--muted)">analytics, ETAs</text>
+    <path d="M480.0,80.0 L480.0,91.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M480.0,91.0 L484.5,82.0 L475.5,82.0 Z" fill="currentColor"/>
+    </svg>
+    <figcaption>Pings update the in-memory index and a log; the matcher asks the index for candidates, then claims a driver with a compare-and-set on driver state.</figcaption>
+  </figure>
+  <h3>The nuances</h3>
+  <p><b>1. Choosing the spatial index.</b> Three families, intuition only:</p>
+  <ul>
+    <li><b>Geohash</b>: a fixed grid of rectangles with string prefixes. Simple and fits any key-value store (Redis's <code>GEOADD</code>/<code>GEOSEARCH</code> store geohash-based scores in a sorted set). Weakness: cells are the same size in Manhattan and in the desert, and neighbours across a boundary have unrelated prefixes.</li>
+    <li><b>Quadtree</b>: start with one square; split any square holding more than, say, 100 points into four. Dense downtown gets tiny cells, empty areas stay big. Great for static places (Yelp). Awkward for moving drivers, because constant inserts and deletes keep forcing splits and merges.</li>
+    <li><b>S2 (Google) and H3 (Uber)</b>: hierarchical cells over the whole sphere. S2 projects the earth onto a cube and numbers cells along a space-filling curve; H3 uses hexagons at 16 resolutions. Hexagons have the nice property that all 6 neighbours are the same distance away, which is why Uber uses H3 for things like surge-pricing zones.</li>
+  </ul>
+  <p><b>2. The write volume.</b> 250,000 updates/s into a disk database with secondary indexes would be painful and pointless: a position is worthless after 10 seconds. So the live index lives in memory, is sharded by region (a ping from Chicago only touches the Chicago shard), and entries expire if a driver goes silent for ~30 s. If a shard crashes, it rebuilds itself within one ping interval because every driver resends within 4 seconds. That is a lovely property to say out loud: <i>the state is self-healing because it's continuously re-sent</i>.</p>
+  <p><b>3. Matching is a booking problem.</b> Search the rider's cell and neighbours, rank candidates by estimated driving time (road network, not straight line: a driver 300 m away across a river may be 10 minutes out), then offer to the best driver. The offer must claim the driver atomically: <code>UPDATE drivers SET status='offered', ride=42 WHERE id=7 AND status='available'</code>. If the driver doesn't accept within ~15 s, release and offer to the next one.</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>A <b>fixed grid (geohash/H3)</b> gives you O(1) cell updates and trivial sharding at the cost of uneven cell occupancy; choose it when entities move constantly.</li>
+    <li>A <b>quadtree</b> gives you cells that adapt to density at the cost of rebalancing work on every insert; choose it for mostly static places.</li>
+    <li><b>Pinging every 4 s instead of every 1 s</b> gives you 4× less write load at the cost of positions up to 4 s stale (about 50 m at city speeds); choose it unless you're doing turn-by-turn navigation.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"A concert ends and 30,000 people request rides from one stadium."</b> One cell becomes a hot key. Use finer cells there (a longer geohash or higher H3 resolution), so the load spreads across more keys, and batch matching: instead of greedily matching each request as it arrives, collect requests for a second or two and solve the assignment for the batch, which gives better overall pickup times.</p>
+  <p><b>"How do you show cars moving smoothly on the rider's map?"</b> The rider subscribes (WebSocket) to updates for the cells around them; the server pushes positions every few seconds and the client animates between points. You don't query the index for each frame.</p>
+  <p><b>"How is Yelp different?"</b> Places don't move, so writes are rare and you can precompute: a quadtree or geohash index built offline, cached heavily, combined with a search index for text ("vegan ramen") and ranking by distance, rating and open hours. It's a read-heavy search problem with a spatial filter.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"One million drivers pinging every 4 seconds is 250,000 writes a second, but the live state is only about 100 MB, so I keep it in memory, sharded by city, keyed by geohash or H3 cell, with entries expiring after 30 seconds. A nearby search reads the rider's cell plus its 8 neighbours and filters by distance. Every ping also goes to Kafka for history. Dispatch is a compare-and-set on the driver's status, so one driver can never get two rides."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Storing driver locations in a SQL table and querying <code>WHERE lat BETWEEN … AND lng BETWEEN …</code>. A normal index helps with one dimension only, so the database scans a whole stripe of the map, and you're rewriting that table 250,000 times a second. Name a spatial index and keep the live data in memory.</p></div>
+  <div data-videos="arch-location"></div>
+
+  <h2>6. B2 · Video: upload, transcode, stream</h2>
+  <p><b>Essence.</b> Turn one uploaded file into many versions that play smoothly on any device and any connection, and deliver an enormous number of bytes cheaply. The CDN isn't an optimization here; it is most of the system.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Creators upload large files (hundreds of MB to tens of GB); videos become watchable within minutes.</li>
+    <li>Playback starts fast (under ~2 s) and doesn't stall when the viewer's bandwidth drops.</li>
+    <li>Ask: video on demand (YouTube, Netflix) or live (Twitch)? Netflix has a small catalogue watched heavily; YouTube has a huge long tail.</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Uploads.</b> YouTube reportedly receives on the order of 500 hours of video per minute. Use a smaller example: 100,000 uploads/day averaging 10 minutes. At 1080p (~5–10 Mbps), 10 minutes is roughly 0.5–1 GB raw: <b>~50–100 TB/day of raw uploads</b>.</li>
+      <li><b>Renditions.</b> A typical bitrate ladder is 240p, 360p, 480p, 720p, 1080p at roughly 0.4, 0.8, 1.5, 3 and 6 Mbps: about 12 Mbps in total, so all renditions together are about the size of the original again, more if you also encode a second codec.</li>
+      <li><b>Transcoding.</b> Encoding is CPU-heavy: one machine may encode 1080p at around real time. A 10-minute video encoded serially takes ~10 minutes per rendition. Split it into 10-second chunks and encode 60 chunks × 5 renditions = 300 small jobs in parallel: done in about a minute.</li>
+      <li><b>Egress.</b> 5 million concurrent viewers × 3 Mbps average = <b>15 Tbps</b>. No origin serves that. It must come from CDN edges close to viewers, ideally inside ISPs.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 600 300" width="100%" role="img" aria-label="Video pipeline: upload, a DAG of transcode jobs, packaging into segments, CDN delivery" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;font-family:inherit">
+    <rect x="430" y="8" width="150" height="68" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25" stroke-dasharray="5 4"/>
+    <text x="505" y="30.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Side jobs</text>
+    <text x="505" y="46.5" text-anchor="middle" font-size="12" fill="var(--muted)">thumbnails, captions,</text>
+    <text x="505" y="61.5" text-anchor="middle" font-size="12" fill="var(--muted)">safety checks</text>
+    <rect x="20" y="110" width="100" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="70" y="141.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Creator</text>
+    <path d="M140,114 a55,7 0 0,0 110,0 a55,7 0 0,0 -110,0 v46 a55,7 0 0,0 110,0 v-46" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="195" y="138" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Raw store</text>
+    <text x="195" y="154" text-anchor="middle" font-size="12" fill="var(--muted)">object storage</text>
+    <rect x="270" y="110" width="130" height="54" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="335" y="133.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Orchestrator</text>
+    <text x="335" y="149.5" text-anchor="middle" font-size="12" fill="var(--muted)">DAG, retries</text>
+    <rect x="440" y="100" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <rect x="435" y="105" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <rect x="430" y="110" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="505" y="133.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Transcode ×N</text>
+    <text x="505" y="149.5" text-anchor="middle" font-size="12" fill="var(--muted)">10 s chunk × rendition</text>
+    <rect x="430" y="226" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="505" y="249.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Packager</text>
+    <text x="505" y="265.5" text-anchor="middle" font-size="12" fill="var(--muted)">HLS / DASH + manifest</text>
+    <path d="M270,230 a65,7 0 0,0 130,0 a65,7 0 0,0 -130,0 v46 a65,7 0 0,0 130,0 v-46" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="335" y="254" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Origin</text>
+    <text x="335" y="270" text-anchor="middle" font-size="12" fill="var(--muted)">segments</text>
+    <rect x="140" y="226" width="110" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="195" y="249.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">CDN edge</text>
+    <text x="195" y="265.5" text-anchor="middle" font-size="12" fill="var(--muted)">caches hot</text>
+    <rect x="20" y="226" width="100" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="70" y="249.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Viewer</text>
+    <text x="70" y="265.5" text-anchor="middle" font-size="12" fill="var(--muted)">ABR player</text>
+    <path d="M123.0,137.0 L137.0,137.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M137.0,137.0 L128.0,132.5 L128.0,141.5 Z" fill="currentColor"/>
+    <path d="M253.0,137.0 L267.0,137.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M267.0,137.0 L258.0,132.5 L258.0,141.5 Z" fill="currentColor"/>
+    <path d="M403.0,137.0 L427.0,137.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M427.0,137.0 L418.0,132.5 L418.0,141.5 Z" fill="currentColor"/>
+    <path d="M385.9,108.5 L441.5,77.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M441.5,77.5 L431.5,77.9 L435.9,85.8 Z" fill="currentColor"/>
+    <path d="M505.0,167.0 L505.0,223.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M505.0,223.0 L509.5,214.0 L500.5,214.0 Z" fill="currentColor"/>
+    <path d="M427.0,253.0 L403.0,253.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M403.0,253.0 L412.0,257.5 L412.0,248.5 Z" fill="currentColor"/>
+    <path d="M267.0,253.0 L253.0,253.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M253.0,253.0 L262.0,257.5 L262.0,248.5 Z" fill="currentColor"/>
+    <path d="M137.0,253.0 L123.0,253.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M123.0,253.0 L132.0,257.5 L132.0,248.5 Z" fill="currentColor"/>
+    </svg>
+    <figcaption>The upload lands in object storage, an orchestrator fans out a DAG of chunk-by-rendition transcode jobs, the packager writes segments and manifests, and CDN edges serve them.</figcaption>
+  </figure>
+  <p>The upload itself is A6 (presigned, multipart, resumable). An object-created event starts an <b>orchestrator</b> that runs a <b>DAG</b> (directed acyclic graph: jobs with dependencies): probe the file, split into chunks, transcode each chunk into each rendition, then package; in parallel run side jobs like thumbnails, captions (speech-to-text) and safety/copyright checks. Each job is idempotent and retried on its own, so one failed chunk doesn't redo the whole video.</p>
+  <h3>The nuances</h3>
+  <p><b>1. Adaptive bitrate (ABR).</b> The video isn't served as one file. The <b>packager</b> cuts every rendition into segments of 2–6 seconds and writes a <b>manifest</b> listing them (HLS uses <code>.m3u8</code> playlists, DASH uses an MPD file). The player downloads the manifest, starts with a low rendition to begin quickly, measures download speed and buffer, and switches rendition at the next segment boundary. Your train enters a tunnel: the player drops to 360p for a few segments instead of freezing. All of the intelligence is in the client; the server just serves static files.</p>
+  <p><b>2. The CDN is the system.</b> Segments are immutable static files, the perfect thing to cache. Popular videos are served almost entirely from edge caches; Netflix goes further with its Open Connect appliances placed inside ISPs and filled overnight with what it predicts people will watch. The long tail (millions of videos with a few views each) is the hard part: those requests miss the edge and hit regional caches or origin, so you tier the storage and accept a slower first start for rare videos.</p>
+  <p><b>3. Cost decides encoding.</b> Better codecs (VP9, AV1) cut bandwidth meaningfully at the same quality but cost much more CPU to encode. Spend that CPU only where it pays back: encode everything in H.264 first, and re-encode a video in AV1 once it becomes popular.</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Short segments (2 s)</b> give you faster quality switches and lower live latency at the cost of more requests and slightly worse compression; choose them for live. <b>Longer segments (6 s)</b> suit on-demand.</li>
+    <li><b>Transcoding every rendition at upload</b> gives you instant playback at any quality at the cost of storage for videos nobody watches; choose it for the common renditions, and generate rare ones (4K, extra codecs) only for popular videos.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"How is live streaming different?"</b> There's no time to transcode the whole file: the streamer sends a continuous stream (often RTMP or WebRTC), transcoders encode it in real time, and the packager publishes each new segment as it's ready. Latency is roughly segment length × the few segments the player buffers, so classic HLS lags 10–30 s; low-latency variants use smaller partial segments to get to a few seconds. Chat alongside the stream is A3.</p>
+  <p><b>"How do you count views?"</b> Not with <code>UPDATE videos SET views = views + 1</code>: a viral video gets thousands of views a second on one row. Players send view events to a log and a stream job aggregates them, which is the counting archetype (B3).</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"I'll treat upload, processing and delivery as three systems. Upload is resumable and direct to object storage. Processing is a DAG of idempotent jobs: split into 10-second chunks and transcode chunk × rendition in parallel, so a 10-minute video is ready in about a minute. Delivery is HLS or DASH segments with adaptive bitrate on the client and a CDN in front, because 5 million viewers at 3 Mbps is 15 terabits a second and no origin can serve that."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Serving the original MP4 from your servers, or describing "streaming" as a long-lived connection pushing video. Modern video delivery is plain HTTP requests for small static segment files, which is exactly why CDNs can cache it. Say "segments, manifest, adaptive bitrate, CDN".</p></div>
+  <div data-videos="arch-video"></div>
+
+  <h2>7. B3 · Counting: views, likes, trending, ad clicks</h2>
+  <p><b>Essence.</b> Count huge numbers of small events, often concentrated on a few keys, and serve the totals fast. The nuance is that different counts deserve different accuracy: a like count can be approximate, an advertiser's invoice cannot.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Ask what is counted and who reads it: a public view count (approximate, a few seconds stale is fine), a "top 10 trending" list (approximate), unique visitors (approximate is standard), clicks you bill for (exact, auditable).</li>
+    <li>Ask about time windows: all time, per minute, last hour, "trending now".</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Ad clicks.</b> 1 billion clicks/day ÷ 86,400 s ≈ <b>11,600/s</b> average, peaks of maybe 50,000/s.</li>
+      <li><b>Raw storage.</b> ~200 bytes per click event (click ID, ad ID, user, time, IP, device) × 1 B = <b>200 GB/day</b>. Keep it: it's the evidence for billing disputes.</li>
+      <li><b>The hot key.</b> A viral video can take 50,000 views/s on one counter. A single database row handles maybe a few thousand updates a second before lock contention bites, and the whole load lands on one shard.</li>
+      <li><b>After aggregation.</b> Counting per ad per minute collapses 50,000 events/s into one row per active ad per minute. If 500,000 ads get at least one click in a minute, that's ~8,000 row writes/s, spread over many keys.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 600 310" width="100%" role="img" aria-label="Counting pipeline: events into a log, windowed stream aggregation, fast stores, and a batch recount for billing" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;font-family:inherit">
+    <rect x="20" y="20" width="120" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="80" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">App servers</text>
+    <text x="80" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">emit events</text>
+    <rect x="180" y="20" width="130" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <line x1="300" y1="28" x2="300" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="293" y1="28" x2="293" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="286" y1="28" x2="286" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <text x="233" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Event log</text>
+    <text x="233" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">Kafka, by ad_id</text>
+    <rect x="350" y="20" width="150" height="54" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="425" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Stream job</text>
+    <text x="425" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">1-min windows</text>
+    <path d="M180,132 a65,7 0 0,0 130,0 a65,7 0 0,0 -130,0 v46 a65,7 0 0,0 130,0 v-46" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="245" y="156" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Raw archive</text>
+    <text x="245" y="172" text-anchor="middle" font-size="12" fill="var(--muted)">object storage</text>
+    <path d="M350,132 a75,7 0 0,0 150,0 a75,7 0 0,0 -150,0 v46 a75,7 0 0,0 150,0 v-46" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="425" y="156" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">OLAP store</text>
+    <text x="425" y="172" text-anchor="middle" font-size="12" fill="var(--muted)">count per ad/min</text>
+    <path d="M520,132 a35,7 0 0,0 70,0 a35,7 0 0,0 -70,0 v46 a35,7 0 0,0 70,0 v-46" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="555" y="156" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Redis</text>
+    <text x="555" y="172" text-anchor="middle" font-size="12" fill="var(--muted)">top-K</text>
+    <rect x="180" y="236" width="130" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="245" y="259.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Nightly batch</text>
+    <text x="245" y="275.5" text-anchor="middle" font-size="12" fill="var(--muted)">full recount</text>
+    <rect x="350" y="236" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="425" y="259.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Billing totals</text>
+    <text x="425" y="275.5" text-anchor="middle" font-size="12" fill="var(--muted)">the number of record</text>
+    <path d="M143.0,47.0 L177.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M177.0,47.0 L168.0,42.5 L168.0,51.5 Z" fill="currentColor"/>
+    <path d="M313.0,47.0 L347.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M347.0,47.0 L338.0,42.5 L338.0,51.5 Z" fill="currentColor"/>
+    <path d="M245.0,77.0 L245.0,122.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M245.0,122.0 L249.5,113.0 L240.5,113.0 Z" fill="currentColor"/>
+    <path d="M425.0,77.0 L425.0,122.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M425.0,122.0 L429.5,113.0 L420.5,113.0 Z" fill="currentColor"/>
+    <path d="M503.0,60.0 L540.0,60.0 L554.3,119.1" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M554.3,119.1 L556.6,109.3 L547.8,111.4 Z" fill="currentColor"/>
+    <path d="M245.0,188.0 L245.0,233.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M245.0,233.0 L249.5,224.0 L240.5,224.0 Z" fill="currentColor"/>
+    <path d="M313.0,263.0 L347.0,263.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M347.0,263.0 L338.0,258.5 L338.0,267.5 Z" fill="currentColor"/>
+    <text x="330" y="258" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">wins</text>
+    <path d="M425.0,188.0 L425.0,233.0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <path d="M425.0,233.0 L429.5,224.0 L420.5,224.0 Z" fill="currentColor"/>
+    <text x="425" y="205.5" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">compare</text>
+    <text x="80" y="150" text-anchor="middle" font-size="12" fill="var(--muted)">dashboards read</text>
+    <text x="80" y="166" text-anchor="middle" font-size="12" fill="var(--muted)">the fast path;</text>
+    <text x="80" y="182" text-anchor="middle" font-size="12" fill="var(--muted)">invoices read</text>
+    <text x="80" y="198" text-anchor="middle" font-size="12" fill="var(--muted)">the batch path</text>
+    </svg>
+    <figcaption>The fast path (stream job → OLAP and Redis) feeds dashboards within seconds; the slow path (raw archive → nightly batch) produces the numbers you bill on.</figcaption>
+  </figure>
+  <h3>The nuances</h3>
+  <p><b>1. Never increment one row per event.</b> Three tools, from simple to heavy:</p>
+  <ul>
+    <li><b>Batch in memory.</b> Each app server keeps a local map <code>{video_id: +n}</code> and flushes every 1–5 s. 50,000 views/s across 50 servers becomes 50 writes/s. Cost: a crash loses a few seconds of counts. Fine for views and likes.</li>
+    <li><b>Sharded counters.</b> Store the counter as N sub-rows (<code>views:v42:0</code> … <code>views:v42:15</code>); each increment picks one at random; a read sums all N. Spreads one hot key over 16.</li>
+    <li><b>Stream processing.</b> Events go to a log (Kafka, partitioned by ad ID); a stream processor (Flink, Spark Streaming, Kafka Streams) aggregates in <b>windows</b>, e.g. tumbling one-minute windows, and writes one row per key per window to an analytics (OLAP) store such as ClickHouse, Druid or Pinot. Events that arrive late (a phone was offline) are handled with a <b>watermark</b>: "wait up to N minutes for stragglers, then close the window".</li>
+  </ul>
+  <p><b>2. Top-K and trending.</b> For a leaderboard, a Redis <b>sorted set</b> is the tool: <code>ZINCRBY</code> to add points, <code>ZREVRANGE</code> for the top 10, <code>ZREVRANK</code> for "your rank" (exactly what <a href="#sd-framework">the framework lesson's</a> reading leaderboard used). "Trending" is not "most views": it's views in the last window compared with the usual rate, so a cat video with a steady 1 M/day doesn't trend but a new clip jumping from 100 to 50,000/hour does.</p>
+  <p><b>3. Approximate counting, on purpose.</b> When exact answers would need enormous memory, sketches trade a small, known error for tiny memory:</p>
+  <ul>
+    <li><b>HyperLogLog</b> counts unique items (distinct visitors). Intuition: hash each visitor; in random hashes, a run of k leading zeros shows up about once in 2<sup>k</sup> items, so the longest run you've seen hints at how many distinct items there were. Average many such estimates and the error shrinks. Redis's HyperLogLog uses at most 12 KB per counter with about 0.81% standard error, whether you've seen a thousand visitors or a billion. An exact set of a billion user IDs would take gigabytes.</li>
+    <li><b>Count-min sketch</b> estimates how often each item appears in a stream (heavy hitters, trending hashtags) using a small grid of counters and a few hash functions. It can overestimate (collisions add) but never underestimates, and its memory doesn't grow with the number of distinct items.</li>
+  </ul>
+  <p><b>4. Exactly-once-ish for billing.</b> Networks retry, so the same click can arrive twice. Give each click a unique ID at the source and dedupe on it within a window; use a stream processor that checkpoints state and output together so a crash replays from the last checkpoint without double counting. Then, because the bill is money, run a nightly batch job that recounts from the raw archive. The batch number is the number of record; the streaming number is for dashboards. Large ad systems run both paths for this reason.</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Batching in memory</b> gives you 1,000× fewer writes at the cost of losing a few seconds of counts on a crash; choose it for likes and views.</li>
+    <li><b>Approximate sketches</b> give you fixed, tiny memory at the cost of ~1% error; choose them for unique counts and trending, never for invoices.</li>
+    <li><b>Streaming plus batch</b> gives you fresh dashboards and exact bills at the cost of running and reconciling two pipelines; choose it when money depends on the count.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"The stream job crashes. Do you double-count?"</b> It restarts from its last checkpoint, which stored both its Kafka offsets and its partial window state; output writes are keyed by (ad, window) as upserts, so replaying a minute overwrites the same row instead of adding to it. Idempotent output plus checkpointed input is how you get effectively-once.</p>
+  <p><b>"How do you filter fraud clicks?"</b> Before counting for billing: dedupe by click ID, drop clicks from known bots and data-center IPs, and cap clicks per user per ad per window. The raw archive lets you re-run billing if a fraud rule changes.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"First I'd ask how exact each count must be. Views and likes are batched in memory and flushed every few seconds. Unique viewers use HyperLogLog, 12 KB each with under 1% error. Ad clicks go to Kafka, a stream job counts them per ad per minute for dashboards, and a nightly batch recount from the raw archive is what we bill on, so a streaming bug can never overcharge anyone."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p><code>UPDATE posts SET likes = likes + 1</code> per event. It works in the demo, then a viral post makes that one row the hottest lock in the database. And the opposite mistake: proposing approximate counting for billing. Match the tool to the accuracy the number needs.</p></div>
+  <div data-videos="arch-counting"></div>
+
+  <h2>8. B4 · Payments: wallets and ledgers</h2>
+  <p><b>Essence.</b> Move money between accounts without ever creating or destroying any, even when calls to banks time out, clients retry and servers crash halfway. Scale is modest; correctness is everything.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Users top up a wallet with a card, pay each other, and withdraw. Every cent is accounted for, forever.</li>
+    <li>Retries never double-charge. An unclear outcome is resolved, not guessed.</li>
+    <li>A full audit trail: who moved what, when, and why. Nothing is ever edited or deleted.</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Throughput.</b> 10 million payments/day ÷ 86,400 ≈ <b>115/s</b> average, maybe 1,000/s at peak. A single well-tuned relational primary handles this. This is not a scale problem.</li>
+      <li><b>Ledger rows.</b> Each payment writes ~2–4 ledger entries (plus fees): 10 M × 4 × ~200 B ≈ <b>8 GB/day</b>, ~3 TB/year. Big but boring; partition by month.</li>
+      <li><b>The real numbers.</b> PSP (payment service provider: Stripe, Adyen, Braintree) calls take hundreds of ms to seconds, and a small fraction time out with an unknown outcome. At 10 M/day, even 0.1% unknown is 10,000 payments a day you must resolve correctly.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <p>The heart is a <b>double-entry ledger</b>: every movement of money is recorded as entries that sum to zero. Alice pays Bob $20:</p>
+  <table class="tbl">
+    <thead><tr><th>txn_id</th><th>account</th><th>amount (cents)</th></tr></thead>
+    <tbody>
+      <tr><td>t_501</td><td>wallet:alice</td><td>−2,000</td></tr>
+      <tr><td>t_501</td><td>wallet:bob</td><td>+2,000</td></tr>
+    </tbody>
+  </table>
+  <p>Alice tops up $50 by card: <code>card_clearing</code> −5,000 (money the PSP owes us), <code>wallet:alice</code> +5,000. The sum of every transaction is zero, so money can only move, never appear. A balance is the sum of an account's entries (often cached in a balances table updated <i>in the same database transaction</i>). Amounts are integers in the smallest unit (cents), never floating point: 0.1 + 0.2 is not 0.3 in floating point.</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 600 300" width="100%" role="img" aria-label="Payments: API writes ledger and idempotency key in one transaction, calls the PSP, reconciles daily" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;font-family:inherit">
+    <rect x="20" y="20" width="120" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="80" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Client</text>
+    <text x="80" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">Idempotency-Key</text>
+    <rect x="180" y="18" width="150" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="255" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Payments API</text>
+    <text x="255" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">state machine</text>
+    <rect x="450" y="20" width="130" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="515" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">PSP</text>
+    <text x="515" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">Stripe, Adyen…</text>
+    <path d="M180,129 a75,7 0 0,0 150,0 a75,7 0 0,0 -150,0 v50 a75,7 0 0,0 150,0 v-50" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="255" y="155" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Ledger DB</text>
+    <text x="255" y="171" text-anchor="middle" font-size="12" fill="var(--muted)">entries + keys, 1 txn</text>
+    <rect x="450" y="128" width="130" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="515" y="151.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Settlement file</text>
+    <text x="515" y="167.5" text-anchor="middle" font-size="12" fill="var(--muted)">daily, from PSP</text>
+    <rect x="180" y="232" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="255" y="255.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Reconciler</text>
+    <text x="255" y="271.5" text-anchor="middle" font-size="12" fill="var(--muted)">ours vs theirs</text>
+    <rect x="20" y="232" width="120" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="80" y="255.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Exceptions</text>
+    <text x="80" y="271.5" text-anchor="middle" font-size="12" fill="var(--muted)">humans review</text>
+    <path d="M143.0,47.0 L177.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M177.0,47.0 L168.0,42.5 L168.0,51.5 Z" fill="currentColor"/>
+    <path d="M333.0,37.0 L447.0,37.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M447.0,37.0 L438.0,32.5 L438.0,41.5 Z" fill="currentColor"/>
+    <text x="390" y="32" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">charge (our key)</text>
+    <path d="M447.0,59.0 L333.0,59.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M333.0,59.0 L342.0,63.5 L342.0,54.5 Z" fill="currentColor"/>
+    <text x="390" y="54" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">webhook</text>
+    <path d="M255.0,79.0 L255.0,119.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M255.0,119.0 L259.5,110.0 L250.5,110.0 Z" fill="currentColor"/>
+    <path d="M515.0,77.0 L515.0,125.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M515.0,125.0 L519.5,116.0 L510.5,116.0 Z" fill="currentColor"/>
+    <path d="M255.0,189.0 L255.0,229.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M255.0,229.0 L259.5,220.0 L250.5,220.0 Z" fill="currentColor"/>
+    <path d="M447.2,182.1 L325.3,230.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M325.3,230.9 L335.3,231.7 L332.0,223.4 Z" fill="currentColor"/>
+    <path d="M177.0,259.0 L143.0,259.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M143.0,259.0 L152.0,263.5 L152.0,254.5 Z" fill="currentColor"/>
+    <text x="160" y="254" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">mismatch</text>
+    </svg>
+    <figcaption>The API writes ledger entries and the idempotency record in one transaction, calls the PSP with its own key, learns outcomes by webhook, and a daily reconciler compares our ledger with the PSP's settlement file.</figcaption>
+  </figure>
+  <h3>The nuances</h3>
+  <p><b>1. Idempotency keys end to end.</b> The client generates a key per payment attempt (<code>Idempotency-Key: 7f3a…</code>) and reuses it on retry. The server stores key → result in the same transaction as the ledger entries; a retry with the same key returns the stored result instead of paying again. And when the server calls the PSP, it passes <i>its own</i> idempotency key, so its retries don't double-charge either. (Stripe, for example, accepts an idempotency key header and remembers it for at least 24 hours.)</p>
+  <p><b>2. The unknown outcome.</b> You call the PSP to charge $50 and the call times out. Did it charge? You don't know. Never assume. The payment sits in a <code>pending</code> state; you learn the truth from the PSP's webhook, or by querying the payment by your key, or by retrying with the same key (which returns the original result). Model it as a state machine: <code>created → pending → succeeded | failed</code>, with every transition recorded.</p>
+  <p><b>3. Authorize, then capture.</b> Card payments are often two steps: <b>authorize</b> places a hold on the customer's card (the money is reserved, not moved), and <b>capture</b> actually takes it later, for example when the order ships or the ride ends. Holds expire (commonly around a week, varying by card network), so you capture or release in time. Uber authorizes an estimate when you request a ride and captures the final fare.</p>
+  <p><b>4. Reconciliation.</b> Every day the PSP sends a settlement report of what actually moved. A reconciliation job matches it line by line against your ledger. Mismatches (a charge they have and you don't, an amount off by a fee) go to an exceptions queue for humans. This is how you find the bugs that idempotency didn't catch.</p>
+  <p><b>5. Append-only audit trail.</b> Ledger entries are never updated or deleted. A mistake is fixed by a new <b>reversing entry</b>, so the history shows both the error and the correction.</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>A <b>single relational database for the ledger</b> gives you ACID transactions across both sides of every transfer at the cost of a vertical scaling ceiling; choose it until you're truly huge, then shard by account with care (cross-shard transfers become sagas).</li>
+    <li><b>Synchronous charge at checkout</b> gives the user an immediate answer at the cost of tying your latency to the PSP; <b>async with a pending state</b> is more robust when outcomes may be unknown. Most products do synchronous with an async fallback.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"Your server crashes after the PSP charged the card but before you recorded it."</b> Write the payment row in <code>pending</code> with the idempotency key <i>before</i> calling the PSP. On restart, a sweeper finds old pending payments and asks the PSP for the status using that key; the webhook may arrive first anyway. Either way the ledger catches up, and nightly reconciliation is the final safety net.</p>
+  <p><b>"How do you transfer between two services' databases?"</b> You can't have one transaction across them, so use a saga with the transactional outbox (<a href="#events">event-driven lesson</a>): debit and an outbox event in one transaction, the other side consumes it idempotently, and a failure triggers a compensating entry.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Payments are about a hundred per second, so scale isn't the issue; never losing or inventing money is. I'd use a double-entry ledger in one relational database with integer cents, append-only, corrections as reversing entries. Every request carries an idempotency key that's stored in the same transaction, and we pass our own key to the PSP. A timeout is an unknown, not a failure: the payment stays pending until a webhook or status query resolves it, and a daily reconciliation against the PSP's settlement file catches anything else."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>A <code>balance</code> column updated with <code>balance = balance - 20</code> and no entries. When it's wrong (and one day it will be) you can't tell why. The second classic: treating a PSP timeout as a failure and letting the user retry with a new request, which charges them twice.</p></div>
+  <div data-videos="arch-payments"></div>
+
+  <h2>9. B5 · Web crawler</h2>
+  <p><b>Essence.</b> Download a large part of the web, continuously, without hammering any single site, without fetching the same thing twice, and without getting stuck in infinite link mazes.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Crawl ~1 billion pages a month, storing the HTML for an indexer (search, AI training data, price monitoring).</li>
+    <li><b>Politeness</b>: at most about one request per second per site (or what its <code>robots.txt</code> crawl-delay asks), and obey robots.txt rules.</li>
+    <li>Re-crawl pages that change often more often. Survive worker crashes.</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Fetch rate.</b> 1 B pages / 30 days ≈ 1,000,000,000 / 2,600,000 s ≈ <b>~400 pages/s</b>, so plan for ~1,000/s peak.</li>
+      <li><b>Bandwidth.</b> ~100 KB per page × 400/s = 40 MB/s ≈ <b>320 Mbps</b>. Achievable with a modest fleet; the challenge is coordination, not bandwidth.</li>
+      <li><b>Storage.</b> 1 B × 100 KB = <b>100 TB/month</b> raw, maybe 20–30 TB compressed. Object storage.</li>
+      <li><b>The frontier.</b> The set of discovered-but-not-yet-crawled URLs grows far faster than you crawl: each page links to dozens more. 10 billion known URLs × ~100 bytes ≈ <b>1 TB</b>. It doesn't fit in memory, so it's disk-backed queues with in-memory buffers.</li>
+      <li><b>Politeness math.</b> At 1 request/s per host, 400 pages/s means at least 400 different hosts in flight at any moment, really thousands, because most hosts have few pages queued.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 600 320" width="100%" role="img" aria-label="Crawler loop: frontier, fetchers, parser, dedupe, and the URL filter feeding new links back to the frontier" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;font-family:inherit">
+    <rect x="20" y="20" width="100" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="70" y="51.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Seed URLs</text>
+    <rect x="160" y="18" width="150" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="235" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">URL frontier</text>
+    <text x="235" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">priority + per-host</text>
+    <rect x="350" y="20" width="120" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="410" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Fetchers</text>
+    <text x="410" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">DNS, robots cache</text>
+    <rect x="500" y="20" width="80" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25" stroke-dasharray="5 4"/>
+    <text x="540" y="51.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">The web</text>
+    <rect x="350" y="135" width="120" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="410" y="158.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Parser</text>
+    <text x="410" y="174.5" text-anchor="middle" font-size="12" fill="var(--muted)">text + links</text>
+    <rect x="500" y="135" width="80" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="540" y="158.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Seen</text>
+    <text x="540" y="174.5" text-anchor="middle" font-size="12" fill="var(--muted)">content?</text>
+    <path d="M490,247 a50,7 0 0,0 100,0 a50,7 0 0,0 -100,0 v46 a50,7 0 0,0 100,0 v-46" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="540" y="271" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Content</text>
+    <text x="540" y="287" text-anchor="middle" font-size="12" fill="var(--muted)">store</text>
+    <rect x="160" y="135" width="150" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="235" y="158.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">URL filter</text>
+    <text x="235" y="174.5" text-anchor="middle" font-size="12" fill="var(--muted)">normalize, seen?</text>
+    <path d="M123.0,47.0 L157.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M157.0,47.0 L148.0,42.5 L148.0,51.5 Z" fill="currentColor"/>
+    <path d="M313.0,47.0 L347.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M347.0,47.0 L338.0,42.5 L338.0,51.5 Z" fill="currentColor"/>
+    <path d="M473.0,47.0 L497.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M497.0,47.0 L488.0,42.5 L488.0,51.5 Z" fill="currentColor"/>
+    <path d="M473.0,47.0 L482.0,51.5 L482.0,42.5 Z" fill="currentColor"/>
+    <path d="M410.0,77.0 L410.0,132.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M410.0,132.0 L414.5,123.0 L405.5,123.0 Z" fill="currentColor"/>
+    <path d="M473.0,162.0 L497.0,162.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M497.0,162.0 L488.0,157.5 L488.0,166.5 Z" fill="currentColor"/>
+    <path d="M540.0,192.0 L540.0,237.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M540.0,237.0 L544.5,228.0 L535.5,228.0 Z" fill="currentColor"/>
+    <text x="540" y="209.5" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">new only</text>
+    <path d="M347.0,162.0 L313.0,162.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M313.0,162.0 L322.0,166.5 L322.0,157.5 Z" fill="currentColor"/>
+    <text x="330" y="157" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">links</text>
+    <path d="M235.0,132.0 L235.0,79.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M235.0,79.0 L230.5,88.0 L239.5,88.0 Z" fill="currentColor"/>
+    <text x="235" y="100.5" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">new URLs</text>
+    <text x="235" y="230" text-anchor="middle" font-size="12" fill="var(--muted)">Bloom filter or KV of</text>
+    <text x="235" y="246" text-anchor="middle" font-size="12" fill="var(--muted)">URL hashes; traps capped</text>
+    <text x="235" y="262" text-anchor="middle" font-size="12" fill="var(--muted)">by depth and per-host limits</text>
+    </svg>
+    <figcaption>The crawl loop: the frontier hands out the next polite URL, fetchers download it, the parser extracts text and links, content dedupe skips copies, and new links pass the URL filter back into the frontier.</figcaption>
+  </figure>
+  <h3>The nuances</h3>
+  <p><b>1. The URL frontier is two layers of queues.</b> The classic design (from the Mercator crawler) separates <i>what's important</i> from <i>what's polite</i>. Front queues are by priority (a news homepage before a 2009 forum thread). Back queues are per host: each back queue holds URLs from exactly one host, and a min-heap records "the earliest time this host may be fetched again". A fetcher pops the host whose time has come, takes one URL, and after fetching pushes the host back with time = now + delay. Politeness is enforced by the data structure, not by hoping workers behave.</p>
+  <p><b>2. Partition by host.</b> Distribute work across crawler nodes by <code>hash(hostname)</code>, so every URL for <code>example.com</code> goes to the same node. That node alone owns the host's queue, rate limit, robots.txt cache and DNS cache, with no cross-node coordination needed for politeness.</p>
+  <p><b>3. Two kinds of dedupe.</b></p>
+  <ul>
+    <li><b>URL dedupe</b>: normalize first (lowercase the host, drop <code>#fragments</code>, remove default ports and tracking parameters like <code>utm_source</code>, sort query parameters), then check a "seen" set. At 10 B URLs a <b>Bloom filter</b> (a compact bit array that answers "definitely not seen" or "probably seen") fits in roughly 10–20 GB at a 1% false-positive rate; the cost is occasionally skipping a URL you never actually crawled, which is acceptable.</li>
+    <li><b>Content dedupe</b>: different URLs often serve the same page (mirrors, <code>?sessionid=</code> variants). A hash of the content catches exact copies; a <b>SimHash</b>-style fingerprint catches near-duplicates (same article, different ads). A large fraction of the web, often estimated at a quarter or more, is duplicate or near-duplicate.</li>
+  </ul>
+  <p><b>4. Traps and robots.</b> A calendar page with a "next month" link generates infinite URLs. Defend with maximum depth, a cap on URLs per host, URL length limits, and detecting repeating path patterns. Fetch and cache each host's <code>robots.txt</code> (typically for about a day) before crawling it.</p>
+  <p><b>5. Re-crawl scheduling.</b> Estimate each page's change rate from history: if it changed on 9 of the last 10 visits, come back sooner; if never, back off. Use conditional requests (<code>If-Modified-Since</code> or <code>ETag</code>): an unchanged page returns <code>304 Not Modified</code> with no body, which saves bandwidth for you and the site.</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li>A <b>Bloom filter</b> for seen URLs gives you ~10× less memory than an exact set at the cost of skipping ~1% of new URLs; choose it at web scale, an exact key-value store when completeness matters (crawling your own site).</li>
+    <li><b>BFS by priority</b> gives you important pages first at the cost of reaching deep pages slowly; choose it for search. Focused crawlers (only product pages) use a classifier to prioritize instead.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"A crawler node dies. What happens to its hosts?"</b> Frontier queues are persisted on disk (or in a durable log), so another node takes over that partition, reloads the queues and continues. URLs that were in flight are fetched again; that's harmless because storing a page is idempotent (keyed by URL and crawl time).</p>
+  <p><b>"DNS is slow. Does that matter?"</b> Yes: a DNS lookup can take tens to hundreds of ms and public resolvers may throttle you. Each node runs a local caching resolver and resolves hosts ahead of when they're needed.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"The scale is modest, about 400 pages a second. The hard parts are politeness, dedupe and traps. I'd partition by hostname so one node owns each host, and use a two-level frontier: priority queues feeding per-host queues with a heap of next-allowed-fetch times. URLs are normalized and checked against a Bloom filter; content is fingerprinted to skip duplicates. Depth and per-host caps stop traps, robots.txt is cached per host, and re-crawl frequency follows each page's observed change rate."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>One big shared queue of URLs with many workers pulling from it. Popular sites have millions of links, so most of the queue is a few hosts, and 200 workers will fetch from the same site at once: you get blocked, or you take down a small site. Politeness has to be structural: per-host queues and per-host timing.</p></div>
+  <div data-videos="arch-crawler"></div>
+
+  <h2>10. B6 · Distributed job scheduler (cron at scale)</h2>
+  <p><b>Essence.</b> Run millions of jobs at the right time ("every day at 9:00 in the user's time zone", "retry this webhook in 5 minutes", "send the reminder 3 days before the due date"), each one at least once, despite crashed machines, and without a stampede when everything is due at once.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>One-off delayed jobs and recurring (cron-like) schedules, with time zones.</li>
+    <li>A job fires within a few seconds of its time; it is never silently skipped; running it twice must be harmless.</li>
+    <li>Clear policy for missed runs after an outage; pause, cancel, and see run history.</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Volume.</b> 10 million active schedules (a reading app with daily reminders for every student, plus reports and retries). If they were spread evenly over the day: 10 M / 86,400 ≈ <b>115 jobs/s</b>. Trivial.</li>
+      <li><b>The real shape.</b> People pick round times. If 2 million reminders are set for "9:00 local" in the Pacific time zone, they're all due in the same second: <b>2,000,000 jobs at 09:00:00</b>.</li>
+      <li><b>What the workers can do.</b> If each reminder takes ~50 ms of work and you run 2,000 concurrent workers, that's 40,000 jobs/s, so the 9:00 burst drains in ~50 s. Fine for reminders, if the scheduler itself doesn't choke reading 2 million rows at once.</li>
+      <li><b>Storage.</b> 10 M schedules × ~500 bytes = 5 GB. One relational database is plenty; run history is bigger and gets partitioned by date.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 600 260" width="100%" role="img" aria-label="Scheduler: schedules table with next_run_at, pollers lease due rows, a work queue, workers that ack and reschedule" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;font-family:inherit">
+    <rect x="20" y="20" width="110" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="75" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">API</text>
+    <text x="75" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">create / pause</text>
+    <path d="M165,23 a75,7 0 0,0 150,0 a75,7 0 0,0 -150,0 v50 a75,7 0 0,0 150,0 v-50" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="240" y="49" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Schedules</text>
+    <text x="240" y="65" text-anchor="middle" font-size="12" fill="var(--muted)">next_run_at index</text>
+    <rect x="360" y="20" width="110" height="54" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="415" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Pollers</text>
+    <text x="415" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">lease due rows</text>
+    <rect x="490" y="20" width="100" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <line x1="580" y1="28" x2="580" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="573" y1="28" x2="573" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="566" y1="28" x2="566" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <text x="528" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Work</text>
+    <text x="528" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">queue</text>
+    <rect x="480" y="170" width="110" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="535" y="193.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Workers</text>
+    <text x="535" y="209.5" text-anchor="middle" font-size="12" fill="var(--muted)">idempotent</text>
+    <path d="M165,173 a75,7 0 0,0 150,0 a75,7 0 0,0 -150,0 v50 a75,7 0 0,0 150,0 v-50" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="240" y="199" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Run history</text>
+    <text x="240" y="215" text-anchor="middle" font-size="12" fill="var(--muted)">run_id unique</text>
+    <path d="M133.0,47.4 L162.0,47.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M162.0,47.5 L153.0,43.0 L153.0,52.0 Z" fill="currentColor"/>
+    <path d="M318.0,37.6 L357.0,37.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M357.0,37.3 L348.0,32.9 L348.0,41.9 Z" fill="currentColor"/>
+    <text x="337.5" y="32.4429" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">due</text>
+    <path d="M357.0,59.3 L318.0,59.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M318.0,59.6 L327.0,64.0 L327.0,55.0 Z" fill="currentColor"/>
+    <text x="337.5" y="54.4429" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">lease</text>
+    <path d="M473.0,47.0 L487.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M487.0,47.0 L478.0,42.5 L478.0,51.5 Z" fill="currentColor"/>
+    <path d="M539.0,77.0 L536.0,167.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M536.0,167.0 L540.8,158.2 L531.8,157.9 Z" fill="currentColor"/>
+    <path d="M477.0,197.2 L318.0,197.7" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M318.0,197.7 L327.0,202.2 L327.0,193.2 Z" fill="currentColor"/>
+    <text x="397.5" y="192.466" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">record run</text>
+    <path d="M477.5,178.3 L332.5,81.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <path d="M332.5,81.7 L337.5,90.4 L342.5,82.9 Z" fill="currentColor"/>
+    <text x="400" y="120" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">next_run_at</text>
+    </svg>
+    <figcaption>Pollers lease due rows from the schedules table and enqueue them; workers run them idempotently, record the run, and compute the next run time.</figcaption>
+  </figure>
+  <p>Separate <b>deciding when</b> from <b>doing the work</b>. The schedules table has <code>next_run_at</code> (in UTC) with an index. Pollers repeatedly claim due rows and put them on a work queue; ordinary queue workers execute them (the <a href="#queues">queues lesson</a> covers acks and retries). Claiming in Postgres looks like this:</p>
+  <pre><code class="lang-sql">UPDATE schedules SET lease_owner = 'poller-3', lease_until = now() + interval '60 seconds'
+WHERE id IN (
+  SELECT id FROM schedules
+  WHERE next_run_at &lt;= now() AND (lease_until IS NULL OR lease_until &lt; now())
+  ORDER BY next_run_at LIMIT 500
+  FOR UPDATE SKIP LOCKED      -- other pollers skip rows this one is claiming
+)
+RETURNING id, payload, next_run_at;</code></pre>
+  <p>For short delays, a <b>delay queue</b> is simpler: a Redis sorted set scored by due time (poll with <code>ZRANGEBYSCORE</code>), or a queue with built-in delays (Amazon SQS allows delays up to 15 minutes). Long-range schedules live in the database; the database feeds the delay queue as their time approaches.</p>
+  <h3>The nuances</h3>
+  <p><b>1. Leases, not locks; at-least-once, not exactly-once.</b> A poller or worker can die after claiming a job. The lease expires, the job becomes due again, and someone else runs it. So a job can run twice, and every job must be <b>idempotent</b>. The standard trick: a <b>run ID</b> = <code>job_id + scheduled_time</code> (e.g. <code>reminder:alice:2026-10-19T09:00</code>), stored with a unique constraint in run history and passed downstream as an idempotency key, so the email service drops the second "run" of the same reminder.</p>
+  <p><b>2. Missed runs.</b> The scheduler was down from 08:00 to 10:00. What about the 9:00 jobs? There's no universal answer, so make it a per-job policy: <b>fire once</b> (coalesce: send one daily report, not two), <b>catch up</b> (run every missed occurrence, right for billing jobs), or <b>skip</b> (a "good morning" push at 10:30 is pointless). Compute the next run from the schedule, not from "now + 24 h", or jobs slowly drift later after every delay.</p>
+  <p><b>3. Time zones and DST.</b> Store the time zone name (<code>America/Los_Angeles</code>), not an offset (<code>-07:00</code>), because the offset changes twice a year. On the spring-forward day in the US, 2:30am doesn't exist; on the fall-back day, 1:30am happens twice. Pick and document a rule (run at the next valid time; run once on the first occurrence). Then convert to UTC for <code>next_run_at</code>.</p>
+  <p><b>4. Thundering herds.</b> Add small jitter to non-urgent jobs ("9:00 ± 2 minutes"), give urgent jobs a separate queue, and let pollers claim in batches so the 9:00 burst is a few thousand queries, not two million.</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Database polling with SKIP LOCKED</b> gives you durability, easy querying and no new infrastructure at the cost of polling load and a throughput ceiling (often thousands to tens of thousands of claims/s); choose it for most products.</li>
+    <li>A <b>single leader</b> (elected via a lease, see <a href="#consensus">consensus</a>) gives you simple reasoning about who fires what at the cost of a failover pause; <b>partitioned pollers</b> (each owns <code>hash(job_id) mod N</code>) scale out at the cost of rebalancing logic.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"How do you guarantee a job runs exactly once?"</b> You can't, end to end: a worker can finish the work and crash before recording it. You get at-least-once from leases and effectively-once from idempotency: the run ID makes the second execution a no-op wherever it matters.</p>
+  <p><b>"A job runs for 2 hours but the lease is 60 seconds."</b> The worker renews (heartbeats) its lease while it runs; if it dies, renewals stop and the lease expires. Long jobs should also checkpoint progress so a retry resumes rather than restarts.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"I'd split deciding when from doing the work. Schedules live in a database with a UTC next_run_at index and the IANA time zone; pollers claim due rows with a lease using SKIP LOCKED and hand them to a normal work queue. Delivery is at-least-once, so every run has an ID of job plus scheduled time that downstream services use as an idempotency key. Each job declares a missed-run policy, and I jitter the round-hour herd."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>"Each server runs cron." With three servers, every job runs three times; with one server, it's a single point of failure. The other classic is a scheduler that sleeps in memory until a job is due: a restart forgets everything. Schedules must be durable, and claims must be leases.</p></div>
+  <div data-videos="arch-scheduler"></div>
+
+  <h2>11. B7 · Metrics, logging and monitoring</h2>
+  <p><b>Essence.</b> Ingest a firehose of tiny timestamped numbers (and a larger river of log lines), store them cheaply, answer "what happened in the last hour?" in a second, and wake someone up when something breaks. Writes vastly outnumber reads, and most data is never read.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Metrics like <code>http_requests_total{service="checkout", status="500"}</code> from every host, every 10 seconds.</li>
+    <li>Dashboards over the last hour load in about a second; queries over a year are allowed to be coarser.</li>
+    <li>Alerts fire within a minute or two of a problem, and don't flap.</li>
+    <li>The monitoring system must keep working when the systems it watches are failing.</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Series.</b> A <b>time series</b> is one metric name plus one exact combination of labels. 10,000 hosts × 1,000 series each = <b>10 million active series</b>.</li>
+      <li><b>Ingest.</b> One sample per series every 10 s: 10 M / 10 = <b>1 million samples/s</b>.</li>
+      <li><b>Raw size.</b> A sample is a timestamp (8 bytes) + a value (8 bytes) = 16 bytes. 1 M/s × 16 B × 86,400 ≈ <b>1.4 TB/day</b> uncompressed.</li>
+      <li><b>Compressed.</b> Consecutive timestamps are evenly spaced and consecutive values are similar, so you store tiny differences. Facebook's Gorilla paper reported about 1.37 bytes per sample: ≈ <b>120 GB/day</b>, more than 10× smaller.</li>
+      <li><b>Retention.</b> Keeping raw 10 s data for a year would be ~44 TB. With rollups (below), a year costs a small fraction of that.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <p>Agents on each host batch samples (or a server scrapes them: Prometheus <i>pulls</i>, Datadog's agent <i>pushes</i>) → a buffer such as Kafka to absorb bursts → <b>ingesters</b> sharded by series ID, which keep recent data in memory and write compressed blocks (Prometheus cuts a block every 2 hours) → object storage for old blocks → a query layer that fans out to ingesters and storage and merges results. An <b>inverted index</b> from label values to series IDs answers "all series where <code>service="checkout"</code>". A rule evaluator runs alert queries every 30–60 s.</p>
+  <h3>The nuances</h3>
+  <p><b>1. Cardinality explosions.</b> The number of series is the product of label values. <code>status</code> (10 values) × <code>endpoint</code> (200) × <code>host</code> (10,000) is already 20 million possible series. Now an engineer adds <code>user_id</code> with 5 million users. Every active series costs memory in the index (roughly kilobytes each in many systems), so this one label can multiply memory by orders of magnitude and take the cluster down. Rule: labels must have bounded values; per-user detail belongs in logs or traces, not metric labels. Real systems enforce per-tenant series limits.</p>
+  <p><b>2. Rollups and retention tiers.</b> Nobody needs 10-second resolution from last March.</p>
+  <table class="tbl">
+    <thead><tr><th>Tier</th><th>Resolution</th><th>Kept for</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr><td>Raw</td><td>10 s</td><td>~15 days</td><td>Debugging today's incident</td></tr>
+      <tr><td>Rollup 1</td><td>1 min</td><td>~90 days</td><td>Weekly reviews, comparisons</td></tr>
+      <tr><td>Rollup 2</td><td>1 h</td><td>1–2 years</td><td>Capacity planning, trends</td></tr>
+    </tbody>
+  </table>
+  <p>Store <b>min, max, sum and count</b> per rollup bucket, not just the average: averages of averages are wrong, and max is what shows the spike. Percentiles are trickier: you can't average two p99s. Record <b>histograms</b> (counts per latency bucket), which can be added together, and compute percentiles from the merged buckets.</p>
+  <p><b>3. Logs are a different beast.</b> Log volume in bytes is often 10–100× metrics. Full-text indexing everything (Elasticsearch-style) is powerful but expensive; indexing only labels and scanning compressed chunks on query (the Grafana Loki approach) is much cheaper but slower to search. Tier logs: hot on SSD for days, then object storage for months; sample or drop debug logs.</p>
+  <p><b>4. Alerting that people trust.</b> Alert on symptoms users feel (error rate, latency) rather than causes (CPU at 80%), require the condition to hold for a few minutes before firing, and group related alerts so one outage is one page. Alerting on SLO burn rate is the mature version (see <a href="#reliability">reliability</a>). And watch the watcher: an always-firing "heartbeat" alert whose <i>absence</i> pages someone tells you the monitoring pipeline itself is down.</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Pull (scraping)</b> gives you an automatic "is this target up?" signal and central control of rate at the cost of needing to reach every target; <b>push</b> works through firewalls and for short-lived jobs at the cost of clients being able to flood you. Choose pull inside your own network, push for edge devices and batch jobs.</li>
+    <li><b>Full-text indexed logs</b> give you fast arbitrary search at the cost of large index storage; choose them for security and audit logs, label-only indexing for high-volume app logs.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"One team's deploy suddenly creates 3 million new series. What happens?"</b> Ingesters enforce per-tenant limits on active series and new series per minute; over the limit, new series are rejected with an error that names the offending metric and label, so the rest of the company keeps its monitoring.</p>
+  <p><b>"Why is a dashboard over 30 days slow?"</b> It's reading raw 10 s data: 259,200 points per series. Route long-range queries to the 1-minute or 1-hour rollups automatically, and cache query results for recent fixed time ranges.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Ten million series at one sample per 10 seconds is a million writes a second, about 1.4 TB a day raw but ~120 GB with delta compression. Ingesters are sharded by series and buffered behind Kafka; recent data in memory, old blocks in object storage, rollups at 1 minute and 1 hour with min, max, sum and count, and histograms for percentiles. The scaling risk isn't samples, it's cardinality, so I'd enforce bounded labels and per-tenant series limits."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Storing metrics as rows in a general-purpose database (<code>INSERT INTO metrics(name, tags, ts, value)</code>), one row per sample. A million inserts a second with indexes, no compression and no rollups will cost 10–20× more storage and fall over. Name a time-series store and say why: append-only, compressed, time-partitioned.</p></div>
+  <div data-videos="arch-metrics"></div>
+
+  <h2>12. B8 · Code execution sandbox (online judge)</h2>
+  <p><b>Essence.</b> Run code written by strangers on your machines, safely, fairly and fast. Every submission should be treated as an attack, because some of them will be.</p>
+  <p>This is the archetype behind LeetCode, HackerRank, CodeSignal, Replit, Jupyter-style notebooks, AI agents that run code, and your own CollabSignal.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Users click <b>Run</b> (a few sample tests, wants an answer in ~1–2 s) or <b>Submit</b> (all hidden tests, a few seconds is fine). Several languages.</li>
+    <li>Results stream back test by test. Verdicts are fair: the same code gets the same verdict.</li>
+    <li>No submission can read another user's code, reach the network, harm the host or run forever.</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>A contest.</b> 20,000 people in a 90-minute contest, each pressing Run or Submit about every 2 minutes at the peak: 20,000 / 120 ≈ <b>170 executions/s</b>.</li>
+      <li><b>CPU per execution.</b> Compile plus ~30 tests ≈ 2–3 CPU-seconds. 170/s × 2.5 s ≈ <b>~425 cores busy</b> at peak. With 64-core hosts and headroom: ~10 hosts. Small fleet, as long as you can add more for contests.</li>
+      <li><b>Memory.</b> Cap each run at 256 MB; a microVM adds only a few MB of overhead on top. 64 concurrent runs per host ≈ 16 GB. CPU is the binding limit, not memory.</li>
+      <li><b>Startup.</b> A fresh container takes roughly hundreds of ms to start; a Firecracker microVM boots in roughly 125 ms; a pre-booted warm pool hands out a sandbox in a few ms. At 170/s, startup time is a big part of perceived latency, so keep a warm pool.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 600 310" width="100%" role="img" aria-label="Code execution: API, priority queue, dispatcher, a host of isolated microVMs, results streamed back" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;font-family:inherit">
+    <rect x="20" y="20" width="110" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="75" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Browser</text>
+    <text x="75" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">Run / Submit</text>
+    <rect x="160" y="20" width="130" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="225" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">API</text>
+    <text x="225" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">auth, limits</text>
+    <rect x="320" y="20" width="120" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <line x1="430" y1="28" x2="430" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="423" y1="28" x2="423" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="416" y1="28" x2="416" y2="66" stroke="currentColor" stroke-opacity=".45"/>
+    <text x="368" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Job queue</text>
+    <text x="368" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">Run first</text>
+    <rect x="470" y="20" width="110" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="525" y="43.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Dispatcher</text>
+    <text x="525" y="59.5" text-anchor="middle" font-size="12" fill="var(--muted)">pick a warm VM</text>
+    <rect x="300" y="120" width="280" height="172" rx="10" fill="none" stroke="currentColor" stroke-width="1.25" stroke-dasharray="5 4"/>
+    <text x="316" y="140" text-anchor="start" font-size="12" font-weight="600" fill="currentColor">Host (KVM)</text>
+    <rect x="316" y="152" width="118" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="375" y="171.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">microVM · py</text>
+    <text x="375" y="187.5" text-anchor="middle" font-size="12" fill="var(--muted)">warm</text>
+    <rect x="446" y="152" width="118" height="46" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="505" y="171.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">microVM · js</text>
+    <text x="505" y="187.5" text-anchor="middle" font-size="12" fill="var(--muted)">warm</text>
+    <rect x="316" y="206" width="118" height="46" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="375" y="225.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">job #81</text>
+    <text x="375" y="241.5" text-anchor="middle" font-size="12" fill="var(--muted)">running</text>
+    <rect x="446" y="206" width="118" height="46" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="505" y="225.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">job #82</text>
+    <text x="505" y="241.5" text-anchor="middle" font-size="12" fill="var(--muted)">running</text>
+    <text x="440" y="278" text-anchor="middle" font-size="12" fill="var(--muted)">no network · 256 MB · 2 s CPU · 64 pids</text>
+    <rect x="140" y="180" width="140" height="54" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <line x1="270" y1="188" x2="270" y2="226" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="263" y1="188" x2="263" y2="226" stroke="currentColor" stroke-opacity=".45"/>
+    <line x1="256" y1="188" x2="256" y2="226" stroke="currentColor" stroke-opacity=".45"/>
+    <text x="198" y="203.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Results bus</text>
+    <text x="198" y="219.5" text-anchor="middle" font-size="12" fill="var(--muted)">pub/sub</text>
+    <path d="M133.0,47.0 L157.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M157.0,47.0 L148.0,42.5 L148.0,51.5 Z" fill="currentColor"/>
+    <path d="M293.0,47.0 L317.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M317.0,47.0 L308.0,42.5 L308.0,51.5 Z" fill="currentColor"/>
+    <path d="M443.0,47.0 L467.0,47.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M467.0,47.0 L458.0,42.5 L458.0,51.5 Z" fill="currentColor"/>
+    <path d="M525.0,77.0 L525.0,114.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M525.0,114.0 L529.5,105.0 L520.5,105.0 Z" fill="currentColor"/>
+    <path d="M297.0,207.0 L283.0,207.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M283.0,207.0 L292.0,211.5 L292.0,202.5 Z" fill="currentColor"/>
+    <path d="M168.2,177.6 L91.8,78.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M91.8,78.4 L93.7,88.3 L100.9,82.8 Z" fill="currentColor"/>
+    <text x="118" y="130" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">SSE: test 3/12</text>
+    </svg>
+    <figcaption>Submissions are queued with Run ahead of Submit, a dispatcher hands each one to a fresh warm microVM with strict limits, and per-test results stream back over a pub/sub bus to the browser.</figcaption>
+  </figure>
+  <h3>The nuances</h3>
+  <p><b>1. Isolation strength.</b> Layers, weakest to strongest:</p>
+  <ul>
+    <li><b>Language-level sandboxes</b> (restricting <code>import os</code>): easy to escape. Not a security boundary.</li>
+    <li><b>Containers</b> (Linux namespaces + cgroups + seccomp syscall filters): processes see their own filesystem and process list, but every container shares the host's kernel. A kernel bug can let code escape. Fine for your own trusted code; risky for strangers' code.</li>
+    <li><b>gVisor</b> (Google): a user-space kernel that intercepts the sandboxed program's system calls, so it barely touches the real kernel. Stronger, with some performance cost.</li>
+    <li><b>MicroVMs</b> like <b>Firecracker</b> (built by AWS; it runs Lambda): each run gets its own tiny virtual machine with its own kernel, protected by hardware virtualization, yet boots in ~125 ms with a few MB of overhead. The standard choice for multi-tenant untrusted code today.</li>
+  </ul>
+  <p><b>2. Limits for every resource.</b> CPU time (2 s) <i>and</i> wall-clock time (10 s), because <code>sleep(1000)</code> uses no CPU; memory (256 MB); process count (a fork bomb spawns processes until the machine dies; cap at ~64); disk (a small temporary filesystem); output size (a 1 MB cap stops <code>while(true) print</code>); no network, or egress only through an allowlisting proxy (for package installs); a read-only root filesystem; a non-root user. Then <b>never reuse a sandbox</b> across users: destroy it, or restore it from a clean snapshot.</p>
+  <p><b>3. Fair verdicts.</b> Measure CPU time, not wall time, so a busy neighbour doesn't make your solution "too slow"; pin runs to dedicated cores; re-run submissions that land within ~10% of the time limit. Compare outputs with a checker that tolerates trailing whitespace and floating-point error where appropriate.</p>
+  <p><b>4. Queueing and streaming.</b> Two priorities: interactive Run ahead of Submit, and per-user rate limits so one person spamming Submit can't starve a contest. As each test completes the sandbox publishes a result to a pub/sub channel keyed by submission ID; the browser is subscribed via SSE or WebSocket (the same "job runs independently, client subscribes" shape as A8).</p>
+  <p><b>5. Abuse.</b> Crypto mining (CPU limits, wall-clock limits, anomaly detection on accounts), attacks launched from your IPs (no network), reading test cases (hidden tests are mounted only for the run, and the output channel is capped), and resource exhaustion through many accounts (signup friction, per-IP limits).</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Containers</b> give you the fastest start and highest density at the cost of a shared kernel; choose them when the code is your own (CI for your repo). <b>MicroVMs</b> give you VM-grade isolation at the cost of a little more overhead and operational complexity; choose them for strangers' code.</li>
+    <li>A <b>warm pool</b> gives you millisecond starts at the cost of paying for idle sandboxes; size it from the queue length and grow it before scheduled contests.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"How is Replit (or a live interview IDE) different from LeetCode?"</b> Sessions are long-lived and stateful: a sandbox per session with a persistent workspace, a terminal over WebSocket, an idle timeout that snapshots the filesystem to object storage and destroys the VM, and a restore on return. Isolation and limits stay the same; the scheduling becomes "place and keep a VM" instead of "run and destroy".</p>
+  <p><b>"A submission is stuck in an infinite loop."</b> The wall-clock timer outside the sandbox kills the whole VM, not just the process, records "Time Limit Exceeded", and the dispatcher replaces it in the warm pool.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Every submission is hostile, so each run gets a fresh Firecracker microVM from a warm pool: its own kernel, no network, read-only root, 256 MB, 64 processes, 2 seconds of CPU and 10 of wall clock, capped output, destroyed afterwards. Runs go through a queue with interactive runs ahead of full submissions and per-user rate limits; results stream back per test over pub/sub and SSE. Contest peaks are a few hundred cores, so I'd pre-scale the pool before scheduled contests."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>"We'll run it in a Docker container" as the whole security story. Containers share the host kernel, and a default container still has network access and no process or output limits. Name the isolation boundary (microVM or gVisor) and list the limits; the interviewer is checking whether you think like an attacker.</p></div>
+  <div data-videos="arch-sandbox"></div>
+
+  <h2>13. B9 · Distributed key-value store (Dynamo-style)</h2>
+  <p><b>Essence.</b> Build the storage system itself: <code>get(key)</code> and <code>put(key, value)</code> across hundreds of machines, staying available when some of them fail, with tunable consistency. This is the "design Dynamo / Cassandra / a distributed cache" question, and it ties together the Part 2 and Part 3 lessons on <a href="#storage">storage</a> and <a href="#consensus">quorums</a>.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Values up to ~1 MB; single-key operations only (no joins, no multi-key transactions).</li>
+    <li>Always writable, even during network partitions (an "add to cart" must never fail), so: choose availability, accept eventual consistency, and resolve conflicts.</li>
+    <li>Add and remove nodes without downtime; low, predictable latency (single-digit ms).</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Data.</b> 100 TB of data × 3 replicas = 300 TB stored.</li>
+      <li><b>Nodes for storage.</b> At ~2 TB usable per node (leave room for compaction): 300 / 2 = <b>150 nodes</b>.</li>
+      <li><b>Nodes for traffic.</b> 1 million ops/s, and each op touches 2 replicas with a quorum of 2: ~2 M replica-ops/s across 150 nodes ≈ <b>13,000 ops/s per node</b>, comfortable for SSD-backed nodes. Here storage, not traffic, sets the node count.</li>
+      <li><b>Membership.</b> With 150 nodes and a typical failure rate, something is broken every week or so. Failure handling is the normal case, not the exception.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 600 320" width="100%" role="img" aria-label="Consistent hash ring: key K replicated on B, C and D; D is down so E holds a hinted copy" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;font-family:inherit">
+    <circle cx="165" cy="160" r="118" fill="none" stroke="var(--line)" stroke-width="2"/>
+    <circle cx="165.0" cy="42.0" r="17" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+    <text x="165" y="46.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">A</text>
+    <circle cx="267.2" cy="101.0" r="17" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="267.191" y="105.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">B</text>
+    <circle cx="267.2" cy="219.0" r="17" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="267.191" y="223.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">C</text>
+    <circle cx="165.0" cy="278.0" r="17" fill="var(--surface)" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="165" y="282.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">D</text>
+    <circle cx="62.8" cy="219.0" r="17" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="62.809" y="223.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">E</text>
+    <circle cx="62.8" cy="101.0" r="17" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+    <text x="62.809" y="105.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">F</text>
+    <circle cx="224.0" cy="57.8" r="6" fill="var(--accent)"/>
+    <text x="234" y="47.809" text-anchor="start" font-size="12" font-weight="600" fill="var(--accent)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">hash(K)</text>
+    <text x="165" y="312" text-anchor="middle" font-size="12" fill="var(--muted)">D: down</text>
+    <text x="40" y="253" text-anchor="middle" font-size="12" fill="var(--accent)">hint for D</text>
+    <text x="165" y="156" text-anchor="middle" font-size="12" fill="var(--muted)">clockwise</text>
+    <text x="165" y="172" text-anchor="middle" font-size="12" fill="var(--muted)">→ owners</text>
+    <text x="330" y="44" text-anchor="start" font-size="12.5" fill="currentColor">1. hash(K) lands between A and B.</text>
+    <text x="330" y="69" text-anchor="start" font-size="12.5" fill="currentColor">2. Walk clockwise: first 3 distinct</text>
+    <text x="346" y="94" text-anchor="start" font-size="12.5" fill="currentColor">nodes own K → B, C, D (N = 3).</text>
+    <text x="330" y="119" text-anchor="start" font-size="12.5" fill="currentColor">3. D is down. Sloppy quorum: E takes</text>
+    <text x="346" y="144" text-anchor="start" font-size="12.5" fill="currentColor">the write with a hint "belongs to D".</text>
+    <text x="330" y="169" text-anchor="start" font-size="12.5" fill="currentColor">4. W = 2: ack once B and C have it.</text>
+    <text x="330" y="194" text-anchor="start" font-size="12.5" fill="currentColor">5. D comes back (gossip notices);</text>
+    <text x="346" y="219" text-anchor="start" font-size="12.5" fill="currentColor">E hands the write off, drops hint.</text>
+    <text x="330" y="244" text-anchor="start" font-size="12.5" fill="currentColor">6. Read with R = 2: R + W &gt; N, so at</text>
+    <text x="346" y="269" text-anchor="start" font-size="12.5" fill="currentColor">least one replica has the latest.</text>
+    </svg>
+    <figcaption>Consistent hashing places nodes and keys on a ring; a key's replicas are the next N distinct nodes clockwise. When one is down, a neighbour takes the write with a hint and hands it back later.</figcaption>
+  </figure>
+  <h3>The nuances</h3>
+  <p><b>1. Partitioning with consistent hashing.</b> Hash keys and nodes onto a ring; a key belongs to the first node clockwise. Adding a node moves only the keys in its new arc (about 1/N of the data), unlike <code>hash(key) mod N</code>, which reshuffles almost everything. Each physical node takes many <b>virtual nodes</b> (points on the ring) so load is even and a joining node takes data from many peers at once.</p>
+  <p><b>2. Replication and quorums.</b> Each key lives on N nodes (the next N distinct nodes clockwise). Any node can coordinate a request. With N = 3, writes wait for W acks and reads for R replies; if <b>R + W &gt; N</b> (e.g. 2 + 2 &gt; 3), every read overlaps the latest write on at least one replica. Lower W or R trade consistency for latency, per request.</p>
+  <p><b>3. Conflicts happen; resolve them.</b> During a partition, two clients can write the same key on different replicas. Options:</p>
+  <ul>
+    <li><b>Last-write-wins</b> by timestamp (Cassandra's default): simple, but clocks drift, so a "later" write can silently lose. Fine when values are overwritten wholesale and an occasional lost update is acceptable.</li>
+    <li><b>Version vectors / vector clocks</b> (Amazon's Dynamo paper, Riak): detect that two versions are concurrent and return both ("siblings") to the application, which merges them. Dynamo's example: two shopping-cart versions are merged by taking the union of items (which is why a deleted item can occasionally reappear).</li>
+    <li><b>CRDTs</b>: data types that merge automatically (counters, sets), the A10 idea applied to storage.</li>
+  </ul>
+  <p><b>4. Staying writable when nodes fail.</b> <b>Sloppy quorum and hinted handoff</b>: if a replica is down, the write goes to the next healthy node on the ring with a hint ("this belongs to D"); when D returns, the hint is delivered. <b>Read repair</b> fixes stale replicas noticed during reads. <b>Anti-entropy</b> catches the rest: replicas compare <b>Merkle trees</b> (trees of hashes over key ranges), so two nodes holding 1 TB each can find the few differing keys by comparing a handful of hashes, top-down, instead of shipping all data.</p>
+  <p><b>5. Gossip for membership.</b> There's no central coordinator. Every second, each node exchanges its view of the cluster (who's alive, heartbeat counters, ring positions) with a random peer. News spreads like a rumour: within a few seconds (roughly log N rounds) everyone knows. Failure detectors decide "D is probably dead" from missed heartbeats.</p>
+  <p><b>6. On each node: an LSM tree.</b> Writes go to an append-only log (for durability) and an in-memory sorted table; when it fills, it's flushed as an immutable sorted file (SSTable); background <b>compaction</b> merges files. Reads check memory, then files, using per-file Bloom filters to skip files that can't contain the key. This makes writes very fast at the cost of some read and compaction work.</p>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Leaderless replication with quorums</b> gives you availability during partitions and no failover pause at the cost of conflicts you must resolve; choose it when "always writable" matters (carts, sessions, device state). <b>Leader-based replication with consensus</b> (Raft, as in etcd or CockroachDB) gives you linearizable reads and writes at the cost of unavailability for a minority partition; choose it for metadata, locks and money.</li>
+    <li>A <b>cache</b> (Memcached-style) drops replication and durability entirely: client-side consistent hashing, a miss is just a miss. Choose it when the data can be recomputed.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"A node dies permanently. What happens?"</b> Gossip marks it down; its keys still have N−1 live replicas, so reads and writes continue (writes to its ranges go to neighbours via hinted handoff). An operator or automation removes it from the ring, and its ranges are re-replicated from surviving replicas, streamed from many nodes in parallel thanks to virtual nodes.</p>
+  <p><b>"Can you give me strong consistency?"</b> Per request: W = N (or R + W &gt; N with careful conflict handling) gets close, but sloppy quorums and clock-based conflict resolution still leave edge cases. For real linearizability, use a consensus protocol per key range (each range is a small Raft group), which is what systems like CockroachDB and TiKV do.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Keys are placed on a consistent-hash ring with virtual nodes and replicated to the next three distinct nodes. Any node coordinates; with N = 3, W = 2 and R = 2, reads overlap the latest write. To stay writable during failures I'd use sloppy quorums with hinted handoff, plus read repair and Merkle-tree anti-entropy. Concurrent writes are detected with version vectors and merged by the application, or last-write-wins where losing an update is acceptable. Membership spreads by gossip, and each node stores data in an LSM tree."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Partitioning with <code>hash(key) % number_of_nodes</code>. Going from 150 to 151 nodes changes the home of almost every key, which means moving nearly 100 TB. Consistent hashing exists exactly to make that ~1/151 of the data.</p></div>
+  <div data-videos="arch-kv-store"></div>
+
+  <h2>14. B10 · Full-text search</h2>
+  <p><b>Essence.</b> Given a few words, find the most relevant documents among millions or billions, in about 100 ms, and keep the index fresh as documents change. The data structure that makes it possible is the <b>inverted index</b>.</p>
+  <h3>Requirements that matter</h3>
+  <ul>
+    <li>Search a product catalogue (or tweets, or help articles) by words; results ranked by relevance plus business signals; filters (price, size, in stock).</li>
+    <li>Latency around 100–200 ms; new or changed documents searchable within seconds (tweets) or minutes (products).</li>
+    <li>Ask: how fresh? How big? Typo tolerance? Personalized ranking?</li>
+  </ul>
+  <h3>Numbers</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Corpus.</b> 100 million products × ~2 KB of searchable text = <b>200 GB</b>. The index is of a similar order (often 0.5–1.5× the source, depending on what's stored).</li>
+      <li><b>Shards.</b> Elasticsearch guidance suggests shards of roughly 10–50 GB, so ~5–10 primary shards, each with 2 replicas for throughput and failover.</li>
+      <li><b>Queries.</b> 5,000 searches/s at peak. Each query goes to every shard (see sharding below): 5,000 × 8 shards = <b>40,000 shard-queries/s</b>, spread across 3 copies of each shard.</li>
+      <li><b>Updates.</b> Prices and stock change constantly: say 2,000 document updates/s. Twitter-style search is far more write-heavy: hundreds of millions of tweets/day, thousands per second, searchable within seconds.</li>
+    </ol>
+  </div>
+  <h3>Core components</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 600 270" width="100%" role="img" aria-label="Inverted index: three documents are tokenized into term to posting lists, and a query intersects the lists" xmlns="http://www.w3.org/2000/svg" style="max-width:600px;font-family:inherit">
+    <rect x="20" y="30" width="170" height="44" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="105" y="48.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Red Running Shoes</text>
+    <text x="105" y="64.5" text-anchor="middle" font-size="12" fill="var(--muted)">d1</text>
+    <rect x="20" y="96" width="170" height="44" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="105" y="114.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Red Dress</text>
+    <text x="105" y="130.5" text-anchor="middle" font-size="12" fill="var(--muted)">d2</text>
+    <rect x="20" y="162" width="170" height="44" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="105" y="180.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Trail Running Shoes</text>
+    <text x="105" y="196.5" text-anchor="middle" font-size="12" fill="var(--muted)">d3</text>
+    <rect x="240" y="20" width="170" height="210" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="325" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Inverted index</text>
+    <text x="256" y="72" text-anchor="start" font-size="12.5" font-weight="600" fill="currentColor" class="mono">red</text>
+    <text x="312" y="72" text-anchor="start" font-size="12.5" fill="var(--muted)">→</text>
+    <text x="334" y="72" text-anchor="start" font-size="12.5" fill="currentColor" class="mono">d1 d2</text>
+    <text x="256" y="104" text-anchor="start" font-size="12.5" font-weight="600" fill="currentColor" class="mono">run</text>
+    <text x="312" y="104" text-anchor="start" font-size="12.5" fill="var(--muted)">→</text>
+    <text x="334" y="104" text-anchor="start" font-size="12.5" fill="currentColor" class="mono">d1 d3</text>
+    <text x="256" y="136" text-anchor="start" font-size="12.5" font-weight="600" fill="currentColor" class="mono">shoe</text>
+    <text x="312" y="136" text-anchor="start" font-size="12.5" fill="var(--muted)">→</text>
+    <text x="334" y="136" text-anchor="start" font-size="12.5" fill="currentColor" class="mono">d1 d3</text>
+    <text x="256" y="168" text-anchor="start" font-size="12.5" font-weight="600" fill="currentColor" class="mono">dress</text>
+    <text x="312" y="168" text-anchor="start" font-size="12.5" fill="var(--muted)">→</text>
+    <text x="334" y="168" text-anchor="start" font-size="12.5" fill="currentColor" class="mono">d2</text>
+    <text x="256" y="200" text-anchor="start" font-size="12.5" font-weight="600" fill="currentColor" class="mono">trail</text>
+    <text x="312" y="200" text-anchor="start" font-size="12.5" fill="var(--muted)">→</text>
+    <text x="334" y="200" text-anchor="start" font-size="12.5" fill="currentColor" class="mono">d3</text>
+    <rect x="440" y="20" width="140" height="58" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="510" y="45.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">query</text>
+    <text x="510" y="61.5" text-anchor="middle" font-size="12" fill="var(--muted)">"red running shoe"</text>
+    <rect x="440" y="150" width="140" height="80" rx="8" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="510" y="178.5" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">d1: all 3 terms</text>
+    <text x="510" y="194.5" text-anchor="middle" font-size="12" fill="var(--muted)">d3: 2 of 3 terms</text>
+    <text x="510" y="209.5" text-anchor="middle" font-size="12" fill="var(--muted)">d2: 1 of 3 terms</text>
+    <path d="M192.8,53.1 L235.2,68.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M235.2,68.9 L228.3,61.6 L225.2,70.0 Z" fill="currentColor"/>
+    <path d="M193.0,118.0 L235.0,118.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M235.0,118.0 L226.0,113.5 L226.0,122.5 Z" fill="currentColor"/>
+    <path d="M192.8,182.9 L235.2,167.1" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M235.2,167.1 L225.2,166.0 L228.3,174.4 Z" fill="currentColor"/>
+    <text x="214" y="250" text-anchor="middle" font-size="12" fill="var(--muted)">tokenize: lowercase, stem (running → run, shoes → shoe)</text>
+    <path d="M510.0,81.0 L510.0,147.0" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M510.0,147.0 L514.5,138.0 L505.5,138.0 Z" fill="currentColor"/>
+    <text x="510" y="109" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">look up 3 lists, score</text>
+    <path d="M413.8,127.4 L436.2,157.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M436.2,157.6 L434.5,147.7 L427.2,153.1 Z" fill="currentColor"/>
+    </svg>
+    <figcaption>Each document is tokenized into terms; the inverted index maps each term to the documents that contain it; a query looks up its terms' lists and scores the documents that appear.</figcaption>
+  </figure>
+  <p>Pipeline: the source of truth (a product database) emits changes via change data capture or an outbox → a queue → <b>indexers</b> that tokenize and write to the search cluster. The index is derived data: you can always rebuild it. Queries go to a coordinator that fans out to shards and merges.</p>
+  <h3>The nuances</h3>
+  <p><b>1. Tokenizing decides what matches.</b> "Running Shoes!" becomes <code>run</code>, <code>shoe</code> after lowercasing, splitting, removing punctuation and <b>stemming</b> (reducing words to a root). Add synonyms ("sneakers" ≈ "shoes"), language-specific rules, and edge n-grams if you want prefix matches. The same analysis must run on documents and queries, or "shoes" won't find "shoe".</p>
+  <p><b>2. Ranking: TF-IDF and BM25, intuitively.</b> Score a document higher when a query term appears in it often (<b>term frequency</b>), when the term is rare across the whole corpus (<b>inverse document frequency</b>: matching "gore-tex", in 5,000 products, says more than matching "shoe", in 2 million), and when the field is short (a match in a 6-word title beats one buried in a 3,000-word description). <b>BM25</b>, the default in Lucene-based engines, refines TF-IDF with <b>saturation</b>: the 10th occurrence of "shoe" adds much less than the first, so keyword stuffing doesn't win. Then blend in business signals (sales, rating, stock), and often re-rank the top few hundred with a machine-learned model. Many modern systems also add vector (embedding) search for meaning and merge the two result lists (hybrid search).</p>
+  <p><b>3. Freshness.</b> Lucene-based engines (Elasticsearch, OpenSearch, Solr) write new documents into small immutable <b>segments</b>; a periodic refresh (1 second by default in Elasticsearch) makes them searchable, which is why it's called "near real time". An update is really "mark old version deleted, add new"; background merges clean up. Give each change a version number so an older update arriving late can't overwrite a newer one. For a big schema change, build a new index alongside the old one and switch an alias atomically.</p>
+  <p><b>4. Sharding: by document or by term.</b></p>
+  <ul>
+    <li><b>Document-partitioned</b> (what Elasticsearch does): each shard holds a complete mini-index for its subset of documents. A query goes to every shard; each returns its top 20; the coordinator merges. Writes touch one shard. Cost: every query hits every shard, so the slowest shard sets the latency (tail latency), which you fight with replicas and hedged requests.</li>
+    <li><b>Term-partitioned</b>: each shard owns some terms and their full posting lists. A query touches only the shards for its terms, but multi-word queries must intersect lists across machines, a hot term ("iphone") makes a hot shard, and updating one document touches many shards. Rare in practice.</li>
+  </ul>
+  <h3>Trade-offs</h3>
+  <ul>
+    <li><b>Document partitioning</b> gives you simple writes and balanced load at the cost of fan-out on every query; choose it almost always.</li>
+    <li><b>A shorter refresh interval</b> gives you fresher results at the cost of more small segments and more merge work; choose 1 s for tweets, 30 s or more for bulk catalogue indexing.</li>
+    <li><b>A search engine next to your database</b> gives you relevance, typo tolerance and facets at the cost of a second system to keep in sync; for small data (under a few million rows), Postgres full-text search may be enough.</li>
+  </ul>
+  <h3>Deep-dive questions</h3>
+  <p><b>"Why not <code>WHERE title LIKE '%shoe%'</code>?"</b> A leading wildcard can't use a normal index, so it scans every row; it has no stemming, no ranking and no typo tolerance. The inverted index makes lookup proportional to the matching documents, not the whole table.</p>
+  <p><b>"How does Twitter-style search stay fresh at thousands of tweets a second?"</b> Partition by time as well as by document: the most recent tweets sit in an in-memory index that is written continuously and queried first; older time slices are on-disk, read-only and heavily cached. Most searches want recent results, so most queries never touch the old slices.</p>
+  <p><b>"Typos?"</b> Fuzzy matching within an edit distance of 1–2 per term (Lucene does this efficiently with automata), plus a "did you mean" built from query logs, the same offline-precompute idea as A7.</p>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Search is an inverted index: term to posting list. Documents and queries go through the same analyzer: lowercase, stem, synonyms. Ranking is BM25, rare terms matter more and repetition saturates, blended with business signals and an optional re-ranker. The index is derived from the database through change data capture with version numbers, refreshed about every second. I'd shard by document, about 30 GB per shard with two replicas, and scatter-gather the top results, watching tail latency."</p></div>
+  <div class="callout warn"><span class="callout-label">Common mistake</span><p>Making the search engine the source of truth. Search clusters can lose writes on failure and are rebuilt from scratch on schema changes; they're an index, not a database. Keep the truth in the database and feed the index from it, so you can always rebuild.</p></div>
+  <div data-videos="arch-search"></div>
+
+  <h2>15. Archetype mixing: decomposing real prompts</h2>
+  <p>Real interview prompts are products, and products combine archetypes. The skill is to decompose the prompt in the first five minutes, then spend your deep dive on the archetype that carries the product's biggest risk. Say the decomposition out loud: it shows you see the whole system, and it lets the interviewer pick where to go deep.</p>
+  <table class="tbl">
+    <thead><tr><th>Prompt</th><th>Archetypes inside it</th><th>Where the deep dive usually goes</th></tr></thead>
+    <tbody>
+      <tr><td>Design Instagram</td><td>Upload (A6) + feed (A2) + counting (B3) for likes; search for hashtags (B10)</td><td>Feed fan-out with celebrity accounts; image pipeline</td></tr>
+      <tr><td>Design Twitter/X</td><td>Feed (A2) + counting (B3) + search (B10) + notifications (A4)</td><td>Celebrity fan-out; trending topics as windowed counting</td></tr>
+      <tr><td>Design YouTube</td><td>Upload (A6) + video (B2) + counting (B3) for views + search (B10) + recommendations</td><td>Transcode DAG and CDN; view counts at scale</td></tr>
+      <tr><td>Design Twitch</td><td>Live video (B2) + chat (A3) + counting (B3) for viewers</td><td>Live segment latency; chat fan-out to 100,000 viewers in one channel</td></tr>
+      <tr><td>Design Uber</td><td>Location (B1) + booking-style state machine (A9) + payments (B4) + notifications (A4)</td><td>Location write volume and the spatial index; dispatch without double-assigning</td></tr>
+      <tr><td>Design DoorDash</td><td>Location (B1) + order state machine (A9-ish) + notifications (A4) + payments (B4) + search (B10) for restaurants</td><td>Order lifecycle (placed → accepted → picked up → delivered) and courier matching</td></tr>
+      <tr><td>Design Airbnb</td><td>Search (B10) with location filter (B1) + booking (A9) + payments (B4)</td><td>No double booking of date ranges; search ranking</td></tr>
+      <tr><td>Design Slack</td><td>Chat (A3) + notifications (A4) + search (B10) + upload (A6)</td><td>Channel fan-out, ordering, multi-device sync</td></tr>
+      <tr><td>Design Dropbox</td><td>Upload (A6) + sync (a light A10: conflicts) + notifications (A4)</td><td>Chunking and content-hash dedupe; conflict copies</td></tr>
+      <tr><td>Design LeetCode / CollabSignal</td><td>Sandbox (B8) + rate limiter (A5) + counting (B3) for leaderboards + collab (A10) for a shared pad</td><td>Isolation and limits; contest-time scaling</td></tr>
+      <tr><td>Design Claude.ai</td><td>LLM chat (A8) + rate limiter (A5) + counting (B3) for usage + upload (A6) for files + search (B10) over chats</td><td>Streaming and resume; capacity, quotas and token cost</td></tr>
+      <tr><td>Design Ticketmaster</td><td>Booking (A9) + rate limiter / waiting room (A5) + payments (B4) + notifications (A4)</td><td>Holds and atomic claims; the on-sale surge</td></tr>
+    </tbody>
+  </table>
+  <div class="trace">
+    <div class="trace-title">Worked decomposition: "Design DoorDash" in 90 seconds</div>
+    <ol>
+      <li><b>Clarify.</b> Customers order from restaurants; couriers deliver; everyone tracks the order live. One country, ~1 M orders/day (≈ 12/s average, ~100/s at dinner peak).</li>
+      <li><b>Name the pieces.</b> "Restaurant discovery is search with a location filter. The order is a state machine, like a booking. Courier tracking and assignment is the location archetype. Status changes drive notifications. Checkout is payments with authorize-then-capture."</li>
+      <li><b>Find the scale hot spot.</b> Orders are only ~100/s, but 200,000 active couriers pinging every 5 s is <b>40,000 location writes/s</b>: the live location index is where scale lives.</li>
+      <li><b>Find the correctness hot spot.</b> An order must never be assigned to two couriers, and a customer must never be charged for an order that was cancelled: an atomic claim on order state, and authorize at checkout, capture on delivery.</li>
+      <li><b>Offer the deep dive.</b> "I'll keep search and notifications standard. I'd like to go deep on courier assignment, or on the order state machine with payments. Which matters more to you?"</li>
+    </ol>
+  </div>
+
+  <div data-quiz='[{"q":"The prompt is: design a system that shows how many unique people viewed each article today, across 50 million articles. Which archetype and key tool?","o":["Feed: fan-out on write","Counting: a HyperLogLog per article, about 12 KB each with ~1% error","Key-value store: last-write-wins","Search: an inverted index of viewers"],"a":1,"why":"Unique counts at this scale are the classic use of HyperLogLog: fixed tiny memory per counter and a small, known error. An exact set of viewer IDs per article would be enormous."},{"q":"Design Find My Friends (see friends on a map, updating every few seconds). What is the nuance the interviewer is most likely testing?","o":["Transcoding video into segments","The high write rate of location updates and an in-memory spatial index keyed by geohash or H3 cells","Double-entry bookkeeping","Politeness per host"],"a":1,"why":"It is the location archetype with moving entities: writes dominate, the live state is small enough for memory, and nearby queries search a cell plus its neighbours."},{"q":"A payment call to the PSP times out. What should your system do?","o":["Mark the payment failed and let the user try again","Retry immediately with a brand new request","Keep it pending and resolve it via webhook, a status query, or a retry with the same idempotency key","Charge the card again later to be safe"],"a":2,"why":"A timeout is an unknown outcome, not a failure. Retrying with the same idempotency key, or querying status, resolves it without risking a double charge."},{"q":"Your crawler has 200 workers pulling from one shared URL queue, and a small site gets 200 requests at once. What is the structural fix?","o":["Add more workers","Per-host back queues with a heap of next-allowed-fetch times, partitioned by hostname","Use a bigger Bloom filter","Crawl only at night"],"a":1,"why":"Politeness must be enforced by the data structure: one queue per host, fetched no faster than its allowed rate, with each host owned by one node."},{"q":"A scheduled reminder job sometimes runs twice after a worker crash. What is the right response?","o":["Use a distributed lock so it can never run twice","Accept at-least-once delivery and make the job idempotent with a run ID of job plus scheduled time","Disable retries","Run all jobs on one server"],"a":1,"why":"Leases make runs at-least-once; the run ID used as an idempotency key downstream makes the duplicate harmless. Exactly-once execution end to end is not achievable."},{"q":"An engineer adds a user_id label to the http_requests metric (5 million users). Which archetype, and what breaks?","o":["Search: the index gets stale","Metrics: a cardinality explosion multiplies the number of time series and the memory needed to index them","Counting: HyperLogLog error goes up","Sandbox: CPU limits are exceeded"],"a":1,"why":"Series count is the product of label values. Unbounded labels like user_id explode it; per-user detail belongs in logs or traces."},{"q":"Why is a plain Docker container a weak answer for running strangers&#39; code in an online judge?","o":["Containers cannot run Python","Containers share the host kernel and by default have network access and no process or output limits","Containers are slower than virtual machines at everything","Containers cannot be destroyed after use"],"a":1,"why":"A kernel bug can let code escape a container. Strong answers name a microVM (Firecracker) or gVisor and list explicit limits for CPU, wall time, memory, processes, disk, output and network."},{"q":"Design Airbnb. Which decomposition is best?","o":["Feed + chat","Search with a location filter + booking with no double-booked dates + payments","Video + counting","Crawler + metrics"],"a":2,"why":"Guests search listings by place and dates, a date range must never be booked twice (contended inventory), and money moves with holds and captures."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>Most system design questions are about 20 archetypes in costumes. The standard 70% (load balancer, stateless servers, cache, queue, CDN) is shared; the archetype decides the 30% that earns the grade.</li>
+    <li>Recognize it in two minutes with seven questions: read or write heavy, realtime, money or scarcity, fan-out, geospatial, untrusted input, bursty or scheduled. Then say the archetype out loud as a hypothesis.</li>
+    <li>Each archetype has one or two signature nuances: celebrity fan-out (feed), atomic claims (booking, dispatch, job leases), streaming and resume (LLM chat), spatial cells and write volume (location), segments and CDN (video), accuracy matched to purpose (counting), double-entry and idempotency (payments), per-host politeness (crawler), at-least-once with idempotent runs (scheduler), cardinality (metrics), microVM isolation and limits (sandbox), quorums and hinted handoff (KV store), inverted index and BM25 (search).</li>
+    <li>Several moves transfer everywhere: atomic conditional writes, idempotency keys, precomputing off the hot path, batching hot counters, "job runs independently and the client subscribes", and keeping derived data rebuildable from a source of truth.</li>
+    <li>Real prompts mix two to four archetypes. Decompose out loud, find the scale hot spot and the correctness hot spot, and offer the interviewer a choice of deep dive.</li>
+  </ul>
+</template>

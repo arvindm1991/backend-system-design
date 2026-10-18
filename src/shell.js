@@ -932,6 +932,17 @@ const App = (() => {
         labs.map((x) => `<a class="chip ${passed()[x] ? 'is-ok' : ''}" href="#${l.id}" data-jump="lab-${x}" style="text-decoration:none">${passed()[x] ? '✓ ' : ''}Lab: ${esc(LABS[x].title)}</a>`).join('');
       lede.after(chips);
     }
+    // In-lesson video lists: <div data-videos="key"></div> renders VIDEOS[key] as a watch list.
+    $$('[data-videos]', art).forEach((el) => {
+      const list = (typeof VIDEOS !== 'undefined' && VIDEOS[el.dataset.videos]) || [];
+      if (!list.length) { el.remove(); return; }
+      el.className = 'watch watch-inline';
+      el.innerHTML = `<div class="watch-head"><span class="watch-label">Watch</span></div>` +
+        list.map((v) => `<a class="watch-item" href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}" target="_blank" rel="noopener">
+          <span class="watch-play" aria-hidden="true">▶</span>
+          <span class="watch-text"><span class="watch-title">${esc(v.title)}</span><span class="watch-meta">${esc(v.channel)}</span>${v.why ? `<span class="watch-why">${esc(v.why)}</span>` : ''}</span>
+        </a>`).join('');
+    });
     // "Watch first": short videos that explain the idea visually before the dense reading.
     const vids = (typeof VIDEOS !== 'undefined' && VIDEOS[l.id]) || [];
     if (vids.length) {
