@@ -903,6 +903,177 @@ const App = (() => {
     });
   }
 
+  /* ---- estimation drills ----
+     <div data-estimate='{"title","level"?,"prompt","fields":[{"key","label","unit","answer"}],"soWhat","worked"}'></div>
+     Each field is graded by order of magnitude: right if within 3× of the answer.
+     Progress lives in Store 'estimates' = { "<lessonId>:<slug>": { done, score, vals, note } }.
+     <div data-estimate-progress></div> shows "N of M drills done" for the drills in the current lesson. */
+  const EST_TOL = Math.log10(3);
+  const BYTE_U = { kb: 1e3, mb: 1e6, gb: 1e9, tb: 1e12, pb: 1e15 };
+  const BIT_U = { bps: 1, kbps: 1e3, mbps: 1e6, gbps: 1e9, tbps: 1e12 };
+  const MULT_WORD = /^(thousand|million|mil|billion|bn|trillion|tn)s?/;
+  const MULT_K = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, mil: 1e6, million: 1e6, b: 1e9, bn: 1e9, billion: 1e9, t: 1e12, tn: 1e12, trillion: 1e12 };
+  const NOUNS = /^(qps|rps|ops|reqs?|requests?|msgs?|messages?|events?|pings?|users?|rows?|points?|files?|views?|clicks?|tokens?|pages?|drives?|servers?|workers?|jobs?|series|streams?|viewers?|fans?|uploads?|fetches|per|\/|$)/;
+  const estimates = () => Store.get('estimates', {}) || {};
+  // "4k" → 4000, "1.2M" → 1.2e6, "3B" → 3e9, "12,000" → 12000, "400GB" in a TB field → 0.4, "2.5e11", "10^9".
+  function parseAmount(raw, unit) {
+    let s = String(raw == null ? '' : raw).toLowerCase().replace(/[\s,_$~≈]/g, '').replace(/(\/s|\/sec|persec(ond)?)$/, '');
+    if (!s) return null;
+    s = s.replace(/^(\d*\.?\d+)(?:\*|x|×)10\^(-?\d+)/, '$1e$2').replace(/^10\^(-?\d+)/, '1e$1');
+    const m = s.match(/^(\d*\.?\d+(?:e[+-]?\d+)?)(.*)$/);
+    if (!m) return null;
+    let v = parseFloat(m[1]);
+    let rest = m[2].replace(/[×x]$/, '');
+    const fu = String(unit || '').toLowerCase().replace(/\s/g, '').replace(/\/s$/, '');
+    let mult = 1;
+    const w = rest.match(MULT_WORD);
+    if (w) { mult = MULT_K[w[1]]; rest = rest.slice(w[0].length); }
+    else if (/^[kmbt]/.test(rest) && !(rest in BYTE_U) && !(rest in BIT_U) && !/^(mb|gb|tb|kb|pb)/.test(rest)) {
+      const tok = rest.startsWith('mm') ? 'mm' : rest[0];
+      if (NOUNS.test(rest.slice(tok.length))) { mult = MULT_K[tok]; rest = rest.slice(tok.length); }
+    }
+    v *= mult;
+    if (rest in BIT_U && BIT_U[fu]) v = (v * BIT_U[rest]) / BIT_U[fu];
+    else if (rest in BYTE_U && BYTE_U[fu]) v = (v * BYTE_U[rest]) / BYTE_U[fu];
+    return Number.isFinite(v) ? v : null;
+  }
+  function fmtAmount(n) {
+    const a = Math.abs(n);
+    const sig = (x) => String(Number(x.toPrecision(3)));
+    if (a >= 1e12) return sig(n / 1e12) + ' trillion';
+    if (a >= 1e9) return sig(n / 1e9) + ' billion';
+    if (a >= 1e6) return sig(n / 1e6) + ' million';
+    return Number(n.toPrecision(4)).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  }
+  const fmtFactor = (r) => (r < 10 ? String(Math.round(r * 10) / 10).replace(/\.0$/, '') : fmtAmount(Math.round(r)));
+  const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48);
+  const unitText = (u) => (u === '$' ? 'dollars' : u || '');
+
+  function estimate(el, lessonId, idx) {
+    let d;
+    try { d = parseQuiz(el.getAttribute('data-estimate')); } catch (e) {
+      el.className = 'lab-missing';
+      el.textContent = 'This drill could not be loaded (its JSON is invalid).';
+      console.warn('estimate JSON error in', lessonId, e);
+      return;
+    }
+    const fields = Array.isArray(d.fields) ? d.fields : [];
+    const sid = slug(d.title) || String(idx + 1);
+    const id = `${lessonId}:${sid}`;
+    const dom = `est-${sid}`;
+    const saved = () => estimates()[id] || {};
+    const save = (patch) => { const all = estimates(); all[id] = { ...(all[id] || {}), ...patch }; Store.set('estimates', all); };
+    el.className = 'est';
+    el.id = dom;
+    el.removeAttribute('data-estimate');
+    el.setAttribute('data-est-id', id);
+    el.innerHTML = `
+      <div class="est-head"><span class="est-badge">Drill ${idx + 1}</span><h3>${esc(d.title || 'Estimate')}</h3>${d.level ? `<span class="est-level">${esc(d.level)}</span>` : ''}<span class="est-status" hidden>✓ Done</span></div>
+      <div class="est-prompt">${d.prompt || ''}</div>
+      <div class="est-fields">${fields.map((f, i) => `
+        <div class="est-field" data-k="${i}">
+          <label class="est-label" for="${dom}-${i}">${esc(f.label)}</label>
+          <span class="est-input"><input id="${dom}-${i}" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="e.g. 4k">${f.unit ? `<span class="est-unit">${esc(f.unit)}</span>` : ''}</span>
+          <span class="est-res" aria-live="polite"></span>
+        </div>`).join('')}
+      </div>
+      <div class="est-note"><label class="est-label" for="${dom}-note">Line 4: so what? (the decision these numbers force)</label>
+        <textarea id="${dom}-note" rows="3" placeholder="e.g. 12,000 writes/s is too many for one Postgres, so I&#39;ll partition by…"></textarea></div>
+      <div class="est-bar">
+        <button class="btn primary" type="button" data-est="check">Check</button>
+        <button class="btn" type="button" data-est="show">Show worked answer</button>
+        <button class="btn" type="button" data-est="reset" hidden>Try again</button>
+        <span class="est-summary" aria-live="polite"></span>
+      </div>
+      <div class="est-reveal" hidden>
+        <div class="est-model"><b>Model line 4: so what?</b>${d.soWhat || ''}</div>
+        <div class="est-worked"><b>Worked solution</b>${d.worked || ''}</div>
+      </div>`;
+    const inputs = $$('.est-field input', el);
+    const note = $('.est-note textarea', el);
+    const reveal = $('.est-reveal', el);
+    const summary = $('.est-summary', el);
+    const status = $('.est-status', el);
+    const resetBtn = $('[data-est="reset"]', el);
+
+    const s0 = saved();
+    inputs.forEach((inp, i) => { const v = s0.vals && s0.vals[fields[i].key]; if (v != null) inp.value = v; });
+    if (s0.note) note.value = s0.note;
+    status.hidden = !s0.done;
+
+    const persistDraft = () => {
+      const vals = {};
+      inputs.forEach((inp, i) => { if (inp.value.trim()) vals[fields[i].key] = inp.value.trim(); });
+      save({ vals, note: note.value });
+    };
+    inputs.forEach((inp) => {
+      inp.addEventListener('input', () => { persistDraft(); const f = inp.closest('.est-field'); f.classList.remove('is-right', 'is-wrong'); });
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); check(); } });
+    });
+    note.addEventListener('input', persistDraft);
+
+    function check() {
+      let right = 0, answered = 0;
+      fields.forEach((f, i) => {
+        const row = $$('.est-field', el)[i];
+        const res = $('.est-res', row);
+        const raw = inputs[i].value.trim();
+        const u = unitText(f.unit);
+        const model = `model: ${f.unit === '$' ? '$' + fmtAmount(f.answer) : fmtAmount(f.answer) + (u ? (/^[\/×%]/.test(u) ? '' : ' ') + esc(u) : '')}`;
+        row.classList.remove('is-right', 'is-wrong');
+        if (!raw) { res.innerHTML = `<span class="est-miss">No answer</span> · ${model}`; return; }
+        const v = parseAmount(raw, f.unit);
+        if (v == null || v <= 0) { res.innerHTML = `<span class="est-miss">Couldn&#39;t read &quot;${esc(raw)}&quot; as a number</span> · ${model}`; return; }
+        answered++;
+        const r = v / f.answer;
+        const ok = Math.abs(Math.log10(r)) <= EST_TOL + 1e-9;
+        if (ok) right++;
+        row.classList.add(ok ? 'is-right' : 'is-wrong');
+        const off = r >= 1 ? `too high by ~${fmtFactor(r)}×` : `too low by ~${fmtFactor(1 / r)}×`;
+        res.innerHTML = ok
+          ? `<span class="est-ic">✓</span> Within 3× · ${model}`
+          : `<span class="est-ic">✗</span> ${off} · ${model}`;
+      });
+      const all = right === fields.length;
+      summary.className = 'est-summary ' + (all ? 'is-ok' : 'is-bad');
+      summary.textContent = all ? `✓ All ${fields.length} in range` : `${right} of ${fields.length} in range`;
+      if (all && !note.value.trim()) summary.textContent += ' · now write line 4, then compare';
+      const prev = saved();
+      save({ done: !!prev.done || all, score: `${right}/${fields.length}`, checked: true });
+      status.hidden = !(prev.done || all);
+      reveal.hidden = false;
+      resetBtn.hidden = false;
+      renderEstProgress($('#lesson'));
+    }
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-est]');
+      if (!b) return;
+      if (b.dataset.est === 'check') check();
+      if (b.dataset.est === 'show') { reveal.hidden = false; resetBtn.hidden = false; reveal.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+      if (b.dataset.est === 'reset') {
+        inputs.forEach((inp) => { inp.value = ''; });
+        $$('.est-field', el).forEach((row) => { row.classList.remove('is-right', 'is-wrong'); $('.est-res', row).innerHTML = ''; });
+        note.value = '';
+        summary.textContent = '';
+        summary.className = 'est-summary';
+        reveal.hidden = true;
+        resetBtn.hidden = true;
+        save({ vals: {}, note: '' }); // keeps "done": you earned it once
+        if (inputs[0]) inputs[0].focus();
+      }
+    });
+  }
+  function renderEstProgress(art) {
+    if (!art) return;
+    const ids = $$('[data-est-id]', art).map((x) => x.getAttribute('data-est-id'));
+    const all = estimates();
+    const done = ids.filter((x) => all[x] && all[x].done).length;
+    $$('[data-estimate-progress]', art).forEach((p) => {
+      p.className = 'est-progress';
+      p.innerHTML = `<span><b>${done}</b> of ${ids.length} drills done</span><span class="est-pbar" aria-hidden="true"><i style="width:${ids.length ? Math.round((done / ids.length) * 100) : 0}%"></i></span>`;
+    });
+  }
+
   /* ---- routing ---- */
   function show(id, opts = {}) {
     const l = byId[id] || byId.start || LESSONS[0];
@@ -957,6 +1128,8 @@ const App = (() => {
       if (anchor) anchor.after(box);
     }
 
+    $$('[data-estimate]', art).forEach((el, i) => estimate(el, l.id, i));
+    renderEstProgress(art);
     enhanceCode(art);
     enhanceTables(art);
     enhanceDiagrams(art);

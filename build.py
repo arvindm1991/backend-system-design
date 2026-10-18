@@ -146,6 +146,29 @@ def load_lessons(labs, warn):
             except Exception as e:  # noqa: BLE001
                 line = text[:m.start()].count('\n') + 1
                 warn(f'lessons/{p.name}: quiz JSON on line {line} does not parse ({e})')
+        # estimation drills: data-estimate='{"title","prompt","fields":[{"key","label","unit","answer"}],"soWhat","worked"}'
+        for m in re.finditer(r"data-estimate='([^']*)'", text):
+            line = text[:m.start()].count('\n') + 1
+            try:
+                d = json.loads(html.unescape(m.group(1)))
+            except Exception as e:  # noqa: BLE001
+                warn(f'lessons/{p.name}: estimate JSON on line {line} does not parse ({e})')
+                continue
+            fields = d.get('fields') if isinstance(d, dict) else None
+            if not isinstance(fields, list) or not fields:
+                warn(f'lessons/{p.name}: estimate on line {line} has no "fields"')
+                continue
+            for k in ('title', 'prompt', 'soWhat', 'worked'):
+                if not isinstance(d.get(k), str) or not d[k].strip():
+                    warn(f'lessons/{p.name}: estimate "{d.get("title")}" is missing "{k}"')
+            keys = [f.get('key') for f in fields if isinstance(f, dict)]
+            if len(set(keys)) != len(fields) or not all(isinstance(k, str) and k for k in keys):
+                warn(f'lessons/{p.name}: estimate "{d.get("title")}" needs a unique "key" on every field')
+            for f in fields:
+                if not isinstance(f, dict) or not isinstance(f.get('label'), str) or not (isinstance(f.get('answer'), (int, float)) and f['answer'] > 0):
+                    warn(f'lessons/{p.name}: estimate "{d.get("title")}" field {f.get("key") if isinstance(f, dict) else f!r} needs a "label" and a positive numeric "answer"')
+        if 'data-estimate="' in text:
+            warn(f'lessons/{p.name}: data-estimate uses double quotes; use a single-quoted attribute')
         if 'data-quiz="' in text:
             warn(f'lessons/{p.name}: data-quiz uses double quotes; spec requires single-quoted attribute')
         lab_ids = re.findall(r'data-lab="([^"]+)"', text)

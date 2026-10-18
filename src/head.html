@@ -313,6 +313,54 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 14.5px; line-heig
 .lab-explain p:last-child { margin-bottom: 0; }
 .lab-missing { padding: 14px 18px; border-radius: 10px; border: 1px dashed var(--line); color: var(--muted); font-size: 14px; }
 
+/* estimation drills (data-estimate) */
+.est-progress { display: flex; align-items: center; gap: 12px; margin: 18px 0 8px; padding: 10px 14px; border-radius: 11px; background: var(--surface); border: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+.est-progress b { font-family: var(--font-mono); color: var(--ink); }
+.est-pbar { flex: 1; max-width: 220px; margin-left: auto; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.est-pbar > i { display: block; height: 100%; background: var(--ok); border-radius: 3px; transition: width .4s; }
+.est { margin: 22px 0; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; box-shadow: var(--shadow); }
+.est-head { display: flex; align-items: center; gap: 10px 12px; padding: 13px 18px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.est-badge { flex-shrink: 0; font: 600 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); }
+.est-head h3 { margin: 0 !important; font-family: var(--font-display); font-size: 19px; line-height: 1.25; }
+.est-level { margin-left: auto; font: 12px var(--font-mono); color: var(--muted); white-space: nowrap; }
+.est-status { font: 600 12px var(--font-mono); color: var(--ok); white-space: nowrap; }
+.est-prompt { padding: 14px 18px 2px; font-size: 15.5px; }
+.est-prompt p:last-child { margin-bottom: 10px; }
+.est-fields { display: grid; gap: 0; margin: 0 18px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.est-field { display: grid; grid-template-columns: minmax(0, 1fr) 230px; align-items: center; gap: 4px 14px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface); transition: background .2s; }
+.est-field:last-child { border-bottom: 0; }
+.est-label { font-size: 14.5px; font-weight: 500; line-height: 1.4; }
+.est-input { display: flex; align-items: stretch; height: 38px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); overflow: hidden; }
+.est-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.est-input input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; padding: 0 10px; font: 500 15px var(--font-mono); color: var(--ink); text-align: right; }
+.est-input input::placeholder { color: var(--muted); opacity: .55; font-weight: 400; }
+.est-unit { display: grid; place-items: center; padding: 0 10px; min-width: 44px; border-left: 1px solid var(--line); background: var(--surface-2); font: 12.5px var(--font-mono); color: var(--muted); white-space: nowrap; }
+.est-res { grid-column: 1 / -1; font: 12.5px/1.5 var(--font-mono); color: var(--muted); }
+.est-res:empty { display: none; }
+.est-res .est-ic { font-weight: 700; }
+.est-res .est-miss { color: var(--warn); }
+.est-field.is-right { background: color-mix(in srgb, var(--ok-soft) 60%, var(--surface)); }
+.est-field.is-right .est-input { border-color: var(--ok); }
+.est-field.is-right .est-res .est-ic, .est-field.is-right .est-res { color: var(--ok); }
+.est-field.is-wrong { background: color-mix(in srgb, var(--bad-soft) 55%, var(--surface)); }
+.est-field.is-wrong .est-input { border-color: var(--bad); }
+.est-field.is-wrong .est-res { color: var(--bad); }
+.est-note { display: grid; gap: 6px; margin: 14px 18px 0; }
+.est-note textarea { width: 100%; min-height: 76px; resize: vertical; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font-body); }
+.est-note textarea:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.est-note textarea::placeholder { color: var(--muted); opacity: .7; }
+.est-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 18px; }
+.est-summary { margin-left: 4px; font-weight: 600; font-size: 14.5px; }
+.est-summary.is-ok { color: var(--ok); } .est-summary.is-bad { color: var(--bad); }
+.est-reveal { display: grid; gap: 10px; padding: 0 18px 18px; }
+.est-model, .est-worked { padding: 12px 16px; border-radius: 10px; font-size: 15px; }
+.est-model { background: var(--ok-soft); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
+.est-worked { background: var(--surface-2); border: 1px solid var(--line); }
+.est-model > b, .est-worked > b { display: block; margin-bottom: 4px; font-size: 12px; letter-spacing: .07em; text-transform: uppercase; }
+.est-model > b { color: var(--ok); } .est-worked > b { color: var(--muted); }
+.est-model p, .est-worked p { margin: 0 0 8px; }
+.est-model p:last-child, .est-worked p:last-child { margin-bottom: 0; }
+
 /* editor (textarea + highlighted overlay) */
 .ce { position: absolute; inset: 0; display: flex; overflow: hidden; font-family: var(--font-mono); font-size: 13px; line-height: 20px; }
 .ce-gutter { width: 42px; flex-shrink: 0; overflow: hidden; border-right: 1px solid #182239; }
@@ -413,6 +461,15 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 14.5px; line-heig
   .q { padding: 14px; }
   .trace { padding: 14px; }
   .lab-kbd { display: none; }
+  .est-head { flex-wrap: wrap; padding: 12px 14px; }
+  .est-level { margin-left: 0; }
+  .est-prompt { padding: 12px 14px 2px; }
+  .est-fields { margin: 0 14px; }
+  .est-field { grid-template-columns: minmax(0, 1fr); padding: 10px; }
+  .est-note { margin: 12px 14px 0; }
+  .est-bar { padding: 12px 14px; }
+  .est-summary { flex-basis: 100%; margin-left: 0; }
+  .est-reveal { padding: 0 14px 14px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 @media print { .top, .side, .pager, .lab-bar { display: none !important; } .layout { display: block; } }
