@@ -1,0 +1,872 @@
+<template id="tpl-sd-lld" data-title="Low-level design (LLD)" data-part="Part 4 · System design" data-order="225">
+  <h1>Low-level design (LLD)</h1>
+  <p class="lede">"Design a parking lot." "Design an elevator." In a low-level design round you don't draw load balancers; you design the classes inside one program and usually write some of them. After this lesson you can run that round on a 45-minute clock: turn the prompt into a short list of classes, pick the one or two patterns the problem actually needs, write readable TypeScript for the core, and walk a concrete scenario through it. You'll have four full designs (parking lot, elevator, vending machine, expense splitting) and a map of how the other common prompts remix them.</p>
+
+  <h2>1. What an LLD round is</h2>
+  <p>In a <b>high-level design</b> (HLD) round, the boxes are whole services: "app servers, a cache, a queue, a database". You care about traffic, storage and what happens when a machine dies.</p>
+  <p>In a <b>low-level design</b> (LLD) round, also called object-oriented design or machine coding, the boxes are <b>classes</b> inside one program. The prompt is a small, contained system: a parking lot, a vending machine, a library. The interviewer wants to see whether your code would be pleasant to live with: clear names, small pieces with one job each, and a design that bends when requirements change instead of breaking.</p>
+  <table class="tbl">
+    <thead><tr><th></th><th>HLD (system design)</th><th>LLD (object design)</th></tr></thead>
+    <tbody>
+      <tr><td>Unit of design</td><td>Services, stores, queues</td><td>Classes, interfaces, enums, methods</td></tr>
+      <tr><td>Hard part</td><td>Scale, failure, consistency across machines</td><td>Responsibilities, extensibility, correct state changes</td></tr>
+      <tr><td>Numbers</td><td>QPS, TB, latency</td><td>Rarely; maybe "how many spots, how many elevators"</td></tr>
+      <tr><td>Output</td><td>A box-and-arrow diagram and trade-offs</td><td>A class diagram and working code for the core</td></tr>
+      <tr><td>Typical follow-up</td><td>"What if traffic grows 10×?"</td><td>"What if we add electric-car charging spots?"</td></tr>
+    </tbody>
+  </table>
+  <p>The good news for you: this round rewards product thinking. Clarifying scope, naming things well and asking "what will change next?" are exactly the habits a product leader already has.</p>
+
+  <h3>The 45-minute flow</h3>
+  <div class="trace">
+    <ol>
+      <li><b>Clarify requirements and scope (5 min).</b> Ask what's in and what's out. "Multiple floors? Different vehicle sizes? Payment at exit or entry? Do I need persistence, or is in-memory fine?" Write the agreed list down where they can see it.</li>
+      <li><b>List the nouns and verbs (3 min).</b> Nouns become candidate classes (lot, spot, vehicle, ticket). Verbs become methods (park, leave, pay). Throw away nouns that are just data (a "color" is a field, not a class).</li>
+      <li><b>Draw classes and relationships (7 min).</b> Boxes with a few key fields and methods; lines for "owns", "uses" and "implements". Keep it to 5–8 classes.</li>
+      <li><b>Pick the 1–2 patterns the problem needs (2 min).</b> Say why: "Pricing rules will change, so pricing is a Strategy." Don't add patterns to show you know them.</li>
+      <li><b>Write the core class(es) in code (15 min).</b> The one or two classes where the logic lives. Types and enums first, then the methods. Skip getters, setters and boilerplate out loud: "I'll skip the trivial getters."</li>
+      <li><b>Walk a scenario through it (5 min).</b> "A car arrives at 9:00, the lot has one regular spot left…" Trace calls and state changes with real values. This catches bugs and proves the design works.</li>
+      <li><b>Extensions (8 min).</b> The interviewer adds a twist ("add a VIP floor", "add a second elevator"). Show which class changes and, ideally, that you only <i>add</i> a class instead of editing old ones.</li>
+    </ol>
+  </div>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Before I draw anything, let me pin down scope. I'm assuming in-memory, single building, three vehicle sizes, pay on exit by the hour. Out of scope: reservations and a payments provider. I'll design the classes, write the parking and pricing logic, then walk a car through it. Stop me if you want a different focus."</p></div>
+
+  <h2>2. The ten ideas you actually need</h2>
+  <p>There are dozens of named design patterns. LLD interviews use about ten ideas over and over. For each: the smell that tells you to reach for it, and a tiny TypeScript snippet.</p>
+
+  <h3>2.1 Small classes with one job (Single Responsibility)</h3>
+  <p><b>Smell:</b> a class whose description needs the word "and": "ParkingLot finds spots <i>and</i> prices tickets <i>and</i> prints receipts". <b>Reach for it:</b> always. Each class should have one reason to change. Pricing rules change for business reasons; spot allocation changes for layout reasons. Separate them.</p>
+  <pre><code class="lang-ts">// One job each. Pricing changes never touch allocation code.
+class SpotFinder   { find(kind: VehicleKind): Spot | null { /* ... */ return null; } }
+class FeeCalculator { fee(minutes: number): number { return Math.ceil(minutes / 60) * 400; } }
+class ReceiptPrinter { print(t: Ticket, cents: number): string { return `${t.id}: $${cents / 100}`; } }</code></pre>
+
+  <h3>2.2 Composition over inheritance</h3>
+  <p><b>Smell:</b> a class tree that grows sideways: <code>Car</code>, <code>ElectricCar</code>, <code>HandicapElectricCar</code>, <code>HandicapElectricVan</code>… Every new feature doubles the classes. <b>Reach for it:</b> when a behaviour varies independently of the thing. "Has a" (a field) instead of "is a" (a subclass).</p>
+  <pre><code class="lang-ts">// Instead of class ElectricHandicapSpot extends HandicapSpot extends Spot:
+class Spot {
+  constructor(
+    readonly id: string,
+    readonly type: SpotType,
+    readonly features: Set&lt;"ev-charger" | "accessible"&gt; = new Set(),
+  ) {}
+}
+const s = new Spot("B-12", SpotType.Regular, new Set(["ev-charger", "accessible"]));</code></pre>
+
+  <h3>2.3 Program to an interface, inject the dependency</h3>
+  <p><b>Smell:</b> a class that does <code>new StripeClient()</code> or <code>Date.now()</code> inside its methods, so you can't test it or swap the provider. <b>Reach for it:</b> for anything that talks to the outside world (payment, clock, storage, notifications) or has more than one implementation. The class asks for an <i>interface</i> in its constructor; whoever builds it decides which real class to pass. That's <b>dependency injection</b>: nothing fancier than a constructor argument.</p>
+  <pre><code class="lang-ts">interface Clock { now(): number }
+interface PaymentGateway { charge(cents: number, card: string): Promise&lt;boolean&gt; }
+
+class ExitGate {
+  constructor(private clock: Clock, private payments: PaymentGateway) {}
+}
+// In tests: new ExitGate({ now: () =&gt; 1_000 }, fakePayments)
+// In production: new ExitGate({ now: Date.now }, new StripeGateway(key))</code></pre>
+
+  <h3>2.4 Enums and explicit state machines</h3>
+  <p><b>Smell:</b> booleans that together describe a state: <code>isMoving</code>, <code>doorsOpen</code>, <code>isIdle</code>. Nothing stops <code>isMoving &amp;&amp; doorsOpen</code>, which in an elevator is an injury. <b>Reach for it:</b> whenever an object goes through stages. One <code>enum</code> field for the state, and a <b>transition table</b> listing which moves are legal. Illegal moves fail loudly instead of corrupting data.</p>
+  <pre><code class="lang-ts">enum OrderStatus { Placed = "PLACED", Paid = "PAID", Shipped = "SHIPPED", Cancelled = "CANCELLED" }
+
+const NEXT: Record&lt;OrderStatus, OrderStatus[]&gt; = {
+  [OrderStatus.Placed]: [OrderStatus.Paid, OrderStatus.Cancelled],
+  [OrderStatus.Paid]: [OrderStatus.Shipped, OrderStatus.Cancelled],
+  [OrderStatus.Shipped]: [],
+  [OrderStatus.Cancelled]: [],
+};
+
+function move(from: OrderStatus, to: OrderStatus): OrderStatus {
+  if (!NEXT[from].includes(to)) throw new Error(`Can't go ${from} -&gt; ${to}`);
+  return to;
+}</code></pre>
+
+  <h3>2.5 Strategy: swap the rule, keep the machine</h3>
+  <p><b>Smell:</b> a growing <code>if/else</code> or <code>switch</code> on "which rule applies": hourly vs flat vs weekend pricing; equal vs exact vs percent splits; nearest vs zoned elevator dispatch. <b>Reach for it:</b> when there's one job with several interchangeable ways to do it, and new ways will be added. Each way is a small class behind one interface.</p>
+  <pre><code class="lang-ts">interface PricingStrategy { price(minutes: number): number }
+
+class Hourly implements PricingStrategy { price(m: number) { return Math.ceil(m / 60) * 400; } }
+class FlatEvent implements PricingStrategy { price() { return 2000; } }
+
+// The lot doesn't know which one it has:
+const pricing: PricingStrategy = isGameNight ? new FlatEvent() : new Hourly();</code></pre>
+
+  <h3>2.6 State: let each state handle the inputs</h3>
+  <p><b>Smell:</b> every method starts with <code>switch (this.state)</code>, and the same switch is copied into five methods. <b>Reach for it:</b> when an object reacts to the <i>same inputs</i> very differently depending on its state (a vending machine given a coin while idle vs while dispensing). Each state becomes a class with the same methods; the object forwards calls to its current state. It's Strategy, except the states swap themselves.</p>
+  <pre><code class="lang-ts">interface DoorState { press(door: Door): void }
+
+class Closed implements DoorState { press(d: Door) { d.state = new Open(); } }
+class Open   implements DoorState { press(d: Door) { d.state = new Closed(); } }
+class Locked implements DoorState { press() { /* ignore: locked */ } }
+
+class Door {
+  state: DoorState = new Closed();
+  press() { this.state.press(this); }   // no switch anywhere
+}</code></pre>
+  <p>An enum plus a transition table (2.4) is often enough and is less code. Use the full State pattern when the per-state <i>behaviour</i> is big, not just the list of legal moves.</p>
+
+  <h3>2.7 Observer: tell whoever is listening</h3>
+  <p><b>Smell:</b> the core class calls the display board, the SMS sender and the analytics logger directly, so adding a fourth listener means editing the core. <b>Reach for it:</b> when one event has several, changing reactions. The core publishes; listeners subscribe. It's in-process pub/sub (the same idea as the <a href="#events">event-driven lesson</a>, inside one program).</p>
+  <pre><code class="lang-ts">type Listener&lt;E&gt; = (event: E) =&gt; void;
+
+class EventBus&lt;E&gt; {
+  private listeners: Listener&lt;E&gt;[] = [];
+  subscribe(fn: Listener&lt;E&gt;) { this.listeners.push(fn); }
+  publish(e: E) { for (const fn of this.listeners) fn(e); }
+}
+
+const spots = new EventBus&lt;{ floor: number; free: number }&gt;();
+spots.subscribe((e) =&gt; displayBoard.show(e.floor, e.free));
+spots.subscribe((e) =&gt; { if (e.free === 0) alerts.send(`Floor ${e.floor} full`); });</code></pre>
+
+  <h3>2.8 Factory: one place that decides which class to build</h3>
+  <p><b>Smell:</b> <code>new Car()</code>/<code>new Van()</code> decisions scattered across the code, each with the same <code>if</code>. <b>Reach for it:</b> when the concrete class depends on input (a string from a form, a config value) and you want that decision in one place.</p>
+  <pre><code class="lang-ts">function makeSplit(kind: "equal" | "exact" | "percent"): SplitStrategy {
+  switch (kind) {
+    case "equal": return new EqualSplit();
+    case "exact": return new ExactSplit();
+    case "percent": return new PercentSplit();
+  }
+}</code></pre>
+
+  <h3>2.9 Decorator: add a layer without touching the original</h3>
+  <p><b>Smell:</b> you want logging, caching, retries or a surcharge "on top of" something, sometimes, in combinations. <b>Reach for it:</b> wrap an object in another object with the same interface that adds one thing and delegates the rest. Wrappers stack.</p>
+  <pre><code class="lang-ts">class WeekendSurcharge implements PricingStrategy {
+  constructor(private inner: PricingStrategy, private isWeekend: () =&gt; boolean) {}
+  price(m: number) {
+    const base = this.inner.price(m);
+    return this.isWeekend() ? Math.round(base * 1.25) : base;
+  }
+}
+const pricing = new WeekendSurcharge(new Hourly(), () =&gt; [0, 6].includes(new Date().getDay()));</code></pre>
+
+  <h3>2.10 Singleton, and why to be careful</h3>
+  <p><b>What it is:</b> a class that only ever has one instance, reachable from anywhere (<code>ParkingLot.getInstance()</code>). Interviewers often expect you to mention it for "there is only one lot" or a logger. <b>Be careful:</b> it's a global variable with a nicer name. It hides dependencies, makes tests share state, and the day there are two lots (a second building) it has to be ripped out. Prefer creating one instance at startup and passing it in (2.3). Say that out loud; it scores better than using it.</p>
+  <pre><code class="lang-ts">class Logger {
+  private static instance: Logger | null = null;
+  private constructor() {}
+  static get(): Logger { return (Logger.instance ??= new Logger()); }
+  log(msg: string) { console.log(new Date().toISOString(), msg); }
+}
+// Better in most designs: const logger = new Logger(); new ParkingLot(spots, pricing, logger);</code></pre>
+
+  <h3>2.11 Concurrency: two people, one last spot</h3>
+  <p><b>Scenario:</b> the lot has one free spot. Two cars arrive at two entry gates at the same moment. Both gates ask "is spot L-1 free?", both hear "yes", both print a ticket for it. You've sold one spot twice. This is the same race as double-booking a seat (see <a href="#sd-booking">ticket booking</a>).</p>
+  <p>The fix is to make "check and claim" <b>one indivisible step</b>. Three ways, depending on where the data lives:</p>
+  <ul>
+    <li><b>A lock</b> (in one process with threads, like Java or Go): only one thread runs the claim code at a time. Simple; can become a bottleneck; never hold it while doing slow things like charging a card.</li>
+    <li><b>Compare-and-set</b> (CAS): "set this spot to taken <i>only if</i> it's still free", and report whether it worked. The loser just tries the next spot. In a database it's a conditional update.</li>
+    <li><b>A database transaction</b> with a row lock (<code>SELECT … FOR UPDATE</code>) or a unique constraint, so the database refuses the second claim.</li>
+  </ul>
+  <pre><code class="lang-sql">-- Compare-and-set in SQL: succeeds for exactly one of the two gates
+UPDATE spots SET plate = 'KA-01-1234', taken_at = now()
+WHERE id = 'L-1' AND plate IS NULL;
+-- 1 row updated: you got it. 0 rows: someone beat you; try the next spot.</code></pre>
+  <p>JavaScript runs your code on one thread, so inside one Node process a method with no <code>await</code> between the check and the claim is already atomic. The race comes back the moment you have two servers or an <code>await</code> in the middle.</p>
+
+  <h3>2.12 Open/closed: add new types without editing old code</h3>
+  <p><b>Idea:</b> code should be <i>open</i> to extension and <i>closed</i> to modification. Adding "motorbike" or "valet pricing" should mean adding a class or a table row, not editing a working <code>switch</code> in five places. Strategy, State, Observer, Decorator and lookup tables (<code>Record&lt;Enum, …&gt;</code>) are all ways to get there. This is what the "extensions" part of the round is really testing.</p>
+  <pre><code class="lang-ts">// Adding a vehicle type = one enum value + one table row. No other edits.
+const FITS: Record&lt;VehicleKind, SpotType[]&gt; = {
+  [VehicleKind.Motorbike]: [SpotType.Small, SpotType.Regular, SpotType.Large],
+  [VehicleKind.Car]: [SpotType.Regular, SpotType.Large],
+  [VehicleKind.Van]: [SpotType.Large],
+};</code></pre>
+
+  <h3>The whole toolbox on one screen</h3>
+  <table class="tbl">
+    <thead><tr><th>Idea</th><th>Smell that calls for it</th><th>One-line example</th></tr></thead>
+    <tbody>
+      <tr><td>Single responsibility</td><td>Class description needs "and"</td><td>Pricing lives in its own class, not in ParkingLot</td></tr>
+      <tr><td>Composition</td><td>Subclass tree doubling with each feature</td><td>Spot has a <code>features</code> set, not ElectricHandicapSpot</td></tr>
+      <tr><td>Interface + injection</td><td><code>new</code> of an outside service inside a method</td><td>ExitGate takes a PaymentGateway and a Clock</td></tr>
+      <tr><td>Enum + transition table</td><td>Several booleans describing one state</td><td>Elevator: IDLE, MOVING_UP, MOVING_DOWN, DOORS_OPEN</td></tr>
+      <tr><td>Strategy</td><td>Growing if/else on "which rule"</td><td>Hourly vs event pricing; equal vs percent split</td></tr>
+      <tr><td>State</td><td>Same switch on state in every method</td><td>Vending machine: Idle, HasMoney, Dispensing, SoldOut</td></tr>
+      <tr><td>Observer</td><td>Core class calls every listener directly</td><td>Spot freed → display board, waitlist, analytics</td></tr>
+      <tr><td>Factory</td><td>Same "which class do I new?" if, repeated</td><td><code>makeSplit("percent")</code></td></tr>
+      <tr><td>Decorator</td><td>Optional extras in combinations</td><td>WeekendSurcharge wraps any PricingStrategy</td></tr>
+      <tr><td>Singleton (careful)</td><td>"There is exactly one X"</td><td>A logger; prefer one instance passed in</td></tr>
+      <tr><td>Concurrency guard</td><td>Check-then-act on shared data</td><td>Claim spot only if still free (CAS / transaction)</td></tr>
+      <tr><td>Open/closed</td><td>New type means editing old switches</td><td>New vehicle = enum value + table row</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><span class="callout-label">Common mistakes</span>
+    <p><b>Pattern-stuffing.</b> Five patterns in a parking lot reads as "memorized a list", not judgment. Pick the one or two the requirements call for and say why.</p>
+    <p><b>The god class.</b> One <code>ParkingLot</code> with 400 lines that allocates, prices, pays and prints. Split by reason to change.</p>
+    <p><b>No enums.</b> Strings like <code>"movingup"</code> scattered around, or a pile of booleans. Use an enum and a transition table.</p>
+    <p><b>Ignoring concurrency.</b> Two gates, one spot. Even if you don't code it, name the race and the fix (compare-and-set or a transaction).</p>
+    <p><b>Inheritance trees.</b> <code>Vehicle → Car → ElectricCar → …</code> with behaviour overridden at every level. Prefer composition and small interfaces.</p>
+  </div>
+
+  <h2>3. Worked design: parking lot</h2>
+  <h3>Requirements</h3>
+  <ul>
+    <li><b>In scope:</b> spots of three sizes (small, regular, large); vehicles of three kinds (motorbike, car, van); a vehicle can use its own size or bigger; issue a ticket on entry; charge on exit; pricing can change (hourly today, flat rate on event nights).</li>
+    <li><b>Out of scope:</b> reservations, real payment provider, multiple buildings, persistence (in-memory is fine; mention where a database would go).</li>
+  </ul>
+  <h3>Entities and relationships</h3>
+  <p>Nouns: lot, spot, vehicle, ticket, price. Verbs: park, leave, price. Floors are just a grouping of spots; add a <code>Floor</code> class only if a requirement needs it (a "free spots per floor" board).</p>
+  <figure class="diagram">
+    <svg viewBox="0 0 560 420" width="100%" role="img" aria-label="Parking lot class diagram: ParkingLot owns Spots, refers to a PricingStrategy implemented by HourlyPricing and EventPricing, creates Tickets; Spot has a SpotType enum" xmlns="http://www.w3.org/2000/svg" style="max-width:560px;font-family:inherit">
+    <defs><marker id="pk-dia" viewBox="0 0 16 10" refX="1" refY="5" markerWidth="16" markerHeight="10" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,5 L8,1 L15,5 L8,9 Z" fill="currentColor"/></marker><marker id="pk-tri" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1 L13,7 L1,13 Z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/></marker><marker id="pk-arr" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1.5 L11,6 L1,10.5 Z" fill="currentColor"/></marker></defs>
+    <rect x="20" y="20" width="220" height="116" rx="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="130.0" y="39" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">ParkingLot</text>
+    <line x1="20" y1="48" x2="240" y2="48" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="28" y="64" font-size="12" fill="currentColor">spots: Spot[]</text>
+    <text class="mono" x="28" y="80" font-size="12" fill="currentColor">pricing: PricingStrategy</text>
+    <text class="mono" x="28" y="96" font-size="12" fill="currentColor">tickets: Map&lt;id, Ticket&gt;</text>
+    <text class="mono" x="28" y="112" font-size="12" fill="currentColor">park(v): Ticket | null</text>
+    <text class="mono" x="28" y="128" font-size="12" fill="currentColor">leave(id): cents</text>
+    <rect x="310" y="20" width="230" height="64" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="425.0" y="35" text-anchor="middle" font-size="12" fill="var(--muted)">«interface»</text>
+    <text x="425.0" y="51" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">PricingStrategy</text>
+    <line x1="310" y1="60" x2="540" y2="60" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="318" y="76" font-size="12" fill="currentColor">price(t, exitAt): cents</text>
+    <rect x="310" y="132" width="110" height="52" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="365.0" y="151" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">HourlyPricing</text>
+    <line x1="310" y1="160" x2="420" y2="160" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="318" y="176" font-size="12" fill="currentColor">centsPerHour</text>
+    <rect x="430" y="132" width="110" height="52" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="485.0" y="151" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">EventPricing</text>
+    <line x1="430" y1="160" x2="540" y2="160" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="438" y="176" font-size="12" fill="currentColor">flatCents</text>
+    <rect x="20" y="206" width="220" height="116" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="130.0" y="225" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Spot</text>
+    <line x1="20" y1="234" x2="240" y2="234" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="28" y="250" font-size="12" fill="currentColor">id: string</text>
+    <text class="mono" x="28" y="266" font-size="12" fill="currentColor">type: SpotType</text>
+    <text class="mono" x="28" y="282" font-size="12" fill="currentColor">vehicle: Vehicle | null</text>
+    <text class="mono" x="28" y="298" font-size="12" fill="currentColor">tryPark(v): boolean</text>
+    <text class="mono" x="28" y="314" font-size="12" fill="currentColor">release()</text>
+    <rect x="310" y="232" width="230" height="68" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="425.0" y="251" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Ticket</text>
+    <line x1="310" y1="260" x2="540" y2="260" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="318" y="276" font-size="12" fill="currentColor">id, spotId, plate</text>
+    <text class="mono" x="318" y="292" font-size="12" fill="currentColor">entryAt: number</text>
+    <rect x="310" y="322" width="230" height="64" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="425.0" y="337" text-anchor="middle" font-size="12" fill="var(--muted)">«enum»</text>
+    <text x="425.0" y="353" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">SpotType</text>
+    <line x1="310" y1="362" x2="540" y2="362" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="318" y="378" font-size="12" fill="currentColor">SMALL | REGULAR | LARGE</text>
+    <path d="M100,136 L100,206" fill="none" stroke="currentColor" stroke-width="1.3" marker-start="url(#pk-dia)"/>
+    <text x="108" y="175.0" text-anchor="start" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">1 .. many</text>
+    <path d="M240,50 L310,50" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#pk-arr)"/>
+    <text x="275" y="44" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">has a</text>
+    <path d="M365,132 L365,84" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#pk-tri)"/>
+    <path d="M485,132 L485,84" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#pk-tri)"/>
+    <path d="M240,120 L272,120 L272,262 L310,262" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#pk-arr)"/>
+    <text x="272" y="196" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">creates</text>
+    <path d="M240,300 L285,300 L285,356 L310,356" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#pk-arr)"/>
+    <path d="M34,402 L64,402" stroke="currentColor" stroke-width="1.3" marker-start="url(#pk-dia)"/>
+    <text x="72" y="406" text-anchor="start" font-size="12" fill="var(--muted)">owns (has many)</text>
+    <path d="M190,402 L224,402" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#pk-tri)"/>
+    <text x="234" y="406" text-anchor="start" font-size="12" fill="var(--muted)">implements</text>
+    <path d="M330,402 L364,402" stroke="currentColor" stroke-width="1.3" marker-end="url(#pk-arr)"/>
+    <text x="374" y="406" text-anchor="start" font-size="12" fill="var(--muted)">uses / refers to</text>
+    </svg>
+    <figcaption>ParkingLot owns its spots and keeps a reference to whichever pricing rule is plugged in. Spot sizes are an enum; tickets are plain records.</figcaption>
+  </figure>
+  <p><b>Patterns used:</b> Strategy for pricing (the rule that will change). A lookup table for "which vehicle fits which spot" (open/closed). Compare-and-set on the spot for the last-spot race. That's it.</p>
+  <h3>The key code</h3>
+  <pre><code class="lang-ts">enum SpotType { Small = "SMALL", Regular = "REGULAR", Large = "LARGE" }
+enum VehicleKind { Motorbike = "MOTORBIKE", Car = "CAR", Van = "VAN" }
+
+// Which spot types each vehicle may use, smallest first (so vans keep the large spots)
+const FITS: Record&lt;VehicleKind, SpotType[]&gt; = {
+  [VehicleKind.Motorbike]: [SpotType.Small, SpotType.Regular, SpotType.Large],
+  [VehicleKind.Car]: [SpotType.Regular, SpotType.Large],
+  [VehicleKind.Van]: [SpotType.Large],
+};
+
+interface Vehicle { plate: string; kind: VehicleKind }
+interface Ticket { id: string; spotId: string; plate: string; entryAt: number }
+
+class Spot {
+  private vehicle: Vehicle | null = null;
+  constructor(readonly id: string, readonly type: SpotType) {}
+
+  // Compare-and-set: claim only if still free. Returns whether we got it.
+  tryPark(v: Vehicle): boolean {
+    if (this.vehicle !== null) return false;
+    this.vehicle = v;
+    return true;
+  }
+  release(): void { this.vehicle = null; }
+}
+
+interface PricingStrategy { price(t: Ticket, exitAt: number): number } // cents
+
+class HourlyPricing implements PricingStrategy {
+  constructor(private centsPerHour: number) {}
+  price(t: Ticket, exitAt: number): number {
+    const hours = Math.ceil((exitAt - t.entryAt) / 3_600_000); // started hours
+    return Math.max(1, hours) * this.centsPerHour;
+  }
+}
+
+class EventPricing implements PricingStrategy {
+  constructor(private flatCents: number) {}
+  price(): number { return this.flatCents; }
+}
+
+class ParkingLot {
+  private tickets = new Map&lt;string, Ticket&gt;();
+  private nextId = 1;
+
+  constructor(
+    private spots: Spot[],
+    private pricing: PricingStrategy,
+    private now: () =&gt; number,          // injected clock: easy to test
+  ) {}
+
+  setPricing(p: PricingStrategy) { this.pricing = p; }
+
+  park(v: Vehicle): Ticket | null {
+    for (const type of FITS[v.kind]) {
+      for (const spot of this.spots) {
+        if (spot.type === type &amp;&amp; spot.tryPark(v)) {
+          const t: Ticket = { id: `T${this.nextId++}`, spotId: spot.id, plate: v.plate, entryAt: this.now() };
+          this.tickets.set(t.id, t);
+          return t;
+        }
+      }
+    }
+    return null; // full for this kind of vehicle
+  }
+
+  leave(ticketId: string): number {
+    const t = this.tickets.get(ticketId);
+    if (!t) throw new Error("Unknown or already-used ticket");
+    this.spots.find((s) =&gt; s.id === t.spotId)!.release();
+    this.tickets.delete(ticketId);
+    return this.pricing.price(t, this.now());
+  }
+}</code></pre>
+  <h3>Scenario walkthrough</h3>
+  <div class="trace">
+    <ol>
+      <li>Setup: spots <code>R-1</code> (regular) and <code>L-1</code> (large). Pricing: <code>HourlyPricing(400)</code>, i.e. $4 per started hour.</li>
+      <li><b>09:00</b> car <code>KA-01</code> arrives. <code>FITS[Car]</code> is [Regular, Large]. Regular first: <code>R-1.tryPark</code> → true. Ticket <code>T1</code> {spot R-1, entryAt 09:00}.</li>
+      <li><b>09:10</b> car <code>KA-02</code>. No free regular spot; tries Large: <code>L-1.tryPark</code> → true. Ticket <code>T2</code>. (A design choice: cars may take large spots. If vans matter more, remove Large from the car's row.)</li>
+      <li><b>09:20</b> a van arrives. <code>FITS[Van]</code> is [Large]; <code>L-1.tryPark</code> → false. <code>park</code> returns null; the gate shows "Full for vans".</li>
+      <li><b>11:30</b> <code>KA-01</code> leaves with <code>T1</code>. R-1 is released. 2 h 30 min → <code>ceil(2.5) = 3</code> started hours × 400 = <b>1,200 cents ($12)</b>. T1 is deleted, so reusing it throws.</li>
+      <li><b>Race:</b> imagine L-1 free and two gates calling <code>park</code> at once on two servers. Both may see it free, but only one conditional update (<code>… WHERE plate IS NULL</code>) changes a row. The loser's <code>tryPark</code> returns false and its loop moves on to the next spot, or returns "full".</li>
+    </ol>
+  </div>
+  <h3>Extensions interviewers ask</h3>
+  <ul>
+    <li><b>"Event night: flat $20."</b> <code>lot.setPricing(new EventPricing(2000))</code>. New class, no edits. That's the payoff of Strategy.</li>
+    <li><b>"Add EV charging spots."</b> Composition: give <code>Spot</code> a <code>features</code> set, and filter on it when the vehicle asks for charging. Charging fees become a Decorator around the pricing strategy.</li>
+    <li><b>"Allocate nearest to the entrance" or "fill the lowest floor first".</b> Pull the loop in <code>park</code> into an <code>AllocationStrategy</code> with <code>pick(spots, vehicle)</code>. With thousands of spots, keep a free-list (a queue or min-heap of free spot IDs per type) instead of scanning.</li>
+    <li><b>"Display free spots per floor."</b> Add <code>Floor</code>, and have the lot publish <code>spotChanged</code> events (Observer) that the display boards subscribe to.</li>
+    <li><b>"Lost ticket."</b> Look up by plate (add a <code>Map&lt;plate, ticketId&gt;</code>) and charge a lost-ticket fee: another pricing rule.</li>
+  </ul>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Pricing is the part most likely to change, so it's a Strategy injected into the lot; event pricing is a new class, not an edit. Which vehicle fits which spot is a lookup table, so adding motorbikes is one row. The only real concurrency risk is two gates and one spot: claiming is compare-and-set, so in a database it's an UPDATE … WHERE plate IS NULL, and the loser tries the next spot."</p></div>
+
+  <h2>4. Worked design: elevator system</h2>
+  <h3>Requirements</h3>
+  <ul>
+    <li><b>In scope:</b> a building with N floors and M elevators; hall calls (someone on floor 6 presses Up) and car calls (someone inside presses 10); each elevator moves one floor per tick and opens its doors at stops; a dispatcher chooses which elevator answers a hall call.</li>
+    <li><b>Out of scope:</b> weight limits, emergency mode, door sensors, real motor control. Mention them as extensions.</li>
+  </ul>
+  <h3>Entities and relationships</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 560 410" width="100%" role="img" aria-label="Elevator class diagram: Dispatcher owns Elevators and refers to a DispatchStrategy implemented by NearestCar and ZonedDispatch; Elevator has an ElevState enum with a transition table" xmlns="http://www.w3.org/2000/svg" style="max-width:560px;font-family:inherit">
+    <defs><marker id="el-dia" viewBox="0 0 16 10" refX="1" refY="5" markerWidth="16" markerHeight="10" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,5 L8,1 L15,5 L8,9 Z" fill="currentColor"/></marker><marker id="el-tri" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1 L13,7 L1,13 Z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/></marker><marker id="el-arr" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1.5 L11,6 L1,10.5 Z" fill="currentColor"/></marker></defs>
+    <rect x="20" y="20" width="230" height="100" rx="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="135.0" y="39" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Dispatcher</text>
+    <line x1="20" y1="48" x2="250" y2="48" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="28" y="64" font-size="12" fill="currentColor">cars: Elevator[]</text>
+    <text class="mono" x="28" y="80" font-size="12" fill="currentColor">strategy: DispatchStrategy</text>
+    <text class="mono" x="28" y="96" font-size="12" fill="currentColor">request(floor, dir)</text>
+    <text class="mono" x="28" y="112" font-size="12" fill="currentColor">tick()</text>
+    <rect x="320" y="20" width="220" height="64" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="430.0" y="35" text-anchor="middle" font-size="12" fill="var(--muted)">«interface»</text>
+    <text x="430.0" y="51" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">DispatchStrategy</text>
+    <line x1="320" y1="60" x2="540" y2="60" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="328" y="76" font-size="12" fill="currentColor">pick(cars, floor, dir)</text>
+    <rect x="320" y="132" width="105" height="52" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="372.5" y="151" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">NearestCar</text>
+    <line x1="320" y1="160" x2="425" y2="160" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="328" y="176" font-size="12" fill="currentColor">distance</text>
+    <rect x="435" y="132" width="105" height="52" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="487.5" y="151" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">ZonedCars</text>
+    <line x1="435" y1="160" x2="540" y2="160" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="443" y="176" font-size="12" fill="currentColor">floor bands</text>
+    <rect x="20" y="186" width="230" height="132" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="135.0" y="205" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Elevator</text>
+    <line x1="20" y1="214" x2="250" y2="214" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="28" y="230" font-size="12" fill="currentColor">id, floor: number</text>
+    <text class="mono" x="28" y="246" font-size="12" fill="currentColor">state: ElevState</text>
+    <text class="mono" x="28" y="262" font-size="12" fill="currentColor">dir: Direction</text>
+    <text class="mono" x="28" y="278" font-size="12" fill="currentColor">stops: Set&lt;number&gt;</text>
+    <text class="mono" x="28" y="294" font-size="12" fill="currentColor">addStop(f)</text>
+    <text class="mono" x="28" y="310" font-size="12" fill="currentColor">step()</text>
+    <rect x="320" y="232" width="220" height="96" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="430.0" y="247" text-anchor="middle" font-size="12" fill="var(--muted)">«enum»</text>
+    <text x="430.0" y="263" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">ElevState</text>
+    <line x1="320" y1="272" x2="540" y2="272" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="328" y="288" font-size="12" fill="currentColor">IDLE | MOVING_UP</text>
+    <text class="mono" x="328" y="304" font-size="12" fill="currentColor">MOVING_DOWN | DOORS_OPEN</text>
+    <text class="mono" x="328" y="320" font-size="12" fill="currentColor">ALLOWED: transition table</text>
+    <path d="M100,120 L100,186" fill="none" stroke="currentColor" stroke-width="1.3" marker-start="url(#el-dia)"/>
+    <text x="108" y="157.0" text-anchor="start" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">1 .. many</text>
+    <path d="M250,50 L320,50" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#el-arr)"/>
+    <text x="285" y="44" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">has a</text>
+    <path d="M372,132 L372,84" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#el-tri)"/>
+    <path d="M487,132 L487,84" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#el-tri)"/>
+    <path d="M250,280 L320,280" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#el-arr)"/>
+    <text x="285" y="274" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">state</text>
+    <path d="M34,392 L64,392" stroke="currentColor" stroke-width="1.3" marker-start="url(#el-dia)"/>
+    <text x="72" y="396" text-anchor="start" font-size="12" fill="var(--muted)">owns (has many)</text>
+    <path d="M190,392 L224,392" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#el-tri)"/>
+    <text x="234" y="396" text-anchor="start" font-size="12" fill="var(--muted)">implements</text>
+    <path d="M330,392 L364,392" stroke="currentColor" stroke-width="1.3" marker-end="url(#el-arr)"/>
+    <text x="374" y="396" text-anchor="start" font-size="12" fill="var(--muted)">uses / refers to</text>
+    </svg>
+    <figcaption>The dispatcher owns the elevators and delegates "which car?" to a pluggable strategy. Each elevator is a small state machine with a set of stops.</figcaption>
+  </figure>
+  <p><b>Patterns used:</b> an enum + transition table for the elevator's state (doors must never be open while moving); Strategy for dispatching (nearest car today, zoning for a skyscraper tomorrow). The stop order inside one car uses the <b>LOOK</b> rule: keep going in your current direction while there are stops ahead, then turn around. That's how real elevators avoid starving the top floors.</p>
+  <h3>The key code</h3>
+  <pre><code class="lang-ts">enum Direction { Up = "UP", Down = "DOWN" }
+enum ElevState { Idle = "IDLE", MovingUp = "MOVING_UP", MovingDown = "MOVING_DOWN", DoorsOpen = "DOORS_OPEN" }
+
+// The safety rule lives in data: you can only open doors after stopping.
+const ALLOWED: Record&lt;ElevState, ElevState[]&gt; = {
+  [ElevState.Idle]: [ElevState.MovingUp, ElevState.MovingDown, ElevState.DoorsOpen],
+  [ElevState.MovingUp]: [ElevState.DoorsOpen],
+  [ElevState.MovingDown]: [ElevState.DoorsOpen],
+  [ElevState.DoorsOpen]: [ElevState.Idle, ElevState.MovingUp, ElevState.MovingDown],
+};
+
+class Elevator {
+  floor = 0;
+  state = ElevState.Idle;
+  dir = Direction.Up;
+  private stops = new Set&lt;number&gt;();
+  constructor(readonly id: number) {}
+
+  addStop(f: number) { this.stops.add(f); }
+
+  private go(next: ElevState) {
+    if (!ALLOWED[this.state].includes(next)) throw new Error(`${this.state} -&gt; ${next} not allowed`);
+    this.state = next;
+  }
+
+  // LOOK: next stop in the current direction, else turn around.
+  private nextStop(): number | undefined {
+    const above = [...this.stops].filter((f) =&gt; f &gt; this.floor);
+    const below = [...this.stops].filter((f) =&gt; f &lt; this.floor);
+    if (this.dir === Direction.Up &amp;&amp; above.length) return Math.min(...above);
+    if (this.dir === Direction.Down &amp;&amp; below.length) return Math.max(...below);
+    return above.length ? Math.min(...above) : below.length ? Math.max(...below) : undefined;
+  }
+
+  // One tick = move one floor, or open doors, or go idle.
+  step(): void {
+    if (this.stops.has(this.floor)) {               // arrived at a stop
+      this.stops.delete(this.floor);
+      if (this.state !== ElevState.DoorsOpen) this.go(ElevState.DoorsOpen);
+      return;
+    }
+    const target = this.nextStop();
+    if (target === undefined) {                     // nothing to do
+      if (this.state !== ElevState.Idle) this.go(ElevState.Idle);
+      return;
+    }
+    this.dir = target &gt; this.floor ? Direction.Up : Direction.Down;
+    const moving = this.dir === Direction.Up ? ElevState.MovingUp : ElevState.MovingDown;
+    if (this.state !== moving) this.go(moving);
+    this.floor += this.dir === Direction.Up ? 1 : -1;
+  }
+}
+
+interface DispatchStrategy { pick(cars: Elevator[], floor: number, dir: Direction): Elevator }
+
+class NearestCar implements DispatchStrategy {
+  pick(cars: Elevator[], floor: number): Elevator {
+    const cost = (e: Elevator) =&gt; {
+      const away = (e.state === ElevState.MovingUp &amp;&amp; floor &lt; e.floor) ||
+                   (e.state === ElevState.MovingDown &amp;&amp; floor &gt; e.floor);
+      return Math.abs(e.floor - floor) + (away ? 100 : 0); // heading away = bad pick
+    };
+    return cars.reduce((best, e) =&gt; (cost(e) &lt; cost(best) ? e : best));
+  }
+}
+
+class Dispatcher {
+  constructor(readonly cars: Elevator[], private strategy: DispatchStrategy) {}
+  request(floor: number, dir: Direction) { this.strategy.pick(this.cars, floor, dir).addStop(floor); }
+  tick() { this.cars.forEach((c) =&gt; c.step()); }
+}</code></pre>
+  <h3>Scenario walkthrough</h3>
+  <div class="trace">
+    <ol>
+      <li>Two cars. <b>A</b>: floor 0, IDLE. <b>B</b>: floor 8, MOVING_DOWN with a stop at 2.</li>
+      <li>Someone on floor 6 presses Up: <code>request(6, Up)</code>. Costs: A = |0 − 6| = 6. B = |8 − 6| = 2, and 6 is below B, which is heading down, so not "away". B wins; B's stops = {2, 6}.</li>
+      <li>Tick 1: B has no stop at 8; LOOK going down picks 6 (the highest stop below). B moves to 7. Tick 2: B moves to 6.</li>
+      <li>Tick 3: stop at 6 → MOVING_DOWN → DOORS_OPEN (allowed). The rider gets in and presses 10: <code>B.addStop(10)</code>. Stops = {2, 10}.</li>
+      <li>Tick 4: direction is still Down and 2 is below, so B goes DOORS_OPEN → MOVING_DOWN toward 2 first, then comes back up for 10. The rider who pressed Up waits through a detour; that's the honest cost of a simple dispatcher, and a good thing to point out.</li>
+      <li>Safety check: the only way out of DOORS_OPEN is to IDLE or to start moving (doors close as it leaves), and the only way into DOORS_OPEN is arriving at a stop. If a future change tried MOVING_UP → MOVING_DOWN without stopping, <code>go</code> would throw instead of quietly doing something unsafe.</li>
+    </ol>
+  </div>
+  <h3>Extensions interviewers ask</h3>
+  <ul>
+    <li><b>"Don't detour riders who asked for Up."</b> A smarter <code>DispatchStrategy</code> only assigns a hall call to a car already moving in that direction and not yet past the floor, or an idle car. New class; nothing else changes.</li>
+    <li><b>"Skyscraper with 60 floors and 12 cars."</b> <code>ZonedCars</code> strategy: cars 1–4 serve floors 0–20, and so on. Or destination dispatch (riders enter their floor in the lobby, the system groups them).</li>
+    <li><b>"Maintenance mode / emergency."</b> Add <code>MAINTENANCE</code> and <code>EMERGENCY</code> to the enum and to the transition table (any state → EMERGENCY; EMERGENCY → DOORS_OPEN at the nearest floor). The dispatcher skips cars not in service.</li>
+    <li><b>"Weight limit."</b> A sensor reading checked before DOORS_OPEN → MOVING_*; if over, stay in DOORS_OPEN and publish an event (Observer) for the buzzer.</li>
+  </ul>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Each elevator is a state machine: IDLE, MOVING_UP, MOVING_DOWN, DOORS_OPEN, with a transition table so 'doors open while moving' can't happen. Inside a car, stops are served with the LOOK rule: keep going while there are stops ahead, then reverse. Which car answers a hall call is a Strategy on the dispatcher, so going from nearest-car to zoning is a new class."</p></div>
+
+  <h2>5. Worked design: vending machine</h2>
+  <h3>Requirements</h3>
+  <ul>
+    <li><b>In scope:</b> slots with a product, price and count; accept coins (5, 10, 25 cents and $1); select a product; dispense it and return change from coins the machine actually holds; cancel returns the coins you put in; sold out when every slot is empty.</li>
+    <li><b>Out of scope:</b> card payments, refrigeration, remote telemetry. Mention them as extensions.</li>
+  </ul>
+  <h3>Entities and relationships</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 560 340" width="100%" role="img" aria-label="Vending machine class diagram: VendingMachine holds a current MachineState; Idle, HasMoney, Dispensing and SoldOut implement MachineState" xmlns="http://www.w3.org/2000/svg" style="max-width:560px;font-family:inherit">
+    <defs><marker id="vm-dia" viewBox="0 0 16 10" refX="1" refY="5" markerWidth="16" markerHeight="10" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,5 L8,1 L15,5 L8,9 Z" fill="currentColor"/></marker><marker id="vm-tri" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1 L13,7 L1,13 Z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/></marker><marker id="vm-arr" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1.5 L11,6 L1,10.5 Z" fill="currentColor"/></marker></defs>
+    <rect x="20" y="20" width="230" height="132" rx="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="135.0" y="39" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">VendingMachine</text>
+    <line x1="20" y1="48" x2="250" y2="48" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="28" y="64" font-size="12" fill="currentColor">state: MachineState</text>
+    <text class="mono" x="28" y="80" font-size="12" fill="currentColor">balance, inserted[]</text>
+    <text class="mono" x="28" y="96" font-size="12" fill="currentColor">slots: Map&lt;id, Slot&gt;</text>
+    <text class="mono" x="28" y="112" font-size="12" fill="currentColor">coinBox: Map&lt;coin, n&gt;</text>
+    <text class="mono" x="28" y="128" font-size="12" fill="currentColor">insert / select / cancel</text>
+    <text class="mono" x="28" y="144" font-size="12" fill="currentColor">makeChange(cents)</text>
+    <rect x="320" y="20" width="220" height="96" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="430.0" y="35" text-anchor="middle" font-size="12" fill="var(--muted)">«interface»</text>
+    <text x="430.0" y="51" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">MachineState</text>
+    <line x1="320" y1="60" x2="540" y2="60" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="328" y="76" font-size="12" fill="currentColor">insert(cents)</text>
+    <text class="mono" x="328" y="92" font-size="12" fill="currentColor">select(slot)</text>
+    <text class="mono" x="328" y="108" font-size="12" fill="currentColor">cancel()</text>
+    <rect x="20" y="262" width="124" height="32" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="82.0" y="281" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Idle</text>
+    <rect x="152" y="262" width="124" height="32" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="214.0" y="281" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">HasMoney</text>
+    <rect x="284" y="262" width="124" height="32" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="346.0" y="281" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Dispensing</text>
+    <rect x="416" y="262" width="124" height="32" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="478.0" y="281" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">SoldOut</text>
+    <path d="M430,240 L430,116" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#vm-tri)"/>
+    <path d="M82,240 L478,240" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <path d="M82,240 L82,262" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <path d="M214,240 L214,262" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <path d="M346,240 L346,262" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <path d="M478,240 L478,262" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <path d="M250,50 L320,50" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#vm-arr)"/>
+    <text x="285" y="44" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">current</text>
+    <text x="280" y="228" text-anchor="middle" font-size="12" fill="var(--muted)">a state switches the machine by setting m.state</text>
+    <path d="M20,322 L54,322" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#vm-tri)"/>
+    <text x="64" y="326" text-anchor="start" font-size="12" fill="var(--muted)">implements</text>
+    <path d="M160,322 L194,322" stroke="currentColor" stroke-width="1.3" marker-end="url(#vm-arr)"/>
+    <text x="204" y="326" text-anchor="start" font-size="12" fill="var(--muted)">uses / refers to</text>
+    </svg>
+    <figcaption>The machine forwards every button press to its current state object. Each state decides what that press means and which state comes next.</figcaption>
+  </figure>
+  <p><b>Pattern used:</b> State. The same three inputs (coin, select, cancel) mean very different things depending on the stage, and the behaviour per stage is more than a one-liner. Here are the legal moves:</p>
+  <table class="tbl">
+    <thead><tr><th>State</th><th>Coin inserted</th><th>Product selected</th><th>Cancel</th></tr></thead>
+    <tbody>
+      <tr><td>Idle</td><td>Add to balance → HasMoney</td><td>"Insert money first"</td><td>Nothing to do</td></tr>
+      <tr><td>HasMoney</td><td>Add to balance</td><td>Enough + change possible → Dispensing → Idle or SoldOut</td><td>Return coins → Idle</td></tr>
+      <tr><td>Dispensing</td><td>"Busy"</td><td>"Busy"</td><td>"Busy"</td></tr>
+      <tr><td>SoldOut</td><td>Reject coin</td><td>"Sold out"</td><td>Nothing to do</td></tr>
+    </tbody>
+  </table>
+  <h3>The key code</h3>
+  <pre><code class="lang-ts">type Slot = { name: string; price: number; count: number };
+const COINS = [100, 25, 10, 5]; // cents, largest first
+
+interface MachineState {
+  insert(cents: number): void;
+  select(slotId: string): void;
+  cancel(): number[];               // coins handed back
+}
+
+class VendingMachine {
+  inserted: number[] = [];          // coins for the current purchase
+  readonly idle = new Idle(this);
+  readonly hasMoney = new HasMoney(this);
+  readonly dispensing = new Dispensing();
+  readonly soldOut = new SoldOut();
+  state: MachineState;
+
+  constructor(readonly slots: Map&lt;string, Slot&gt;, readonly coinBox: Map&lt;number, number&gt;) {
+    this.state = this.inStock() ? this.idle : this.soldOut;
+  }
+  insert(c: number) { this.state.insert(c); }
+  select(id: string) { this.state.select(id); }
+  cancel() { return this.state.cancel(); }
+
+  get balance() { return this.inserted.reduce((a, b) =&gt; a + b, 0); }
+  inStock() { return [...this.slots.values()].some((s) =&gt; s.count &gt; 0); }
+  takeCoin(c: number) { this.inserted.push(c); this.coinBox.set(c, (this.coinBox.get(c) ?? 0) + 1); }
+
+  // Greedy change from coins we really hold. null = can't make it exactly.
+  makeChange(amount: number): number[] | null {
+    const left = new Map(this.coinBox), out: number[] = [];
+    for (const c of COINS) {
+      while (amount &gt;= c &amp;&amp; (left.get(c) ?? 0) &gt; 0) { amount -= c; left.set(c, left.get(c)! - 1); out.push(c); }
+    }
+    if (amount !== 0) return null;
+    for (const [c, n] of left) this.coinBox.set(c, n);  // commit only on success
+    return out;
+  }
+}
+
+class Idle implements MachineState {
+  constructor(private m: VendingMachine) {}
+  insert(c: number) { this.m.takeCoin(c); this.m.state = this.m.hasMoney; }
+  select() { throw new Error("Insert money first"); }
+  cancel() { return []; }
+}
+
+class HasMoney implements MachineState {
+  constructor(private m: VendingMachine) {}
+  insert(c: number) { this.m.takeCoin(c); }
+  select(id: string) {
+    const slot = this.m.slots.get(id);
+    if (!slot || slot.count === 0) throw new Error("Sold out, pick another");
+    if (this.m.balance &lt; slot.price) throw new Error(`Insert ${slot.price - this.m.balance} more cents`);
+    const change = this.m.makeChange(this.m.balance - slot.price);
+    if (change === null) throw new Error("Exact change only"); // refuse rather than short-change
+    this.m.state = this.m.dispensing;
+    slot.count -= 1;                                            // motor turns here
+    this.m.inserted = [];
+    console.log(`Dispensed ${slot.name}; change: ${change.join(", ") || "none"}`);
+    this.m.state = this.m.inStock() ? this.m.idle : this.m.soldOut;
+  }
+  cancel() {
+    const back = this.m.inserted;
+    for (const c of back) this.m.coinBox.set(c, this.m.coinBox.get(c)! - 1);
+    this.m.inserted = [];
+    this.m.state = this.m.idle;
+    return back;
+  }
+}
+
+class Dispensing implements MachineState {
+  insert(): void { throw new Error("Busy"); }
+  select(): void { throw new Error("Busy"); }
+  cancel(): number[] { throw new Error("Busy"); }
+}
+
+class SoldOut implements MachineState {
+  insert(): void { throw new Error("Sold out: coin returned"); }
+  select(): void { throw new Error("Sold out"); }
+  cancel() { return []; }
+}</code></pre>
+  <h3>Scenario walkthrough</h3>
+  <div class="trace">
+    <ol>
+      <li>Machine: slot <code>A1</code> = chips, 65¢, count 1. Coin box: two 25¢, one 10¢, no 5¢. State: Idle.</li>
+      <li>Insert $1: Idle → <code>takeCoin(100)</code>, state → HasMoney. Balance 100.</li>
+      <li>Select A1: price 65, so change needed is 35. Greedy: 100? no. 25? yes (35 → 10). 25 again? 10 &lt; 25, no. 10? yes (10 → 0). Change = [25, 10]. Success, coin box is updated.</li>
+      <li>State → Dispensing (any button now says "Busy"), count 1 → 0, inserted cleared. <code>inStock()</code> is false, so state → <b>SoldOut</b>.</li>
+      <li>Next customer inserts a quarter: SoldOut rejects it. No balance gets stuck in a machine that can't sell.</li>
+      <li><b>Exact-change case:</b> restock A1, the coin box has no quarters, dimes or nickels left, customer inserts $1. Change 35 can't be made → "Exact change only", state stays HasMoney, and Cancel returns the dollar. The customer is never short-changed.</li>
+    </ol>
+  </div>
+  <p>A detail worth saying: greedy change-making is correct for US-style coins when you have plenty of each, but with a <i>limited</i> coin box it can fail when an answer exists. Needing 30¢ with one quarter and three dimes, greedy takes the quarter and is stuck at 5¢, but three dimes would work. For a real machine, a tiny dynamic-programming search over the coin counts fixes it; in an interview, naming the limitation is usually enough.</p>
+  <h3>Extensions interviewers ask</h3>
+  <ul>
+    <li><b>"Accept cards."</b> Payment becomes an interface (<code>CoinPayment</code>, <code>CardPayment</code>) injected into the machine. HasMoney becomes "HasCredit"; card payments skip change-making.</li>
+    <li><b>"Restock and maintenance."</b> A <code>Maintenance</code> state entered with an operator key; restock moves SoldOut → Idle.</li>
+    <li><b>"Notify the operator when a slot is empty or coins run low."</b> Observer: the machine publishes <code>slotEmpty</code>/<code>lowChange</code> events; a telemetry listener sends them.</li>
+    <li><b>"The motor jams."</b> Dispensing becomes a real step with a result: on failure, refund via the same path as cancel and move to Maintenance.</li>
+  </ul>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"The same three buttons mean different things in different stages, so I'll use the State pattern: Idle, HasMoney, Dispensing and SoldOut each implement insert, select and cancel, and set the next state. Change is computed from the coins we actually hold before we dispense; if we can't make change we refuse the sale rather than short the customer."</p></div>
+
+  <h2>6. Worked design: Splitwise (expense splitting)</h2>
+  <h3>Requirements</h3>
+  <ul>
+    <li><b>In scope:</b> a group of people; anyone can add an expense they paid; split it equally, by exact amounts, or by percentages; show each person's balance; suggest a short list of payments that settles everyone up.</li>
+    <li><b>Out of scope:</b> currencies, real payments, recurring expenses, editing history. All amounts are integer <b>cents</b>, never floating-point dollars (0.1 + 0.2 ≠ 0.3).</li>
+  </ul>
+  <h3>Entities and relationships</h3>
+  <figure class="diagram">
+    <svg viewBox="0 0 560 380" width="100%" role="img" aria-label="Expense splitting class diagram: Group owns Expenses and a Ledger and uses a SplitStrategy implemented by EqualSplit, ExactSplit and PercentSplit" xmlns="http://www.w3.org/2000/svg" style="max-width:560px;font-family:inherit">
+    <defs><marker id="sw-dia" viewBox="0 0 16 10" refX="1" refY="5" markerWidth="16" markerHeight="10" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,5 L8,1 L15,5 L8,9 Z" fill="currentColor"/></marker><marker id="sw-tri" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1 L13,7 L1,13 Z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/></marker><marker id="sw-arr" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1.5 L11,6 L1,10.5 Z" fill="currentColor"/></marker></defs>
+    <rect x="20" y="20" width="220" height="100" rx="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="130.0" y="39" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Group</text>
+    <line x1="20" y1="48" x2="240" y2="48" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="28" y="64" font-size="12" fill="currentColor">members: UserId[]</text>
+    <text class="mono" x="28" y="80" font-size="12" fill="currentColor">expenses: Expense[]</text>
+    <text class="mono" x="28" y="96" font-size="12" fill="currentColor">ledger: Ledger</text>
+    <text class="mono" x="28" y="112" font-size="12" fill="currentColor">addExpense(...)</text>
+    <rect x="310" y="20" width="230" height="64" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="425.0" y="35" text-anchor="middle" font-size="12" fill="var(--muted)">«interface»</text>
+    <text x="425.0" y="51" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">SplitStrategy</text>
+    <line x1="310" y1="60" x2="540" y2="60" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="318" y="76" font-size="12" fill="currentColor">split(amount, users, p)</text>
+    <rect x="380" y="110" width="160" height="32" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="460.0" y="129" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">EqualSplit</text>
+    <rect x="380" y="150" width="160" height="32" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="460.0" y="169" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">ExactSplit</text>
+    <rect x="380" y="190" width="160" height="32" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="460.0" y="209" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">PercentSplit</text>
+    <path d="M345,206 L345,84" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#sw-tri)"/>
+    <path d="M345,126 L380,126" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <path d="M345,166 L380,166" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <path d="M345,206 L380,206" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <rect x="20" y="196" width="220" height="84" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="130.0" y="215" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Expense</text>
+    <line x1="20" y1="224" x2="240" y2="224" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="28" y="240" font-size="12" fill="currentColor">paidBy: UserId</text>
+    <text class="mono" x="28" y="256" font-size="12" fill="currentColor">amount: Cents</text>
+    <text class="mono" x="28" y="272" font-size="12" fill="currentColor">shares: Map&lt;UserId, Cents&gt;</text>
+    <rect x="310" y="252" width="230" height="84" rx="7" fill="var(--surface)" stroke="currentColor" stroke-width="1.25"/>
+    <text x="425.0" y="271" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Ledger</text>
+    <line x1="310" y1="280" x2="540" y2="280" stroke="currentColor" stroke-opacity=".35"/>
+    <text class="mono" x="318" y="296" font-size="12" fill="currentColor">net: Map&lt;UserId, Cents&gt;</text>
+    <text class="mono" x="318" y="312" font-size="12" fill="currentColor">apply(expense)</text>
+    <text class="mono" x="318" y="328" font-size="12" fill="currentColor">simplify(): Payment[]</text>
+    <path d="M100,120 L100,196" fill="none" stroke="currentColor" stroke-width="1.3" marker-start="url(#sw-dia)"/>
+    <text x="108" y="162.0" text-anchor="start" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">1 .. many</text>
+    <path d="M240,50 L310,50" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#sw-arr)"/>
+    <text x="275" y="44" text-anchor="middle" font-size="12" fill="var(--muted)" paint-order="stroke" stroke="var(--surface)" stroke-width="4" stroke-linejoin="round">uses</text>
+    <path d="M240,104 L280,104 L280,290 L310,290" fill="none" stroke="currentColor" stroke-width="1.3" marker-start="url(#sw-dia)"/>
+    <path d="M34,362 L64,362" stroke="currentColor" stroke-width="1.3" marker-start="url(#sw-dia)"/>
+    <text x="72" y="366" text-anchor="start" font-size="12" fill="var(--muted)">owns (has many)</text>
+    <path d="M190,362 L224,362" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#sw-tri)"/>
+    <text x="234" y="366" text-anchor="start" font-size="12" fill="var(--muted)">implements</text>
+    <path d="M330,362 L364,362" stroke="currentColor" stroke-width="1.3" marker-end="url(#sw-arr)"/>
+    <text x="374" y="366" text-anchor="start" font-size="12" fill="var(--muted)">uses / refers to</text>
+    </svg>
+    <figcaption>A group keeps its expenses and one ledger of net balances. How each expense is divided is a pluggable split strategy.</figcaption>
+  </figure>
+  <p><b>Patterns used:</b> Strategy for the split rules (with a small Factory to pick one from the form's dropdown). The ledger keeps a <b>net balance</b> per person: positive means the group owes you, negative means you owe. Net balances are all you need to settle up; a per-pair view ("Ben owes Asha $30") can be derived for display.</p>
+  <h3>The key code</h3>
+  <pre><code class="lang-ts">type UserId = string;
+type Cents = number;
+type Payment = { from: UserId; to: UserId; amount: Cents };
+
+interface SplitStrategy {
+  // How much each person owes. Must add up to exactly `amount`.
+  split(amount: Cents, users: UserId[], params?: number[]): Map&lt;UserId, Cents&gt;;
+}
+
+class EqualSplit implements SplitStrategy {
+  split(amount: Cents, users: UserId[]) {
+    const base = Math.floor(amount / users.length);
+    const extra = amount - base * users.length;           // leftover cents
+    return new Map(users.map((u, i) =&gt; [u, base + (i &lt; extra ? 1 : 0)]));
+  }
+}
+
+class ExactSplit implements SplitStrategy {
+  split(amount: Cents, users: UserId[], exact: number[] = []) {
+    if (exact.reduce((a, b) =&gt; a + b, 0) !== amount) throw new Error("Exact amounts must add up to the total");
+    return new Map(users.map((u, i) =&gt; [u, exact[i]]));
+  }
+}
+
+class PercentSplit implements SplitStrategy {
+  split(amount: Cents, users: UserId[], pct: number[] = []) {
+    if (pct.reduce((a, b) =&gt; a + b, 0) !== 100) throw new Error("Percents must add up to 100");
+    const shares = users.map((u, i): [UserId, Cents] =&gt; [u, Math.floor((amount * pct[i]) / 100)]);
+    let left = amount - shares.reduce((a, [, c]) =&gt; a + c, 0);
+    for (let i = 0; left &gt; 0; i++, left--) shares[i][1] += 1; // hand out rounding cents
+    return new Map(shares);
+  }
+}
+
+type Expense = { paidBy: UserId; amount: Cents; shares: Map&lt;UserId, Cents&gt; };
+
+class Ledger {
+  private net = new Map&lt;UserId, Cents&gt;();   // + is owed money, - owes money
+
+  apply(e: Expense) {
+    this.bump(e.paidBy, e.amount);
+    for (const [u, c] of e.shares) this.bump(u, -c);
+  }
+  balanceOf(u: UserId): Cents { return this.net.get(u) ?? 0; }
+  private bump(u: UserId, c: Cents) { this.net.set(u, this.balanceOf(u) + c); }
+
+  // Greedy: the biggest debtor pays the biggest creditor, repeat.
+  simplify(): Payment[] {
+    const byAmount = (a: [UserId, Cents], b: [UserId, Cents]) =&gt; b[1] - a[1];
+    const creditors = [...this.net].filter(([, c]) =&gt; c &gt; 0).sort(byAmount);
+    const debtors = [...this.net].filter(([, c]) =&gt; c &lt; 0)
+      .map(([u, c]): [UserId, Cents] =&gt; [u, -c]).sort(byAmount);
+    const out: Payment[] = [];
+    let i = 0, j = 0;
+    while (i &lt; debtors.length &amp;&amp; j &lt; creditors.length) {
+      const pay = Math.min(debtors[i][1], creditors[j][1]);
+      out.push({ from: debtors[i][0], to: creditors[j][0], amount: pay });
+      debtors[i][1] -= pay;
+      creditors[j][1] -= pay;
+      if (debtors[i][1] === 0) i++;
+      if (creditors[j][1] === 0) j++;
+    }
+    return out;
+  }
+}
+
+class Group {
+  readonly expenses: Expense[] = [];
+  readonly ledger = new Ledger();
+  constructor(readonly members: UserId[]) {}
+
+  addExpense(paidBy: UserId, amount: Cents, users: UserId[], how: SplitStrategy, params?: number[]) {
+    const e: Expense = { paidBy, amount, shares: how.split(amount, users, params) };
+    this.expenses.push(e);
+    this.ledger.apply(e);
+  }
+}</code></pre>
+  <h3>Scenario walkthrough</h3>
+  <div class="trace">
+    <ol>
+      <li>Trip group: Asha, Ben, Chen, Dev. All balances 0.</li>
+      <li><b>Dinner $120, Asha paid, equal.</b> Each owes $30. Asha +120 − 30 = <b>+90</b>; Ben −30; Chen −30; Dev −30.</li>
+      <li><b>Cab $40, Ben paid, exact</b> [Asha 10, Ben 10, Chen 20, Dev 0]. Asha 90 − 10 = <b>+80</b>; Ben −30 + 40 − 10 = <b>0</b>; Chen −30 − 20 = <b>−50</b>; Dev <b>−30</b>.</li>
+      <li><b>Hotel $300, Chen paid, percent</b> [40, 20, 20, 20] → Asha 120, Ben 60, Chen 60, Dev 60. Asha 80 − 120 = <b>−40</b>; Ben 0 − 60 = <b>−60</b>; Chen −50 + 300 − 60 = <b>+190</b>; Dev −30 − 60 = <b>−90</b>. Check: −40 − 60 + 190 − 90 = 0. Balances always sum to zero; that's a great invariant to assert in a test.</li>
+      <li><b>Simplify.</b> Creditors: Chen 190. Debtors sorted: Dev 90, Ben 60, Asha 40. Payments: Dev → Chen $90, Ben → Chen $60, Asha → Chen $40. Three expenses created eight separate "X owes Y" pairs; the group settles with <b>three</b> payments.</li>
+    </ol>
+  </div>
+  <p>The greedy settle-up never needs more than (people − 1) payments. Finding the true minimum number of payments is a much harder search problem, so real apps use a greedy approach like this. Say so if asked "is this optimal?".</p>
+  <h3>Extensions interviewers ask</h3>
+  <ul>
+    <li><b>"Split by shares (2 shares for adults, 1 for kids)."</b> A <code>ShareSplit</code> strategy, plus one line in the factory. Nothing else changes.</li>
+    <li><b>"Edit or delete an expense."</b> Store expenses with their computed shares; to delete, apply the same expense with negated amounts (an append-only log, like a bank ledger), then remove it from the list.</li>
+    <li><b>"Show who owes whom without simplifying."</b> Keep a pairwise <code>Map&lt;from, Map&lt;to, Cents&gt;&gt;</code> updated in <code>apply</code>, netting A→B against B→A.</li>
+    <li><b>"Two people add expenses at the same time" (the backend version).</b> Each expense is one database transaction that inserts the expense and updates balances, or balances are computed from the expense log on read. Idempotency keys stop a double-tap from adding dinner twice.</li>
+    <li><b>"Multiple currencies."</b> Store each expense in its original currency with the rate used; balances per currency, or converted at settle time. Never mix currencies in one integer.</li>
+  </ul>
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>"Money is integer cents. The split rule is a Strategy: equal, exact and percent each return a map that must add up to the total, with leftover cents handed out deterministically. The ledger keeps one net balance per person, which always sums to zero; settle-up is greedy, biggest debtor to biggest creditor, at most n − 1 payments."</p></div>
+
+  <h2>7. The other common prompts are remixes</h2>
+  <p>Once you've done the four above, most LLD prompts reuse the same moves. One line each: the core classes, and the idea that carries the design.</p>
+  <table class="tbl">
+    <thead><tr><th>Prompt</th><th>Remixes</th></tr></thead>
+    <tbody>
+      <tr><td>Library management</td><td>Book vs BookCopy (a title vs a physical copy), Member, Loan with a status enum (BORROWED, RETURNED, OVERDUE); fine rules as a Strategy; Observer for "notify me when it's back"; reserving the last copy is the parking-lot race.</td></tr>
+      <tr><td>LRU cache</td><td>One class: a hash map plus a doubly linked list (or a JS <code>Map</code>, which keeps insertion order); eviction policy as a Strategy if they ask for LFU too. See the <a href="#caching">caching lab</a>.</td></tr>
+      <tr><td>Rate limiter class</td><td>Interface <code>RateLimiter.allow(key)</code>; token bucket, sliding window as Strategies; injected clock for tests; per-key state in a map. See <a href="#ratelimit">rate limiting</a>.</td></tr>
+      <tr><td>Chess (or tic-tac-toe, Connect Four)</td><td>Board, Piece, Player, Move; each piece's legal moves as polymorphism (each piece knows how it moves); game status enum; move history for undo (Command pattern).</td></tr>
+      <tr><td>Movie ticket booking</td><td>Show, Screen, Seat, Booking with a status enum (HELD, CONFIRMED, EXPIRED); holds that expire; seat claiming is compare-and-set; pricing tiers as a Strategy. The <a href="#sd-booking">booking case study</a> at class level.</td></tr>
+      <tr><td>Logger</td><td>Log levels as an enum; appenders/sinks (console, file, remote) behind one interface, several at once (Observer-like fan-out); formatting as a Decorator; the classic place someone says "Singleton" (pass it in instead).</td></tr>
+      <tr><td>File system (in-memory)</td><td>Composite: <code>File</code> and <code>Directory</code> share a <code>Node</code> interface, directories contain nodes; path parsing; size computed recursively; permissions as a separate class.</td></tr>
+      <tr><td>Snake and ladder</td><td>Board as a map of jumps (snakes and ladders are the same thing: from → to); Dice injected (so tests can roll fixed numbers); Player queue for turns; game status enum.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout"><span class="callout-label">Say it in the interview</span><p>When the interviewer adds a requirement, answer in this shape: "That touches only the pricing rule, so it's a new <code>PricingStrategy</code> class and one line where we build the lot; nothing else changes." Naming exactly which class changes, and that old code doesn't, is the signal they're listening for.</p></div>
+
+  <div data-quiz='[{"q": "Which is the clearest sign you are in a low-level design round rather than a high-level one?", "o": ["You are asked for QPS and storage estimates", "You are asked to design classes and write code for a parking lot", "You are asked where to put the CDN", "You are asked how to shard the database"], "a": 1, "why": "LLD is about classes, interfaces and state inside one program, usually followed by code for the core."}, {"q": "Pricing for the parking lot will change often (hourly, event nights, weekend surcharge). What is the best fit?", "o": ["A switch statement in ParkingLot.leave", "A subclass of ParkingLot per pricing rule", "A PricingStrategy interface injected into the lot, with one class per rule", "A Singleton PriceManager"], "a": 2, "why": "Strategy keeps the lot unchanged when rules are added: a new rule is a new class, which is the open/closed idea."}, {"q": "An elevator class has the booleans isMoving, doorsOpen and isIdle. What is the main problem?", "o": ["Booleans use too much memory", "Nothing prevents illegal combinations like moving with doors open", "Booleans cannot be serialized", "It needs to be a Singleton"], "a": 1, "why": "One enum field plus a transition table makes illegal states impossible to represent and illegal moves throw."}, {"q": "Two entry gates try to give away the last free spot at the same time. Which fix is correct?", "o": ["Check that the spot is free, then update it in a separate statement", "Use a conditional update: set the spot taken only WHERE it is still free, and check rows affected", "Add a retry loop on the client", "Make ParkingLot a Singleton"], "a": 1, "why": "Check and claim must be one atomic step. A compare-and-set (or a transaction with a row lock) lets exactly one gate win."}, {"q": "When does the full State pattern (one class per state) earn its place over an enum plus a transition table?", "o": ["Always; enums are an anti-pattern", "When each state handles the same inputs very differently and the per-state behaviour is substantial", "Only when there are more than 10 states", "When you need a Singleton"], "a": 1, "why": "If only the legal moves differ, a table is less code. When behaviour per state is large, as in a vending machine, State removes repeated switches."}, {"q": "A dinner of $100.00 is split equally among 3 people in integer cents. What should EqualSplit return?", "o": ["33.33 dollars each as floats", "3333, 3333, 3333 cents (one cent is lost)", "3334, 3333, 3333 cents", "It should throw because 100 is not divisible by 3"], "a": 2, "why": "Shares must add up to exactly the total, so the leftover cent is handed out deterministically, here to the first person."}]'></div>
+
+  <h2>Recap</h2>
+  <ul>
+    <li>LLD is about classes inside one program: clear responsibilities, correct state changes, and a design that absorbs new requirements by adding classes, not editing old ones.</li>
+    <li>Run the clock: scope → nouns and verbs → class diagram → 1–2 patterns with a reason → core code → walk a scenario with real values → extensions.</li>
+    <li>Most designs need only a few ideas: enums with a transition table, Strategy for the rule that will change, State when behaviour per stage is large, Observer for "tell everyone", composition over inheritance, injected dependencies.</li>
+    <li>Always name the concurrency risk (two people, one last spot) and the fix: compare-and-set or a database transaction.</li>
+    <li>Parking lot = Strategy + lookup table + CAS; elevator = state machine + dispatch Strategy; vending machine = State + change-making; Splitwise = split Strategy + net balances + greedy settle-up.</li>
+  </ul>
+</template>

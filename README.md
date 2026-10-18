@@ -12,7 +12,7 @@ right in the page.
 | 1 · Foundations | How a request travels · API design · Data modeling & SQL · Auth, permissions and tenants |
 | 2 · Scaling building blocks | How systems grow · Caching · Queues & background jobs · Rate limiting · Realtime · Storage choices |
 | 3 · Distributed systems | Why it's hard (CAP/PACELC) · Clocks, consensus & quorums · Reliability · Event-driven architecture · Backends for AI products |
-| 4 · System design | The interview framework · 11 worked case studies (URL shortener, news feed, chat, notifications, rate limiter, file upload, autocomplete, LLM chat product, ticket booking, K-12 platform, collaborative editing) · Cheat sheet |
+| 4 · System design | The interview framework · Estimation drill (15 graded drills) · 11 worked case studies (URL shortener, news feed, chat, notifications, rate limiter, file upload, autocomplete, LLM chat product, ticket booking, K-12 platform, collaborative editing) · The 20 archetypes · Cheat sheet (incl. the 15 building blocks) · Low-level design (parking lot, elevator, vending machine, Splitwise) |
 | 5 · Coding patterns (DSA) | How to attack any problem (Big-O from zero) · Hashing · Prefix sums · Two pointers · Sliding window · Stacks · Binary search · Intervals & greedy · Linked lists · Trees & recursion · Heaps · Graphs · Backtracking · Dynamic programming · Recognition drill |
 
 Every lesson uses concrete running examples with real numbers, diagrams that work in light and dark mode, "say it in the

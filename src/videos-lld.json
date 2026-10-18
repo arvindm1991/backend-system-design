@@ -1,0 +1,16 @@
+{
+  "sd-lld": [
+    {
+      "id": "tv-_1er1mWI",
+      "title": "10 Design Patterns Explained in 10 Minutes",
+      "channel": "Fireship",
+      "why": "A fast tour of Singleton, Factory, Observer, Decorator, Strategy, State and more, with tiny code examples."
+    },
+    {
+      "id": "fODT0ldeBiU",
+      "title": "Low-Level Design Interview: Design an Elevator w/ a Ex-Meta Staff Engineer",
+      "channel": "Hello Interview",
+      "why": "A full LLD mock interview: scoping, classes, state and dispatch for an elevator, then code (about an hour)."
+    }
+  ]
+}
